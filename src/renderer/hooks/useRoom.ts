@@ -86,6 +86,8 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
 
   /**
    * Initialize peer manager callbacks
+   * NOTE: onRemoteStream is handled by App.tsx to store streams for audio playback
+   * We only handle onPeerJoin and onPeerLeave here for peer list management
    */
   useEffect(() => {
     peerManager.setCallbacks({
@@ -128,25 +130,9 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
         })
         
         callbacksRef.current.onPeerLeave?.(peerId, userName)
-      },
-      
-      onRemoteStream: (peerId: string, stream: MediaStream) => {
-        RoomLog.info('Remote stream received', { 
-          peerId, 
-          streamId: stream.id,
-          tracks: stream.getTracks().length 
-        })
-        
-        // Update peer with stream info - this will be handled by App.tsx
-        setPeers(prev => {
-          const updated = new Map(prev)
-          const peer = updated.get(peerId)
-          if (peer) {
-            updated.set(peerId, { ...peer, connectionState: 'connected' })
-          }
-          return updated
-        })
       }
+      // NOTE: onRemoteStream is NOT set here - it's handled by App.tsx
+      // to properly store streams in remoteStreams state for audio playback
     })
   }, [updateConnectionState])
 

@@ -52,14 +52,58 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     const audioElement = audioRef.current
     if (!audioElement) return
 
+    console.log('[ParticipantCard] Setting up audio playback', {
+      peerId,
+      streamId: stream.id,
+      trackCount: stream.getTracks().length,
+      audioTracks: stream.getAudioTracks().length
+    })
+
+    // Verify stream has audio tracks
+    const audioTracks = stream.getAudioTracks()
+    if (audioTracks.length === 0) {
+      console.error('[ParticipantCard] Stream has no audio tracks!', { peerId, streamId: stream.id })
+      return
+    }
+
+    // Log track state
+    audioTracks.forEach((track, idx) => {
+      console.log(`[ParticipantCard] Audio track ${idx}:`, {
+        id: track.id,
+        enabled: track.enabled,
+        muted: track.muted,
+        readyState: track.readyState
+      })
+    })
+
     audioElement.srcObject = stream
     
     // Mute audio element if local speaker is muted
     audioElement.muted = localSpeakerMuted
     
-    audioElement.play().catch(err => {
-      console.warn('[ParticipantCard] Autoplay blocked:', err)
-    })
+    // Try to play with retry mechanism
+    const playAudio = async () => {
+      try {
+        await audioElement.play()
+        console.log('[ParticipantCard] Audio playback started successfully', { peerId })
+      } catch (err: any) {
+        console.warn('[ParticipantCard] Autoplay blocked, will retry on user interaction:', err.message)
+        
+        // Set up a one-time click handler to retry playback
+        const handleUserInteraction = () => {
+          audioElement.play()
+            .then(() => console.log('[ParticipantCard] Audio playback started after user interaction', { peerId }))
+            .catch(e => console.error('[ParticipantCard] Still failed to play after interaction:', e))
+          document.removeEventListener('click', handleUserInteraction)
+          document.removeEventListener('keydown', handleUserInteraction)
+        }
+        
+        document.addEventListener('click', handleUserInteraction, { once: true })
+        document.addEventListener('keydown', handleUserInteraction, { once: true })
+      }
+    }
+    
+    playAudio()
 
     // Set up audio level monitoring
     if (!audioContextRef.current) {

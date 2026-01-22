@@ -220,10 +220,23 @@ export default function App() {
   useEffect(() => {
     peerManager.setCallbacks({
       onRemoteStream: (peerId: string, stream: MediaStream) => {
-        AppLog.info('Remote stream received', { peerId, streamId: stream.id })
+        AppLog.info('Remote stream received in App.tsx', { 
+          peerId, 
+          streamId: stream.id,
+          trackCount: stream.getTracks().length,
+          audioTracks: stream.getAudioTracks().map(t => ({ id: t.id, enabled: t.enabled, muted: t.muted }))
+        })
+        
+        // Verify the stream has audio tracks
+        const audioTracks = stream.getAudioTracks()
+        if (audioTracks.length === 0) {
+          AppLog.warn('Remote stream has no audio tracks!', { peerId, streamId: stream.id })
+        }
+        
         setRemoteStreams(prev => {
           const updated = new Map(prev)
           updated.set(peerId, stream)
+          AppLog.debug('Remote streams updated', { count: updated.size, peers: Array.from(updated.keys()) })
           return updated
         })
       },

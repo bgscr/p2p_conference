@@ -2,8 +2,10 @@
  * SimplePeerManager - Browser-compatible WebRTC P2P implementation
  * Uses MQTT over WebSocket with proper keepalive and trickle ICE
  * 
- * IMPORTANT: All users MUST use the same MQTT broker to communicate.
- * Do NOT add fallback brokers as users on different brokers cannot see each other.
+ * MULTI-BROKER STRATEGY: To maximize connectivity, we connect to ALL available
+ * MQTT brokers simultaneously and broadcast messages on all of them. This ensures
+ * that even if a user can only reach some brokers (due to network issues), they
+ * can still communicate with others who share at least one common broker.
  */
 
 import { SignalingLog, PeerLog } from '../utils/Logger'
@@ -36,11 +38,23 @@ const MQTT_KEEPALIVE = 20000
 const MAX_ICE_RESTART_ATTEMPTS = 2
 const ICE_RESTART_DELAY = 2000
 const ANNOUNCE_DEBOUNCE = 100
+const MQTT_CONNECT_TIMEOUT = 8000
 
-// IMPORTANT: All users MUST use the same broker to see each other.
-// Do NOT add fallback brokers as users on different brokers cannot communicate.
+// Message deduplication settings
+const MESSAGE_DEDUP_WINDOW_SIZE = 500      // Max messages to track
+const MESSAGE_DEDUP_TTL_MS = 30000         // 30 seconds TTL for dedup entries
+
+// Reconnection settings
+const RECONNECT_BASE_DELAY = 2000
+const RECONNECT_MAX_DELAY = 30000
+const RECONNECT_MAX_ATTEMPTS = 5
+
+// Multiple MQTT brokers for redundancy - we connect to ALL of them
+// and broadcast on all connected brokers to maximize connectivity
 const MQTT_BROKERS = [
-  'wss://broker-cn.emqx.io:8084/mqtt'
+  'wss://broker.emqx.io:8084/mqtt',      // Global EMQX (most reliable)
+  'wss://broker-cn.emqx.io:8084/mqtt',   // China EMQX  
+  'wss://test.mosquitto.org:8081/mqtt'   // Mosquitto public broker
 ]
 
 interface SignalMessage {
@@ -52,6 +66,7 @@ interface SignalMessage {
   userName?: string
   ts?: number
   sessionId?: number
+  msgId?: string  // Unique message ID for deduplication
 }
 
 interface MuteStatus {
@@ -77,7 +92,91 @@ type MuteStatusCallback = (peerId: string, muteStatus: MuteStatus) => void
 export type SignalingState = 'idle' | 'connecting' | 'connected' | 'failed'
 
 /**
- * Robust MQTT client with keepalive and proper buffer handling
+ * Generate a unique message ID for deduplication
+ */
+function generateMessageId(): string {
+  return `${selfId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
+}
+
+/**
+ * Message deduplication cache using a sliding window with TTL
+ * Prevents processing the same message received from multiple brokers
+ */
+class MessageDeduplicator {
+  private seen: Map<string, number> = new Map()  // msgId -> timestamp
+  private cleanupInterval: NodeJS.Timeout | null = null
+
+  constructor() {
+    // Periodic cleanup of old entries
+    this.cleanupInterval = setInterval(() => this.cleanup(), MESSAGE_DEDUP_TTL_MS / 2)
+  }
+
+  /**
+   * Check if message was already seen. If not, mark it as seen.
+   * @returns true if this is a duplicate, false if it's new
+   */
+  isDuplicate(msgId: string): boolean {
+    if (!msgId) return false  // No ID = can't dedupe, treat as new
+    
+    if (this.seen.has(msgId)) {
+      return true
+    }
+
+    // Add to seen set
+    this.seen.set(msgId, Date.now())
+
+    // If we exceed window size, remove oldest entries
+    if (this.seen.size > MESSAGE_DEDUP_WINDOW_SIZE) {
+      const entries = Array.from(this.seen.entries())
+      entries.sort((a, b) => a[1] - b[1])  // Sort by timestamp ascending
+      const toRemove = entries.slice(0, entries.length - MESSAGE_DEDUP_WINDOW_SIZE)
+      toRemove.forEach(([key]) => this.seen.delete(key))
+    }
+
+    return false
+  }
+
+  /**
+   * Remove entries older than TTL
+   */
+  private cleanup() {
+    const cutoff = Date.now() - MESSAGE_DEDUP_TTL_MS
+    const toDelete: string[] = []
+    
+    this.seen.forEach((timestamp, msgId) => {
+      if (timestamp < cutoff) {
+        toDelete.push(msgId)
+      }
+    })
+    
+    toDelete.forEach(msgId => this.seen.delete(msgId))
+    
+    if (toDelete.length > 0) {
+      SignalingLog.debug('Dedup cache cleanup', { removed: toDelete.length, remaining: this.seen.size })
+    }
+  }
+
+  /**
+   * Clear all entries and stop cleanup timer
+   */
+  destroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval)
+      this.cleanupInterval = null
+    }
+    this.seen.clear()
+  }
+
+  /**
+   * Get current cache size (for debugging)
+   */
+  size(): number {
+    return this.seen.size
+  }
+}
+
+/**
+ * Single MQTT broker connection with keepalive and proper buffer handling
  */
 class MQTTClient {
   private ws: WebSocket | null = null
@@ -92,48 +191,48 @@ class MQTTClient {
   private pendingSubscribe: { resolve: () => void; reject: (err: Error) => void } | null = null
   private subscribeTimeout: NodeJS.Timeout | null = null
   private messageCount = 0
-  private currentBrokerUrl: string = ''
-  private onDisconnectCallback: (() => void) | null = null
+  private brokerUrl: string = ''
+  private onDisconnectCallback: ((brokerUrl: string) => void) | null = null
+  private isIntentionallyClosed = false
 
-  constructor() {
-    this.clientId = 'p2p_' + selfId.substring(0, 8) + '_' + Math.random().toString(36).substring(2, 6)
+  constructor(brokerUrl: string) {
+    this.brokerUrl = brokerUrl
+    // Include broker identifier in client ID to avoid conflicts
+    const brokerHash = brokerUrl.split('//')[1]?.split('.')[0] || 'unknown'
+    this.clientId = `p2p_${selfId.substring(0, 6)}_${brokerHash}_${Math.random().toString(36).substring(2, 4)}`
+  }
+
+  getBrokerUrl(): string {
+    return this.brokerUrl
   }
 
   /**
    * Set callback for disconnect events
    */
-  setOnDisconnect(callback: () => void) {
+  setOnDisconnect(callback: (brokerUrl: string) => void) {
     this.onDisconnectCallback = callback
   }
 
-  /**
-   * Try to connect to MQTT brokers in order until one succeeds
-   */
-  async connectWithFallback(): Promise<string> {
-    for (const brokerUrl of MQTT_BROKERS) {
-      try {
-        SignalingLog.info('Trying MQTT broker', { url: brokerUrl })
-        await this.connect(brokerUrl)
-        this.currentBrokerUrl = brokerUrl
-        SignalingLog.info('Connected to MQTT broker', { url: brokerUrl })
-        return brokerUrl
-      } catch (err) {
-        SignalingLog.warn('MQTT broker failed, trying next', { url: brokerUrl, error: String(err) })
-      }
-    }
-    throw new Error('All MQTT brokers failed to connect')
-  }
-
-  connect(url: string): Promise<void> {
+  connect(): Promise<void> {
     return new Promise((resolve, reject) => {
+      if (this.connected) {
+        resolve()
+        return
+      }
+
+      this.isIntentionallyClosed = false
+
       try {
-        this.ws = new WebSocket(url, 'mqtt')
+        this.ws = new WebSocket(this.brokerUrl, 'mqtt')
         this.ws.binaryType = 'arraybuffer'
         this.buffer = new Uint8Array(0)
         
         const timeout = setTimeout(() => {
-          reject(new Error('MQTT connection timeout'))
-        }, 10000)
+          if (!this.connected) {
+            this.disconnect()
+            reject(new Error(`MQTT connection timeout: ${this.brokerUrl}`))
+          }
+        }, MQTT_CONNECT_TIMEOUT)
 
         this.ws.onopen = () => {
           this.sendConnect()
@@ -153,9 +252,9 @@ class MQTTClient {
 
         this.ws.onerror = () => {
           clearTimeout(timeout)
-          this.connected = false
-          this.stopKeepalive()
-          reject(new Error('MQTT WebSocket error'))
+          if (!this.connected) {
+            reject(new Error(`MQTT WebSocket error: ${this.brokerUrl}`))
+          }
         }
 
         this.ws.onclose = () => {
@@ -163,11 +262,11 @@ class MQTTClient {
           this.connected = false
           this.subscribed = false
           this.stopKeepalive()
-          SignalingLog.warn('MQTT connection closed')
           
-          // Notify disconnect callback if we were previously connected
-          if (wasConnected && this.onDisconnectCallback) {
-            this.onDisconnectCallback()
+          // Only trigger disconnect callback if this wasn't intentional
+          if (wasConnected && !this.isIntentionallyClosed && this.onDisconnectCallback) {
+            SignalingLog.warn('MQTT broker disconnected unexpectedly', { broker: this.brokerUrl })
+            this.onDisconnectCallback(this.brokerUrl)
           }
         }
       } catch (err) {
@@ -180,7 +279,7 @@ class MQTTClient {
     this.stopKeepalive()
     this.keepaliveInterval = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(new Uint8Array([0xC0, 0x00]))
+        this.ws.send(new Uint8Array([0xC0, 0x00]))  // PINGREQ
       }
     }, MQTT_KEEPALIVE)
   }
@@ -222,6 +321,7 @@ class MQTTClient {
       
       if ((byte & 0x80) === 0) break
       if (idx > 4) {
+        // Invalid remaining length encoding, clear buffer
         this.buffer = new Uint8Array(0)
         return null
       }
@@ -245,16 +345,16 @@ class MQTTClient {
     const packet = new Uint8Array(2 + remainingLength)
     
     let i = 0
-    packet[i++] = 0x10
+    packet[i++] = 0x10  // CONNECT packet type
     packet[i++] = remainingLength
     packet[i++] = 0
     packet[i++] = 4
     packet.set(protocolName, i)
     i += 4
-    packet[i++] = 4
-    packet[i++] = 2
+    packet[i++] = 4     // Protocol level (MQTT 3.1.1)
+    packet[i++] = 2     // Connect flags (clean session)
     packet[i++] = 0
-    packet[i++] = 30
+    packet[i++] = 30    // Keep alive (30 seconds)
     packet[i++] = (clientIdBytes.length >> 8) & 0xff
     packet[i++] = clientIdBytes.length & 0xff
     packet.set(clientIdBytes, i)
@@ -264,10 +364,7 @@ class MQTTClient {
 
   async subscribe(topic: string, callback: (message: string) => void): Promise<boolean> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      SignalingLog.error('MQTT subscribe failed - WebSocket not ready', { 
-        wsExists: !!this.ws, 
-        readyState: this.ws?.readyState 
-      })
+      SignalingLog.error('MQTT subscribe failed - not connected', { broker: this.brokerUrl })
       return false
     }
     
@@ -280,7 +377,7 @@ class MQTTClient {
     const packet = new Uint8Array(2 + remainingLength)
     
     let i = 0
-    packet[i++] = 0x82
+    packet[i++] = 0x82  // SUBSCRIBE packet type
     packet[i++] = remainingLength
     packet[i++] = (this.messageId >> 8) & 0xff
     packet[i++] = this.messageId++ & 0xff
@@ -288,21 +385,17 @@ class MQTTClient {
     packet[i++] = topicBytes.length & 0xff
     packet.set(topicBytes, i)
     i += topicBytes.length
-    packet[i++] = 0
+    packet[i++] = 0     // QoS 0
     
-    SignalingLog.debug('Sending MQTT SUBSCRIBE', { topic, messageId: this.messageId - 1 })
-    
-    // Wait for SUBACK with timeout
     return new Promise((resolve) => {
       this.pendingSubscribe = { 
         resolve: () => resolve(true), 
         reject: () => resolve(false) 
       }
       
-      // Set timeout for subscription confirmation
       this.subscribeTimeout = setTimeout(() => {
         if (!this.subscribed) {
-          SignalingLog.warn('MQTT SUBACK timeout - subscription may have failed')
+          SignalingLog.warn('MQTT SUBACK timeout', { broker: this.brokerUrl })
           this.pendingSubscribe?.reject(new Error('Subscription timeout'))
           this.pendingSubscribe = null
         }
@@ -311,7 +404,7 @@ class MQTTClient {
       try {
         this.ws!.send(packet)
       } catch (err) {
-        SignalingLog.error('MQTT subscribe send error', { error: String(err) })
+        SignalingLog.error('MQTT subscribe send error', { broker: this.brokerUrl, error: String(err) })
         clearTimeout(this.subscribeTimeout)
         this.pendingSubscribe = null
         resolve(false)
@@ -321,7 +414,6 @@ class MQTTClient {
 
   publish(topic: string, message: string): boolean {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      SignalingLog.warn('MQTT publish failed - not connected')
       return false
     }
     
@@ -329,6 +421,7 @@ class MQTTClient {
     const messageBytes = new TextEncoder().encode(message)
     const remainingLength = 2 + topicBytes.length + messageBytes.length
     
+    // Encode remaining length (variable length encoding)
     const lengthBytes: number[] = []
     let x = remainingLength
     do {
@@ -341,7 +434,7 @@ class MQTTClient {
     const packet = new Uint8Array(1 + lengthBytes.length + remainingLength)
     
     let i = 0
-    packet[i++] = 0x30
+    packet[i++] = 0x30  // PUBLISH packet type (QoS 0)
     for (const b of lengthBytes) {
       packet[i++] = b
     }
@@ -355,7 +448,7 @@ class MQTTClient {
       this.ws.send(packet)
       return true
     } catch (err) {
-      SignalingLog.error('MQTT publish error', { error: String(err) })
+      SignalingLog.error('MQTT publish error', { broker: this.brokerUrl, error: String(err) })
       return false
     }
   }
@@ -364,9 +457,10 @@ class MQTTClient {
     const packetType = data[0] >> 4
     
     if (packetType === 2) {
-      SignalingLog.debug('MQTT CONNACK received')
+      // CONNACK
+      SignalingLog.debug('MQTT CONNACK received', { broker: this.brokerUrl })
     } else if (packetType === 3) {
-      // Check QoS from fixed header
+      // PUBLISH
       const qos = (data[0] & 0x06) >> 1
       
       let idx = 1
@@ -381,21 +475,14 @@ class MQTTClient {
         if ((byte & 0x80) === 0) break
       }
       
-      if (idx + 2 > data.length) {
-        SignalingLog.warn('MQTT PUBLISH packet too short for topic length')
-        return
-      }
+      if (idx + 2 > data.length) return
       
       const topicLen = (data[idx] << 8) | data[idx + 1]
       idx += 2
       
-      if (idx + topicLen > data.length) {
-        SignalingLog.warn('MQTT PUBLISH packet too short for topic')
-        return
-      }
+      if (idx + topicLen > data.length) return
       
-      const receivedTopic = new TextDecoder().decode(data.slice(idx, idx + topicLen))
-      idx += topicLen
+      idx += topicLen  // Skip topic
       
       // Skip packet identifier for QoS > 0
       if (qos > 0) {
@@ -408,18 +495,13 @@ class MQTTClient {
       this.messageCount++
       
       if (this.onMessage && payload.length > 0) {
-        SignalingLog.debug('MQTT message received', { 
-          topic: receivedTopic, 
-          payloadLen: payload.length,
-          totalReceived: this.messageCount
-        })
         this.onMessage(payload)
       }
     } else if (packetType === 9) {
+      // SUBACK
       this.subscribed = true
-      SignalingLog.info('MQTT SUBACK received - subscription confirmed', { topic: this.topic })
+      SignalingLog.info('MQTT SUBACK received', { broker: this.brokerUrl, topic: this.topic })
       
-      // Clear timeout and resolve pending subscribe
       if (this.subscribeTimeout) {
         clearTimeout(this.subscribeTimeout)
         this.subscribeTimeout = null
@@ -429,26 +511,32 @@ class MQTTClient {
         this.pendingSubscribe = null
       }
     } else if (packetType === 13) {
-      // PINGRESP - broker is alive
-      SignalingLog.debug('MQTT PINGRESP received')
+      // PINGRESP
+      SignalingLog.debug('MQTT PINGRESP', { broker: this.brokerUrl })
     }
   }
 
   disconnect() {
+    this.isIntentionallyClosed = true
     this.stopKeepalive()
+    
     if (this.subscribeTimeout) {
       clearTimeout(this.subscribeTimeout)
       this.subscribeTimeout = null
     }
     this.pendingSubscribe = null
     this.onDisconnectCallback = null
+    
     if (this.ws) {
       try {
-        this.ws.send(new Uint8Array([0xe0, 0x00]))
+        if (this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(new Uint8Array([0xe0, 0x00]))  // DISCONNECT
+        }
       } catch {}
       this.ws.close()
       this.ws = null
     }
+    
     this.connected = false
     this.subscribed = false
     this.onMessage = null
@@ -468,10 +556,305 @@ class MQTTClient {
   }
 }
 
+/**
+ * Multi-broker MQTT manager that connects to ALL brokers simultaneously
+ * and handles message deduplication across brokers
+ */
+class MultiBrokerMQTT {
+  private clients: Map<string, MQTTClient> = new Map()  // brokerUrl -> client
+  private topic: string = ''
+  private onMessage: ((payload: string) => void) | null = null
+  private deduplicator: MessageDeduplicator = new MessageDeduplicator()
+  private reconnectAttempts: Map<string, number> = new Map()
+  private reconnectTimers: Map<string, NodeJS.Timeout> = new Map()
+  private isShuttingDown = false
+
+  /**
+   * Connect to all configured MQTT brokers in parallel
+   * @returns Array of successfully connected broker URLs
+   */
+  async connectAll(): Promise<string[]> {
+    this.isShuttingDown = false
+    const connectedBrokers: string[] = []
+    
+    SignalingLog.info('Connecting to all MQTT brokers', { count: MQTT_BROKERS.length })
+    
+    // Connect to all brokers in parallel
+    const results = await Promise.allSettled(
+      MQTT_BROKERS.map(async (brokerUrl) => {
+        const client = new MQTTClient(brokerUrl)
+        
+        // Set up disconnect handler for reconnection
+        client.setOnDisconnect((url) => {
+          if (!this.isShuttingDown) {
+            this.handleBrokerDisconnect(url)
+          }
+        })
+        
+        try {
+          await client.connect()
+          this.clients.set(brokerUrl, client)
+          this.reconnectAttempts.set(brokerUrl, 0)  // Reset attempts on success
+          SignalingLog.info('MQTT broker connected', { broker: brokerUrl })
+          return brokerUrl
+        } catch (err) {
+          SignalingLog.warn('MQTT broker failed to connect', { broker: brokerUrl, error: String(err) })
+          throw err
+        }
+      })
+    )
+    
+    // Collect successful connections
+    results.forEach((result) => {
+      if (result.status === 'fulfilled') {
+        connectedBrokers.push(result.value)
+      }
+    })
+    
+    SignalingLog.info('MQTT connection results', { 
+      total: MQTT_BROKERS.length, 
+      connected: connectedBrokers.length,
+      brokers: connectedBrokers
+    })
+    
+    return connectedBrokers
+  }
+
+  /**
+   * Handle unexpected broker disconnect with exponential backoff reconnection
+   */
+  private async handleBrokerDisconnect(brokerUrl: string) {
+    if (this.isShuttingDown) return
+    
+    // Clean up old client
+    const oldClient = this.clients.get(brokerUrl)
+    if (oldClient) {
+      oldClient.disconnect()
+      this.clients.delete(brokerUrl)
+    }
+    
+    const attempts = (this.reconnectAttempts.get(brokerUrl) || 0) + 1
+    this.reconnectAttempts.set(brokerUrl, attempts)
+    
+    if (attempts > RECONNECT_MAX_ATTEMPTS) {
+      SignalingLog.warn('Max reconnect attempts reached for broker', { broker: brokerUrl, attempts })
+      return
+    }
+    
+    // Exponential backoff with jitter
+    const baseDelay = Math.min(RECONNECT_BASE_DELAY * Math.pow(2, attempts - 1), RECONNECT_MAX_DELAY)
+    const jitter = Math.random() * 1000
+    const delay = baseDelay + jitter
+    
+    SignalingLog.info('Scheduling MQTT reconnection', { broker: brokerUrl, attempt: attempts, delayMs: Math.round(delay) })
+    
+    // Clear any existing reconnect timer
+    const existingTimer = this.reconnectTimers.get(brokerUrl)
+    if (existingTimer) {
+      clearTimeout(existingTimer)
+    }
+    
+    // Schedule reconnection
+    const timer = setTimeout(async () => {
+      if (this.isShuttingDown) return
+      
+      try {
+        const client = new MQTTClient(brokerUrl)
+        client.setOnDisconnect((url) => {
+          if (!this.isShuttingDown) {
+            this.handleBrokerDisconnect(url)
+          }
+        })
+        
+        await client.connect()
+        this.clients.set(brokerUrl, client)
+        
+        // Re-subscribe if we have a topic
+        if (this.topic && this.onMessage) {
+          const subscribed = await client.subscribe(this.topic, this.onMessage)
+          if (subscribed) {
+            SignalingLog.info('MQTT broker reconnected and resubscribed', { broker: brokerUrl })
+            this.reconnectAttempts.set(brokerUrl, 0)  // Reset on success
+          } else {
+            SignalingLog.warn('MQTT broker reconnected but subscribe failed', { broker: brokerUrl })
+          }
+        }
+      } catch (err) {
+        SignalingLog.warn('MQTT reconnection failed', { broker: brokerUrl, attempt: attempts, error: String(err) })
+        // Will retry via disconnect handler
+      }
+    }, delay)
+    
+    this.reconnectTimers.set(brokerUrl, timer)
+  }
+
+  /**
+   * Subscribe to a topic on all connected brokers
+   * @returns Number of successful subscriptions
+   */
+  async subscribeAll(topic: string, callback: (message: string) => void): Promise<number> {
+    this.topic = topic
+    
+    // Wrap callback with deduplication
+    this.onMessage = (payload: string) => {
+      try {
+        const data = JSON.parse(payload)
+        const msgId = data.msgId
+        
+        // Check for duplicates
+        if (msgId && this.deduplicator.isDuplicate(msgId)) {
+          SignalingLog.debug('Duplicate message filtered', { msgId: msgId.substring(0, 20) })
+          return
+        }
+        
+        // Pass through to actual callback
+        callback(payload)
+      } catch {
+        // If we can't parse, just pass through (shouldn't happen in normal operation)
+        callback(payload)
+      }
+    }
+    
+    let successCount = 0
+    
+    // Subscribe on all clients in parallel
+    const results = await Promise.allSettled(
+      Array.from(this.clients.entries()).map(async ([brokerUrl, client]) => {
+        const success = await client.subscribe(topic, this.onMessage!)
+        if (success) {
+          SignalingLog.info('Subscribed on broker', { broker: brokerUrl, topic })
+          return brokerUrl
+        } else {
+          throw new Error(`Subscribe failed on ${brokerUrl}`)
+        }
+      })
+    )
+    
+    results.forEach(result => {
+      if (result.status === 'fulfilled') {
+        successCount++
+      }
+    })
+    
+    SignalingLog.info('Subscription results', { total: this.clients.size, subscribed: successCount })
+    
+    return successCount
+  }
+
+  /**
+   * Publish a message to ALL connected brokers
+   * @returns Number of successful publishes
+   */
+  publish(topic: string, message: string): number {
+    let successCount = 0
+    
+    this.clients.forEach((client) => {
+      if (client.isConnected() && client.isSubscribed()) {
+        if (client.publish(topic, message)) {
+          successCount++
+        }
+      }
+    })
+    
+    return successCount
+  }
+
+  /**
+   * Disconnect from all brokers and clean up
+   */
+  disconnect() {
+    this.isShuttingDown = true
+    
+    // Clear all reconnect timers
+    this.reconnectTimers.forEach((timer) => {
+      clearTimeout(timer)
+    })
+    this.reconnectTimers.clear()
+    this.reconnectAttempts.clear()
+    
+    // Disconnect all clients
+    this.clients.forEach((client) => {
+      client.disconnect()
+    })
+    this.clients.clear()
+    
+    // Clean up deduplicator
+    this.deduplicator.destroy()
+    this.deduplicator = new MessageDeduplicator()  // Create fresh instance for next use
+    
+    this.topic = ''
+    this.onMessage = null
+  }
+
+  /**
+   * Check if at least one broker is connected
+   */
+  isConnected(): boolean {
+    for (const client of this.clients.values()) {
+      if (client.isConnected()) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Check if at least one broker is subscribed
+   */
+  isSubscribed(): boolean {
+    for (const client of this.clients.values()) {
+      if (client.isSubscribed()) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Get total message count across all brokers
+   */
+  getTotalMessageCount(): number {
+    let total = 0
+    this.clients.forEach(client => {
+      total += client.getMessageCount()
+    })
+    return total
+  }
+
+  /**
+   * Get connection status for all brokers
+   */
+  getConnectionStatus(): { broker: string; connected: boolean; subscribed: boolean }[] {
+    return Array.from(this.clients.entries()).map(([broker, client]) => ({
+      broker,
+      connected: client.isConnected(),
+      subscribed: client.isSubscribed()
+    }))
+  }
+
+  /**
+   * Get number of connected brokers
+   */
+  getConnectedCount(): number {
+    let count = 0
+    this.clients.forEach(client => {
+      if (client.isConnected()) count++
+    })
+    return count
+  }
+
+  /**
+   * Get deduplication cache size (for debugging)
+   */
+  getDeduplicatorSize(): number {
+    return this.deduplicator.size()
+  }
+}
+
 export class SimplePeerManager {
   private roomId: string | null = null
   private userName: string = ''
-  private mqtt: MQTTClient | null = null
+  private mqtt: MultiBrokerMQTT | null = null
   private topic: string = ''
   private peers: Map<string, PeerConnection> = new Map()
   private localStream: MediaStream | null = null
@@ -542,13 +925,43 @@ export class SimplePeerManager {
     SignalingLog.info('Setting local stream', { streamId: stream.id, trackCount: stream.getTracks().length })
     this.localStream = stream
     
+    // Add tracks to all existing peer connections
     this.peers.forEach((peer, peerId) => {
       const senders = peer.pc.getSenders()
-      if (senders.length === 0 && this.localStream) {
-        this.localStream.getTracks().forEach(track => {
-          peer.pc.addTrack(track, this.localStream!)
-        })
+      const audioSender = senders.find(s => s.track?.kind === 'audio')
+      
+      // Check if we already have an audio track added
+      if (audioSender && audioSender.track) {
+        SignalingLog.debug('Audio track already added for peer', { peerId })
+        return
       }
+      
+      // Add all tracks from the local stream
+      const tracks = stream.getTracks()
+      tracks.forEach(track => {
+        // Check if this track is already added
+        const existingSender = senders.find(s => s.track === track)
+        if (existingSender) {
+          SignalingLog.debug('Track already added, skipping', { peerId, trackKind: track.kind })
+          return
+        }
+        
+        // Check if there's a sender without a track that we can use
+        const emptySender = senders.find(s => s.track === null)
+        if (emptySender) {
+          SignalingLog.info('Replacing empty sender track', { peerId, trackKind: track.kind })
+          emptySender.replaceTrack(track)
+            .then(() => SignalingLog.info('Track replaced successfully', { peerId, trackKind: track.kind }))
+            .catch(err => SignalingLog.error('Failed to replace track', { peerId, error: String(err) }))
+        } else {
+          SignalingLog.info('Adding new track to peer', { peerId, trackKind: track.kind })
+          try {
+            peer.pc.addTrack(track, stream)
+          } catch (err) {
+            SignalingLog.error('Failed to add track', { peerId, error: String(err) })
+          }
+        }
+      })
     })
   }
 
@@ -566,7 +979,8 @@ export class SimplePeerManager {
       type: 'mute-status',
       from: selfId,
       data: { micMuted, speakerMuted },
-      sessionId: this.sessionId
+      sessionId: this.sessionId,
+      msgId: generateMessageId()
     })
   }
 
@@ -629,6 +1043,7 @@ export class SimplePeerManager {
         this.broadcastChannel = null
       }
       
+      // Set up BroadcastChannel for same-device connections
       try {
         this.broadcastChannel = new BroadcastChannel(`p2p-${roomId}`)
         this.broadcastChannel.onmessage = (event) => {
@@ -644,29 +1059,26 @@ export class SimplePeerManager {
         SignalingLog.warn('BroadcastChannel not available')
       }
       
-      // Try MQTT connection with fallback brokers
-      let mqttConnected = false
+      // Connect to ALL MQTT brokers
+      let connectedBrokers: string[] = []
       
       try {
-        SignalingLog.info('Starting MQTT connection')
+        SignalingLog.info('Starting multi-broker MQTT connection')
         
-        this.mqtt = new MQTTClient()
+        this.mqtt = new MultiBrokerMQTT()
+        connectedBrokers = await this.mqtt.connectAll()
         
-        // Set up disconnect handler for reconnection
-        this.mqtt.setOnDisconnect(() => {
-          if (this.sessionId === currentSession && this.roomId) {
-            SignalingLog.warn('MQTT disconnected unexpectedly')
-            this.updateSignalingState('failed')
-            this.onError(new Error('MQTT connection lost'), 'mqtt-disconnect')
-          }
+        if (connectedBrokers.length === 0) {
+          throw new Error('No MQTT brokers could be connected')
+        }
+        
+        SignalingLog.info('MQTT brokers connected', { 
+          count: connectedBrokers.length, 
+          brokers: connectedBrokers 
         })
         
-        const connectedBroker = await this.mqtt.connectWithFallback()
-        
-        SignalingLog.info('MQTT connected', { broker: connectedBroker })
-        
-        // Wait for subscription confirmation
-        const subscribed = await this.mqtt.subscribe(this.topic, (message) => {
+        // Subscribe on all connected brokers
+        const subscribeCount = await this.mqtt.subscribeAll(this.topic, (message) => {
           // Verify session is still current
           if (this.sessionId !== currentSession) {
             SignalingLog.debug('Ignoring MQTT message from previous session')
@@ -685,29 +1097,33 @@ export class SimplePeerManager {
           }
         })
         
-        if (subscribed) {
-          SignalingLog.info('Subscribed to topic', { topic: this.topic })
-          mqttConnected = true
+        if (subscribeCount > 0) {
+          SignalingLog.info('Subscribed to topic', { 
+            topic: this.topic, 
+            brokerCount: subscribeCount 
+          })
           this.updateSignalingState('connected')
         } else {
-          SignalingLog.warn('MQTT subscription failed after connection')
+          SignalingLog.warn('MQTT subscription failed on all brokers')
           this.mqtt.disconnect()
           this.mqtt = null
         }
         
       } catch (err) {
-        SignalingLog.error('MQTT connection failed on all brokers', { error: String(err) })
+        SignalingLog.error('MQTT connection failed', { error: String(err) })
+        this.onError(err as Error, 'mqtt-connection')
         if (this.mqtt) {
           this.mqtt.disconnect()
           this.mqtt = null
         }
       }
       
-      if (!mqttConnected) {
-        SignalingLog.warn('MQTT connection failed, using BroadcastChannel only (same-device connections only)')
+      if (!this.mqtt?.isConnected()) {
+        SignalingLog.warn('MQTT unavailable, using BroadcastChannel only (same-device connections only)')
         this.updateSignalingState('connected')  // Still "connected" for local mode
       }
       
+      // Start announcing presence
       setTimeout(() => {
         if (this.sessionId === currentSession) {
           this.broadcastAnnounce()
@@ -715,7 +1131,12 @@ export class SimplePeerManager {
       }, 300)
       this.startAnnounceInterval()
       
-      SignalingLog.info('Successfully joined room', { roomId, mqttConnected, sessionId: currentSession })
+      SignalingLog.info('Successfully joined room', { 
+        roomId, 
+        mqttConnected: this.mqtt?.isConnected() || false,
+        mqttBrokerCount: this.mqtt?.getConnectedCount() || 0,
+        sessionId: currentSession 
+      })
     } finally {
       this.isJoining = false
     }
@@ -734,7 +1155,8 @@ export class SimplePeerManager {
         from: selfId,
         userName: this.userName,
         ts: Date.now(),
-        sessionId: this.sessionId
+        sessionId: this.sessionId,
+        msgId: generateMessageId()
       }
       
       SignalingLog.debug('Broadcasting announce', { selfId, peerCount: this.peers.size })
@@ -773,15 +1195,23 @@ export class SimplePeerManager {
   }
 
   private broadcast(message: SignalMessage) {
+    // Ensure message has an ID for deduplication
+    if (!message.msgId) {
+      message.msgId = generateMessageId()
+    }
+    
     const jsonStr = JSON.stringify(message)
     let sentVia: string[] = []
     
+    // Publish to ALL connected MQTT brokers
     if (this.mqtt?.isConnected()) {
-      if (this.mqtt.publish(this.topic, jsonStr)) {
-        sentVia.push('MQTT')
+      const publishCount = this.mqtt.publish(this.topic, jsonStr)
+      if (publishCount > 0) {
+        sentVia.push(`MQTT(${publishCount} brokers)`)
       }
     }
     
+    // Also send via BroadcastChannel for same-device
     if (this.broadcastChannel) {
       try {
         this.broadcastChannel.postMessage(message)
@@ -797,19 +1227,20 @@ export class SimplePeerManager {
   private sendToPeer(peerId: string, message: SignalMessage) {
     message.to = peerId
     message.sessionId = this.sessionId
+    if (!message.msgId) {
+      message.msgId = generateMessageId()
+    }
     this.broadcast(message)
   }
 
   private handleSignalingMessage(message: SignalMessage) {
     // Filter out own messages
     if (message.from === selfId) {
-      SignalingLog.debug('Ignoring own message', { type: message.type })
       return
     }
     
     // Filter out messages for other peers
     if (message.to && message.to !== selfId) {
-      SignalingLog.debug('Ignoring message for other peer', { type: message.type, to: message.to })
       return
     }
     
@@ -886,9 +1317,6 @@ export class SimplePeerManager {
 
   /**
    * Configure Opus codec for optimal audio quality
-   * - maxaveragebitrate: 40kbps (good balance of quality and bandwidth)
-   * - stereo: disabled (conference audio is mono)
-   * - useinbandfec: enabled (forward error correction for packet loss)
    */
   private configureOpusCodec(sdp: string): string {
     return sdp.replace(
@@ -904,10 +1332,7 @@ export class SimplePeerManager {
       const pc = this.createPeerConnection(peerId, userName)
       const offer = await pc.createOffer()
       
-      // Apply Opus codec configuration
       const configuredSdp = this.configureOpusCodec(offer.sdp || '')
-      
-      // FIX: Explicitly set the type instead of using spread (...)
       const configuredOffer: RTCSessionDescriptionInit = { 
         type: offer.type, 
         sdp: configuredSdp 
@@ -1064,12 +1489,10 @@ export class SimplePeerManager {
       const iceState = pc.iceConnectionState
       PeerLog.info('ICE state', { peerId, state: iceState })
       
-      // Attempt ICE restart on failed or disconnected states
       if (iceState === 'failed') {
         PeerLog.warn('ICE connection failed, attempting restart', { peerId })
         setTimeout(() => this.attemptIceRestart(peerId), ICE_RESTART_DELAY)
       } else if (iceState === 'disconnected') {
-        // Wait a bit before attempting restart as 'disconnected' may be temporary
         PeerLog.warn('ICE connection disconnected, waiting before restart', { peerId })
         setTimeout(() => {
           const currentPeer = this.peers.get(peerId)
@@ -1109,11 +1532,30 @@ export class SimplePeerManager {
     }
     
     pc.ontrack = (event) => {
-      PeerLog.info('Received remote track', { peerId, kind: event.track.kind })
-      if (event.streams?.[0]) {
-        peerConn.stream = event.streams[0]
-        this.onRemoteStream(peerId, event.streams[0])
+      PeerLog.info('Received remote track', { 
+        peerId, 
+        kind: event.track.kind,
+        trackId: event.track.id,
+        streamCount: event.streams?.length || 0
+      })
+      
+      let remoteStream: MediaStream
+      if (event.streams && event.streams[0]) {
+        remoteStream = event.streams[0]
+      } else {
+        PeerLog.info('Creating MediaStream from track (no stream in event)', { peerId })
+        remoteStream = new MediaStream([event.track])
       }
+      
+      peerConn.stream = remoteStream
+      
+      PeerLog.info('Calling onRemoteStream callback', { 
+        peerId, 
+        streamId: remoteStream.id,
+        trackCount: remoteStream.getTracks().length,
+        audioTracks: remoteStream.getAudioTracks().length
+      })
+      this.onRemoteStream(peerId, remoteStream)
     }
     
     return pc
@@ -1121,7 +1563,6 @@ export class SimplePeerManager {
 
   /**
    * Attempt ICE restart for a peer connection
-   * This is useful when the connection fails but both peers are still available
    */
   private async attemptIceRestart(peerId: string) {
     const peer = this.peers.get(peerId)
@@ -1137,11 +1578,9 @@ export class SimplePeerManager {
     PeerLog.info('Attempting ICE restart', { peerId, attempt: peer.iceRestartAttempts })
     
     try {
-      // Create new offer with ICE restart flag
       const offer = await peer.pc.createOffer({ iceRestart: true })
       const configuredSdp = this.configureOpusCodec(offer.sdp || '')
       
-      // FIX: Explicitly set the type instead of using spread (...)
       const configuredOffer: RTCSessionDescriptionInit = { 
         type: offer.type, 
         sdp: configuredSdp 
@@ -1200,7 +1639,7 @@ export class SimplePeerManager {
       this.peers.clear()
       this.pendingCandidates.clear()
       
-      // Disconnect MQTT
+      // Disconnect all MQTT brokers
       if (this.mqtt) {
         this.mqtt.disconnect()
         this.mqtt = null
@@ -1240,7 +1679,7 @@ export class SimplePeerManager {
     this.peers.forEach((peer, peerId) => {
       const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio')
       if (sender) {
-        sender.replaceTrack(newTrack).catch(err => PeerLog.error('Replace track failed', { peerId }))
+        sender.replaceTrack(newTrack).catch(() => PeerLog.error('Replace track failed', { peerId }))
       }
     })
   }
@@ -1255,7 +1694,10 @@ export class SimplePeerManager {
       signalingState: this.signalingState,
       mqttConnected: this.mqtt?.isConnected() || false,
       mqttSubscribed: this.mqtt?.isSubscribed() || false,
-      mqttMessagesReceived: this.mqtt?.getMessageCount() || 0,
+      mqttBrokerCount: this.mqtt?.getConnectedCount() || 0,
+      mqttBrokerStatus: this.mqtt?.getConnectionStatus() || [],
+      mqttMessagesReceived: this.mqtt?.getTotalMessageCount() || 0,
+      mqttDedupCacheSize: this.mqtt?.getDeduplicatorSize() || 0,
       peerCount: this.peers.size,
       peers: Array.from(this.peers.keys()),
       localMuteStatus: this.localMuteStatus,
