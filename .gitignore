@@ -1,0 +1,119 @@
+# =====================================
+# 依赖目录（永不提交）
+# =====================================
+node_modules/
+.yarn/
+.pnpm-store/
+jspm_packages/
+bower_components/
+
+# =====================================
+# 构建 / 打包产物
+# =====================================
+dist/
+build/
+out/
+release/
+打包/
+*.exe
+*.dmg
+*.deb
+*.rpm
+*.AppImage
+*.msi
+*.pkg
+*.snap
+*.asar
+*.asar.unpacked
+
+# Electron 打包相关
+electron-builder.yaml  # 如果你用模板生成，可选忽略
+electron-builder.env
+packager.json
+
+# React / Vite / CRA 构建
+/.cache/
+.vite/
+coverage/
+storybook-static/
+
+# =====================================
+# 日志、临时文件、调试文件
+# =====================================
+*.log
+*.logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# WebRTC 相关可能产生的文件
+*.webm
+*.mp4  # 如果项目有本地录制功能
+*.mkv
+webrtc-logs/
+peerconnection-stats-*.json
+*.icecandidate
+*.sdp
+
+# 临时 / 缓存
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+*.swp
+*.swo
+*.swn
+*~
+.~*
+*.bak
+*.tmp
+*.temp
+.tmp/
+temp/
+tmp/
+
+# 编辑器 / IDE
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+
+# 测试 / 覆盖率
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+test-results/
+
+# 环境变量（敏感信息）
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 其他常见
+*.pid
+*.seed
+*.pid.lock
+*.tgz
+*.gz
+*.zip
+*.rar
+*.7z
+
+# 如果你使用 electron-forge / electron-builder 的缓存
+.cache/
+forge.config.js.cache
+
+.vite/
+dist-electron/
