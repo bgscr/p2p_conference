@@ -124,4 +124,6 @@ dist-electron/
 # 保留指定的文件类型（** 通配符支持多级子目录，如果有）
 !build/icons/**/*.icns
 !build/icons/**/*.ico
-!build/icons/**/*.png
+!build/icons/**/*.png-e 
+# Log files
+logs/

@@ -5,6 +5,8 @@
 
 import { contextBridge, ipcRenderer } from 'electron'
 
+type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+
 /**
  * Exposed API for renderer process
  */
@@ -36,6 +38,27 @@ const electronAPI = {
       ipcRenderer.removeAllListeners('download-logs')
     }
   },
+  
+  // ============================================
+  // Logging API
+  // ============================================
+  
+  /**
+   * Send a log message to main process for file logging
+   */
+  log: (level: LogLevel, module: string, message: string, data?: any): void => {
+    ipcRenderer.send('log-message', { level, module, message, data })
+  },
+  
+  /**
+   * Get the logs directory path
+   */
+  getLogsDir: (): Promise<string> => ipcRenderer.invoke('get-logs-dir'),
+  
+  /**
+   * Open the logs folder in file explorer
+   */
+  openLogsFolder: (): Promise<boolean> => ipcRenderer.invoke('open-logs-folder'),
   
   // ============================================
   // System Tray Integration

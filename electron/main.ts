@@ -5,13 +5,15 @@
 
 import { app, BrowserWindow, ipcMain, systemPreferences, Menu, shell, Tray, nativeImage } from 'electron'
 import { join } from 'path'
+import { fileLogger, MainLog, TrayLog, IPCLog } from './logger'
+import type { LogLevel } from './logger'
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
 try {
   if (require('electron-squirrel-startup')) {
     app.quit()
   }
-} catch (e) {
+} catch {
   // electron-squirrel-startup not installed, skip
 }
 
@@ -25,7 +27,7 @@ let isInCall = false
  * Create a simple tray icon using nativeImage
  * Creates a 16x16 (or 32x32 for retina) icon with a simple microphone design
  */
-function createTrayIcon(muted: boolean = false): nativeImage {
+function createTrayIcon(muted: boolean = false): Electron.NativeImage {
   // Create a simple icon programmatically
   // In production, you would use actual icon files
   const size = process.platform === 'darwin' ? 22 : 16
@@ -83,6 +85,8 @@ function createTray(): void {
       mainWindow.focus()
     }
   })
+  
+  TrayLog.info('System tray created')
 }
 
 /**
@@ -114,6 +118,7 @@ function updateTrayMenu(): void {
         mainWindow?.webContents.send('tray-toggle-mute')
         updateTrayIcon()
         updateTrayMenu()
+        TrayLog.info('Mute toggled from tray', { muted: isMuted })
       }
     },
     {
@@ -121,6 +126,7 @@ function updateTrayMenu(): void {
       enabled: isInCall,
       click: () => {
         mainWindow?.webContents.send('tray-leave-call')
+        TrayLog.info('Leave call triggered from tray')
       }
     },
     { type: 'separator' },
@@ -129,6 +135,15 @@ function updateTrayMenu(): void {
       enabled: false
     },
     { type: 'separator' },
+    {
+      label: 'Open Logs Folder',
+      click: () => {
+        const logsDir = fileLogger.getLogsDir()
+        if (logsDir) {
+          shell.openPath(logsDir)
+        }
+      }
+    },
     {
       label: 'Download Logs',
       click: () => {
@@ -140,6 +155,7 @@ function updateTrayMenu(): void {
       label: 'Quit',
       click: () => {
         isQuitting = true
+        MainLog.info('App quitting from tray menu')
         app.quit()
       }
     }
@@ -191,6 +207,16 @@ function createMenu(): void {
     {
       label: 'File',
       submenu: [
+        {
+          label: 'Open Logs Folder',
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => {
+            const logsDir = fileLogger.getLogsDir()
+            if (logsDir) {
+              shell.openPath(logsDir)
+            }
+          }
+        },
         {
           label: 'Download Logs',
           accelerator: 'CmdOrCtrl+Shift+L',
@@ -278,6 +304,15 @@ function createMenu(): void {
       label: 'Help',
       submenu: [
         {
+          label: 'Open Logs Folder',
+          click: () => {
+            const logsDir = fileLogger.getLogsDir()
+            if (logsDir) {
+              shell.openPath(logsDir)
+            }
+          }
+        },
+        {
           label: 'Download Logs',
           accelerator: 'CmdOrCtrl+Shift+L',
           click: () => {
@@ -303,6 +338,8 @@ function createMenu(): void {
  * Create the main application window
  */
 function createWindow(): void {
+  MainLog.info('Creating main window')
+  
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -325,20 +362,24 @@ function createWindow(): void {
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173')
     mainWindow.webContents.openDevTools()
+    MainLog.info('Loading development server')
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    MainLog.info('Loading production build')
   }
 
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    console.error('Failed to load:', errorCode, errorDescription)
+  mainWindow.webContents.on('did-fail-load', (_, errorCode, errorDescription) => {
+    MainLog.error('Failed to load', { errorCode, errorDescription })
   })
 
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    console.log(`[Renderer] ${message}`)
+  mainWindow.webContents.on('console-message', (_, __, message) => {
+    // Note: Renderer logs are now handled via IPC for file logging
+    // This just catches any stray console.log calls
   })
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+    MainLog.info('Main window ready and shown')
   })
 
   // Minimize to tray instead of closing (when in call)
@@ -346,6 +387,7 @@ function createWindow(): void {
     if (!isQuitting && isInCall) {
       event.preventDefault()
       mainWindow?.hide()
+      MainLog.info('Window hidden to tray (call active)')
       
       // Show notification that app is minimized to tray
       if (tray && process.platform !== 'darwin') {
@@ -360,6 +402,7 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+    MainLog.info('Main window closed')
   })
 }
 
@@ -369,9 +412,11 @@ function createWindow(): void {
 async function requestMicrophonePermission(): Promise<boolean> {
   if (process.platform === 'darwin') {
     const status = systemPreferences.getMediaAccessStatus('microphone')
+    MainLog.info('Checking microphone permission', { status })
     
     if (status === 'not-determined') {
       const granted = await systemPreferences.askForMediaAccess('microphone')
+      MainLog.info('Microphone permission requested', { granted })
       return granted
     }
     
@@ -385,8 +430,19 @@ async function requestMicrophonePermission(): Promise<boolean> {
  * App ready handler
  */
 app.whenReady().then(async () => {
+  // Initialize file logger first
+  await fileLogger.init()
+  
+  MainLog.info('App starting', {
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    nodeVersion: process.version,
+    electronVersion: process.versions.electron
+  })
+  
   const micPermission = await requestMicrophonePermission()
-  console.log('Microphone permission:', micPermission ? 'granted' : 'denied')
+  MainLog.info('Microphone permission', { granted: micPermission })
 
   createWindow()
   createTray()
@@ -406,6 +462,7 @@ app.whenReady().then(async () => {
  */
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    MainLog.info('All windows closed, quitting')
     app.quit()
   }
 })
@@ -415,6 +472,7 @@ app.on('window-all-closed', () => {
  */
 app.on('before-quit', () => {
   isQuitting = true
+  MainLog.info('App quitting')
 })
 
 /**
@@ -445,6 +503,31 @@ ipcMain.handle('get-platform', () => {
 })
 
 /**
+ * Logging IPC Handlers
+ */
+
+// Handle log messages from renderer process
+ipcMain.on('log-message', (_, args: { level: LogLevel; module: string; message: string; data?: any }) => {
+  fileLogger.logFromRenderer(args.level, args.module, args.message, args.data)
+})
+
+// Get logs directory path
+ipcMain.handle('get-logs-dir', () => {
+  return fileLogger.getLogsDir()
+})
+
+// Open logs folder in file explorer
+ipcMain.handle('open-logs-folder', async () => {
+  const logsDir = fileLogger.getLogsDir()
+  if (logsDir) {
+    await shell.openPath(logsDir)
+    IPCLog.info('Opened logs folder', { path: logsDir })
+    return true
+  }
+  return false
+})
+
+/**
  * Tray-related IPC handlers
  */
 
@@ -454,6 +537,7 @@ ipcMain.on('update-call-state', (_, state: { inCall: boolean; muted: boolean }) 
   isMuted = state.muted
   updateTrayIcon()
   updateTrayMenu()
+  IPCLog.debug('Call state updated', state)
 })
 
 // Update mute state from renderer
@@ -461,6 +545,7 @@ ipcMain.on('update-mute-state', (_, muted: boolean) => {
   isMuted = muted
   updateTrayIcon()
   updateTrayMenu()
+  IPCLog.debug('Mute state updated', { muted })
 })
 
 // Show window from renderer request

@@ -1,6 +1,10 @@
 /**
  * Logger Utility
- * Centralized logging with export capability for troubleshooting
+ * Centralized logging with both in-memory storage and file output (via IPC)
+ * 
+ * Logs are:
+ * 1. Stored in memory for quick access and download
+ * 2. Sent to main process for file-based logging in {app-root}/logs/
  */
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -13,9 +17,13 @@ export interface LogEntry {
   data?: any
 }
 
+// Check if we're running in Electron with the API available
+const hasElectronAPI = typeof window !== 'undefined' && 
+  (window as any).electronAPI?.log !== undefined
+
 class Logger {
   private logs: LogEntry[] = []
-  private maxLogs: number = 5000  // Keep last 5000 entries
+  private maxLogs: number = 5000  // Keep last 5000 entries in memory
   private logLevel: LogLevel = 'debug'
   
   private levelPriority: Record<LogLevel, number> = {
@@ -53,12 +61,14 @@ class Logger {
       return
     }
 
+    const sanitizedData = data !== undefined ? this.sanitizeData(data) : undefined
+    
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
       module,
       message,
-      data: data !== undefined ? this.sanitizeData(data) : undefined
+      data: sanitizedData
     }
 
     // Store in memory
@@ -67,6 +77,15 @@ class Logger {
     // Trim if exceeds max
     if (this.logs.length > this.maxLogs) {
       this.logs = this.logs.slice(-this.maxLogs)
+    }
+
+    // Send to main process for file logging (if available)
+    if (hasElectronAPI) {
+      try {
+        (window as any).electronAPI.log(level, module, message, sanitizedData)
+      } catch {
+        // Ignore IPC errors - console output will still work
+      }
     }
 
     // Also output to console
@@ -128,14 +147,14 @@ class Logger {
       // Try to serialize
       JSON.stringify(data)
       return data
-    } catch (e) {
+    } catch {
       // If serialization fails, return string representation
       return String(data)
     }
   }
 
   /**
-   * Get all logs
+   * Get all logs from memory
    */
   getLogs(): LogEntry[] {
     return [...this.logs]
@@ -179,7 +198,7 @@ class Logger {
   }
 
   /**
-   * Download logs as a file
+   * Download logs as a file (in-memory logs)
    */
   downloadLogs() {
     const text = this.getLogsAsText()
@@ -201,11 +220,39 @@ class Logger {
   }
 
   /**
-   * Clear all logs
+   * Open the logs folder (if running in Electron)
+   */
+  async openLogsFolder(): Promise<boolean> {
+    if (hasElectronAPI) {
+      try {
+        return await (window as any).electronAPI.openLogsFolder()
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+
+  /**
+   * Get the logs directory path (if running in Electron)
+   */
+  async getLogsDir(): Promise<string | null> {
+    if (hasElectronAPI) {
+      try {
+        return await (window as any).electronAPI.getLogsDir()
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+
+  /**
+   * Clear all in-memory logs
    */
   clearLogs() {
     this.logs = []
-    console.info('[Logger] Logs cleared')
+    console.info('[Logger] In-memory logs cleared')
   }
 
   /**
@@ -223,7 +270,8 @@ class Logger {
       screenHeight: window.screen.height,
       windowWidth: window.innerWidth,
       windowHeight: window.innerHeight,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      hasElectronAPI
     }
   }
 

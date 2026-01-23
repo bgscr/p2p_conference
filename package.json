@@ -46,10 +46,14 @@
       "public/**/*"
     ],
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": ["zip"],
       "category": "public.app-category.social-networking",
+      "icon": "build/icons/icon.png",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "sign": false
     },
     "win": {
       "target": ["nsis", "portable"],
