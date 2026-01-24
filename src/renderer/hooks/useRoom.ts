@@ -16,7 +16,14 @@ export const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' }
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  {
+    urls: [
+      'turn:47.86.89.65:3478',
+    ],
+    username: 'turnuser',
+    credential: '!hNze49*P2mzK9GXJaD!%2F^9&KqQe@4'
+  }
 ]
 
 interface UseRoomResult {
