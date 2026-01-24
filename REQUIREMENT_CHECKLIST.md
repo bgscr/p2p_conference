@@ -194,7 +194,7 @@
    - Existing generator already uses crypto.getRandomValues() with 12 chars
 
 3. **Verified Existing Optimizations (from Session 10)**
-   - Opus codec SDP configuration: maxaveragebitrate=40000, stereo=0, useinbandfec=1
+   - Opus codec SDP configuration: maxaveragebitrate=60000, stereo=0, useinbandfec=1
    - ICE restart on connection failure with max 2 attempts
    - Multiple MQTT broker fallback: HiveMQ → EMQX → Mosquitto
    - Connection timeout feedback with elapsed timer and progress bar
@@ -441,7 +441,7 @@ P2P_Conference/
 
 1. **Opus Codec Configuration (SDP Munging)**
    - Added `configureOpusCodec()` method in SimplePeerManager
-   - Configures: maxaveragebitrate=40000, stereo=0, useinbandfec=1
+   - Configures: maxaveragebitrate=60000, stereo=0, useinbandfec=1
    - Benefits: Optimized bandwidth usage and packet loss resilience
 
 2. **ICE Restart on Connection Failure**
@@ -502,7 +502,7 @@ After thorough analysis of all project files against the p2p-conference skill do
    ```javascript
    offer.sdp = offer.sdp?.replace(
      /(a=fmtp:\d+ .*)/, 
-     '$1;maxaveragebitrate=40000;stereo=0;useinbandfec=1'
+     '$1;maxaveragebitrate=60000;stereo=0;useinbandfec=1'
    )
    ```
 

@@ -1328,7 +1328,7 @@ export class SimplePeerManager {
   private configureOpusCodec(sdp: string): string {
     return sdp.replace(
       /(a=fmtp:\d+ .*)/g,
-      '$1;maxaveragebitrate=40000;stereo=0;useinbandfec=1'
+      '$1;maxaveragebitrate=60000;stereo=0;useinbandfec=1'
     )
   }
 

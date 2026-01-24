@@ -388,11 +388,11 @@ export function usePeerConnections(
  * Optimize Opus codec settings in SDP
  */
 function optimizeOpusSdp(sdp: string): string {
-  // Set Opus bitrate to 40kbps (good quality for voice, low bandwidth)
+  // Set Opus bitrate to 60kbps (good quality for voice, low bandwidth)
   // Enable forward error correction for packet loss resilience
   // Disable stereo (not needed for conference)
   return sdp.replace(
     /(a=fmtp:\d+ .*)/g,
-    '$1;maxaveragebitrate=40000;stereo=0;useinbandfec=1'
+    '$1;maxaveragebitrate=60000;stereo=0;useinbandfec=1'
   )
 }
