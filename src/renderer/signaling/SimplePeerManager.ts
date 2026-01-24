@@ -59,6 +59,7 @@ const RECONNECT_MAX_ATTEMPTS = 5
 // Multiple MQTT brokers for redundancy - we connect to ALL of them
 // and broadcast on all connected brokers to maximize connectivity
 const MQTT_BROKERS = [
+  'ws://47.86.89.65:8083/mqtt',
   'wss://broker.emqx.io:8084/mqtt',      // Global EMQX (most reliable)
   'wss://broker-cn.emqx.io:8084/mqtt',   // China EMQX  
   'wss://test.mosquitto.org:8081/mqtt'   // Mosquitto public broker
