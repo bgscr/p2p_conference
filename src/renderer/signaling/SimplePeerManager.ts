@@ -34,7 +34,7 @@ const ICE_SERVERS: RTCIceServer[] = [
       'turn:47.86.89.65:3478',
     ],
     username: 'turnuser',
-    credential: '!hNze49*P2mzK9GXJaD!%2F^9&KqQe@4'
+    credential: 'huUKPizqnXPY5W94BXpPh3hZ4nZcdhA3'
   }
 ]
 
