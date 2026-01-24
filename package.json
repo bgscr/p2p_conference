@@ -57,7 +57,7 @@
     },
     "win": {
       "target": ["nsis", "portable"],
-      "sign": false
+      "icon": "build/icons/icon.png"
     },
     "linux": {
       "target": ["AppImage", "deb"],
