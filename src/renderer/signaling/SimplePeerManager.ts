@@ -50,9 +50,8 @@ const ICE_SERVERS: RTCIceServer[] = [
 ]
 
 // Timing constants
-const ANNOUNCE_INTERVAL = 2000
-const PEER_TIMEOUT = 5000       // 5 seconds timeout for peer disconnection
-const PEER_CLEANUP_INTERVAL = 1000
+const ANNOUNCE_INTERVAL = 3000
+const ANNOUNCE_DURATION = 60000
 const MQTT_KEEPALIVE = 20000
 const MAX_ICE_RESTART_ATTEMPTS = 3
 const ICE_RESTART_DELAY = 2000
@@ -119,7 +118,6 @@ interface PeerConnection {
   iceRestartInProgress: boolean
   disconnectTimer: NodeJS.Timeout | null
   reconnectTimer: NodeJS.Timeout | null
-  lastSeen: number
 }
 
 type PeerEventCallback = (peerId: string, userName: string, platform: 'win' | 'mac' | 'linux') => void
@@ -1002,7 +1000,6 @@ export class SimplePeerManager {
 
   // Debounce timer for announce messages
   private announceDebounceTimer: NodeJS.Timeout | null = null
-  private peerCleanupInterval: NodeJS.Timeout | null = null
 
   // Signaling state tracking
   private signalingState: SignalingState = 'idle'
@@ -1143,7 +1140,6 @@ export class SimplePeerManager {
     if (this.roomId) {
       SignalingLog.info('Cleaning up previous room before joining new one')
       this.leaveRoom()
-      this.stopPeerCleanup()
       // Small delay to ensure cleanup completes
       await new Promise(resolve => setTimeout(resolve, 100))
     }
@@ -1222,7 +1218,6 @@ export class SimplePeerManager {
         })
 
         connectedBrokers = await this.mqtt.connectAll()
-        this.startPeerCleanup()
 
         if (connectedBrokers.length === 0) {
           throw new Error('No MQTT brokers could be connected')
@@ -1351,58 +1346,16 @@ export class SimplePeerManager {
     this.announceInterval = setInterval(() => {
       const elapsed = Date.now() - this.announceStartTime
 
+      if (elapsed > ANNOUNCE_DURATION && this.getHealthyPeerCount() > 0) {
+        this.stopAnnounceInterval()
+        return
+      }
+
       if (this.getHealthyPeerCount() === 0) {
         SignalingLog.debug('Re-announcing', { elapsed: Math.round(elapsed / 1000) + 's' })
         this.broadcastAnnounce()
-      } else {
-        // Keep announcing periodically as a heartbeat even if connected
-        // This ensures new peers can discover us and we stay "alive" for peers tracking lastSeen
-        this.broadcastAnnounce()
       }
     }, ANNOUNCE_INTERVAL)
-  }
-
-  private startPeerCleanup() {
-    this.stopPeerCleanup()
-
-    this.peerCleanupInterval = setInterval(() => {
-      const now = Date.now()
-      this.peers.forEach((peer, peerId) => {
-        // Skip cleanup for peers that are just connecting or reconnecting
-        if (!peer.isConnected && !peer.reconnectTimer) {
-          // Maybe allow some grace period for initial connection?
-          // For now, checks against lastSeen which is set on creation
-        }
-
-        if (now - peer.lastSeen > PEER_TIMEOUT) {
-          PeerLog.warn('Peer timed out', { peerId, lastSeenAgo: now - peer.lastSeen })
-          this.destroyPeer(peerId)
-        }
-      })
-    }, PEER_CLEANUP_INTERVAL)
-  }
-
-  private stopPeerCleanup() {
-    if (this.peerCleanupInterval) {
-      clearInterval(this.peerCleanupInterval)
-      this.peerCleanupInterval = null
-    }
-  }
-
-  private destroyPeer(peerId: string) {
-    const peer = this.peers.get(peerId)
-    if (peer) {
-      try {
-        peer.pc.close()
-      } catch { }
-
-      if (peer.disconnectTimer) clearTimeout(peer.disconnectTimer)
-      if (peer.reconnectTimer) clearTimeout(peer.reconnectTimer)
-
-      this.peers.delete(peerId)
-      this.pendingCandidates.delete(peerId)
-      this.onPeerLeave(peerId, peer.userName, peer.platform)
-    }
   }
 
   private stopAnnounceInterval() {
@@ -1413,13 +1366,6 @@ export class SimplePeerManager {
     if (this.announceDebounceTimer) {
       clearTimeout(this.announceDebounceTimer)
       this.announceDebounceTimer = null
-    }
-  }
-
-  private updatePeerLastSeen(peerId: string) {
-    const peer = this.peers.get(peerId)
-    if (peer) {
-      peer.lastSeen = Date.now()
     }
   }
 
@@ -1479,26 +1425,16 @@ export class SimplePeerManager {
 
     switch (message.type) {
       case 'announce':
-        this.updatePeerLastSeen(message.from)
         this.handleAnnounce(message.from, message.userName || 'Unknown', message.platform || 'win')
         break
       case 'offer':
-        this.updatePeerLastSeen(message.from)
         this.handleOffer(message.from, message.data, message.userName || 'Unknown', message.platform || 'win')
         break
       case 'answer':
-        this.updatePeerLastSeen(message.from)
         this.handleAnswer(message.from, message.data)
         break
       case 'ice-candidate':
-        this.updatePeerLastSeen(message.from)
         this.handleIceCandidate(message.from, message.data)
-        break
-      case 'ping':
-      case 'pong':
-      case 'mute-status':
-        this.updatePeerLastSeen(message.from)
-        break
         break
       case 'leave':
         this.handlePeerLeave(message.from)
@@ -1701,8 +1637,7 @@ export class SimplePeerManager {
       iceRestartAttempts: 0,
       iceRestartInProgress: false,
       disconnectTimer: null,
-      reconnectTimer: null,
-      lastSeen: Date.now()
+      reconnectTimer: null
     }
 
     this.peers.set(peerId, peerConn)

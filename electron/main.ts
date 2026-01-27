@@ -31,26 +31,8 @@ function createTrayIcon(muted: boolean = false): Electron.NativeImage {
   // Use PNG icons for Windows/Linux to ensure they render correctly
   if (process.platform !== 'darwin') {
     const iconName = muted ? 'tray-muted.png' : 'tray-default.png'
-
-    // Attempt to resolve icon path in different environments
-    let iconPath = join(__dirname, 'icons', iconName)
-
-    // If not found (often in dev), try looking in the source tree relative to app root
-    try {
-      const fs = require('fs')
-      if (!fs.existsSync(iconPath)) {
-        // In dev mode: source file is in electron/icons
-        iconPath = join(app.getAppPath(), 'electron', 'icons', iconName)
-        if (!fs.existsSync(iconPath)) {
-          // Fallback: try resources path (production)
-          iconPath = join(process.resourcesPath, 'icons', iconName)
-        }
-      }
-    } catch (e) {
-      // Fallback to original path on error
-      MainLog.error('Error resolving icon path', { error: String(e) })
-    }
-
+    const iconPath = join(__dirname, 'icons', iconName)
+    // MainLog.debug('Loading tray icon', { path: iconPath })
     return nativeImage.createFromPath(iconPath)
   }
 
