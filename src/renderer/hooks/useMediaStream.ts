@@ -17,7 +17,7 @@ interface UseMediaStreamResult {
   audioLevel: number
   isLoading: boolean
   error: string | null
-  
+
   startCapture: (config?: Partial<AudioProcessingConfig>) => Promise<MediaStream | null>
   stopCapture: () => void
   switchInputDevice: (deviceId: string) => Promise<MediaStream | null>
@@ -50,6 +50,12 @@ export function useMediaStream(): UseMediaStreamResult {
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const localStreamRef = useRef<MediaStream | null>(null)
+
+  // Keep ref in sync with state for use in callbacks
+  useEffect(() => {
+    localStreamRef.current = localStream
+  }, [localStream])
 
   /**
    * Set up audio level monitoring using Web Audio API
@@ -79,11 +85,11 @@ export function useMediaStream(): UseMediaStreamResult {
 
     const updateLevel = () => {
       analyser.getByteFrequencyData(dataArray)
-      
+
       // Calculate average volume level (0-100)
       const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
       const normalizedLevel = Math.min(100, (average / 128) * 100)
-      
+
       setAudioLevel(normalizedLevel)
       animationFrameRef.current = requestAnimationFrame(updateLevel)
     }
@@ -97,10 +103,10 @@ export function useMediaStream(): UseMediaStreamResult {
    */
   const refreshDevices = useCallback(async () => {
     MediaLog.debug('Refreshing audio devices')
-    
+
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
-      
+
       const inputs: AudioDevice[] = []
       const outputs: AudioDevice[] = []
 
@@ -133,9 +139,9 @@ export function useMediaStream(): UseMediaStreamResult {
         setSelectedOutputDevice(outputs[0].deviceId)
       }
 
-      MediaLog.info('Audio devices enumerated', { 
-        inputCount: inputs.length, 
-        outputCount: outputs.length 
+      MediaLog.info('Audio devices enumerated', {
+        inputCount: inputs.length,
+        outputCount: outputs.length
       })
     } catch (err) {
       MediaLog.error('Failed to enumerate devices', { error: err })
@@ -170,16 +176,16 @@ export function useMediaStream(): UseMediaStreamResult {
       // Add timeout wrapper to prevent getUserMedia from hanging indefinitely
       // This is particularly important on Linux where audio devices can get "locked"
       const CAPTURE_TIMEOUT_MS = 10000 // 10 seconds
-      
+
       MediaLog.debug('Calling getUserMedia', { deviceId: selectedInputDevice || 'default' })
-      
+
       const stream = await Promise.race([
         navigator.mediaDevices.getUserMedia(constraints),
-        new Promise<never>((_, reject) => 
+        new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Microphone capture timed out. The audio device may be in use by another application.')), CAPTURE_TIMEOUT_MS)
         )
       ])
-      
+
       MediaLog.debug('getUserMedia returned successfully', { streamId: stream.id })
       setLocalStream(stream)
 
@@ -189,16 +195,16 @@ export function useMediaStream(): UseMediaStreamResult {
       // Set up audio level monitoring
       setupAudioLevelMonitoring(stream)
 
-      MediaLog.info('Audio capture started', { 
+      MediaLog.info('Audio capture started', {
         streamId: stream.id,
         tracks: stream.getTracks().map(t => ({ kind: t.kind, label: t.label }))
       })
-      
+
       setIsLoading(false)
       return stream
     } catch (err: any) {
       MediaLog.error('Failed to start capture', { error: err })
-      
+
       if (err.name === 'NotAllowedError') {
         setError('Microphone permission denied. Please allow access in your browser/system settings.')
       } else if (err.name === 'NotFoundError') {
@@ -213,7 +219,7 @@ export function useMediaStream(): UseMediaStreamResult {
 
   // Track if cleanup has already been done to prevent double cleanup
   const cleanupDoneRef = useRef(false)
-  
+
   /**
    * Stop audio capture - with guard against double cleanup
    */
@@ -223,14 +229,17 @@ export function useMediaStream(): UseMediaStreamResult {
       MediaLog.debug('Cleanup already done, skipping')
       return
     }
-    
-    if (localStream) {
+
+    // Use ref to get current stream
+    const stream = localStreamRef.current
+    if (stream) {
       cleanupDoneRef.current = true
-      localStream.getTracks().forEach(track => {
+      stream.getTracks().forEach(track => {
         track.stop()
         MediaLog.debug('Track stopped', { kind: track.kind, label: track.label })
       })
       setLocalStream(null)
+      MediaLog.info('Audio capture stopped')
     }
 
     if (audioContextRef.current) {
@@ -244,10 +253,7 @@ export function useMediaStream(): UseMediaStreamResult {
     }
 
     setAudioLevel(0)
-    if (localStream) {
-      MediaLog.info('Audio capture stopped')
-    }
-  }, [localStream])
+  }, [])  // No dependencies - uses refs
 
   // Callback for notifying stream changes (used by peer manager)
   const onStreamChangeRef = useRef<((stream: MediaStream) => void) | null>(null)
@@ -264,7 +270,9 @@ export function useMediaStream(): UseMediaStreamResult {
    * Returns the new stream for the caller to handle track replacement
    */
   const switchInputDevice = useCallback(async (deviceId: string): Promise<MediaStream | null> => {
-    if (!localStream) {
+    // Use ref to always get current stream (avoid stale closure issues)
+    const currentStream = localStreamRef.current
+    if (!currentStream) {
       setSelectedInputDevice(deviceId)
       return null
     }
@@ -284,14 +292,20 @@ export function useMediaStream(): UseMediaStreamResult {
       })
 
       // Stop old tracks AFTER we have the new stream
-      localStream.getTracks().forEach(track => {
+      currentStream.getTracks().forEach(track => {
         MediaLog.debug('Stopping old track', { kind: track.kind, label: track.label })
         track.stop()
       })
 
+      // Reset cleanup flag since this is an intentional switch, not a stop
+      cleanupDoneRef.current = false
+
       // Update stream
       setLocalStream(newStream)
       setSelectedInputDevice(deviceId)
+
+      // Reset mute state since new track starts unmuted
+      setIsMuted(false)
 
       // Re-setup audio monitoring
       setupAudioLevelMonitoring(newStream)
@@ -302,19 +316,19 @@ export function useMediaStream(): UseMediaStreamResult {
         onStreamChangeRef.current(newStream)
       }
 
-      MediaLog.info('Input device switched successfully', { 
-        deviceId, 
+      MediaLog.info('Input device switched successfully', {
+        deviceId,
         newStreamId: newStream.id,
-        trackLabel: newStream.getAudioTracks()[0]?.label 
+        trackLabel: newStream.getAudioTracks()[0]?.label
       })
-      
+
       return newStream
     } catch (err) {
       MediaLog.error('Failed to switch input device', { deviceId, error: err })
       setError('Failed to switch microphone')
       return null
     }
-  }, [localStream, setupAudioLevelMonitoring])
+  }, [setupAudioLevelMonitoring])
 
   /**
    * Select output device (for HTMLAudioElement.setSinkId)
@@ -324,19 +338,20 @@ export function useMediaStream(): UseMediaStreamResult {
     MediaLog.info('Output device selected', { deviceId })
   }, [])
 
+
   /**
    * Toggle mute state
    */
   const toggleMute = useCallback(() => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0]
+    if (localStreamRef.current) {
+      const audioTrack = localStreamRef.current.getAudioTracks()[0]
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled
         setIsMuted(!audioTrack.enabled)
         MediaLog.info('Mute toggled', { muted: !audioTrack.enabled })
       }
     }
-  }, [localStream])
+  }, [])
 
   // Listen for device changes (hot-plug)
   useEffect(() => {
@@ -346,7 +361,7 @@ export function useMediaStream(): UseMediaStreamResult {
     }
 
     navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange)
-    
+
     // Initial device enumeration
     refreshDevices()
 
@@ -355,12 +370,14 @@ export function useMediaStream(): UseMediaStreamResult {
     }
   }, [refreshDevices])
 
-  // Cleanup on unmount
+  // Cleanup on unmount only - empty deps means only on unmount
   useEffect(() => {
     return () => {
+      // Use ref-based stopCapture which has no dependencies
       stopCapture()
     }
-  }, [stopCapture])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])  // Empty deps - only run on unmount
 
   return {
     localStream,
