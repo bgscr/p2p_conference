@@ -19,7 +19,7 @@ export const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.cloudflare.com:3478' },
   {
     urls: [
-      'turn:47.86.89.65:3478',
+      'turn:47.111.10.155:3478',
     ],
     username: 'turnuser',
     credential: 'huUKPizqnXPY5W94BXpPh3hZ4nZcdhA3'

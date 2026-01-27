@@ -31,7 +31,7 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.cloudflare.com:3478' },
   {
     urls: [
-      'turn:47.86.89.65:3478',
+      'turn:47.111.10.155:3478',
     ],
     username: 'turnuser',
     credential: 'huUKPizqnXPY5W94BXpPh3hZ4nZcdhA3'
@@ -56,13 +56,23 @@ const RECONNECT_BASE_DELAY = 2000
 const RECONNECT_MAX_DELAY = 30000
 const RECONNECT_MAX_ATTEMPTS = 5
 
+interface BrokerConfig {
+  url: string
+  username?: string
+  password?: string
+}
+
 // Multiple MQTT brokers for redundancy - we connect to ALL of them
 // and broadcast on all connected brokers to maximize connectivity
-const MQTT_BROKERS = [
-  'ws://47.86.89.65:8083/mqtt',
-  'wss://broker.emqx.io:8084/mqtt',      // Global EMQX (most reliable)
-  'wss://broker-cn.emqx.io:8084/mqtt',   // China EMQX  
-  'wss://test.mosquitto.org:8081/mqtt'   // Mosquitto public broker
+const MQTT_BROKERS: BrokerConfig[] = [
+  { 
+    url: 'ws://47.111.10.155:8083/mqtt',
+    username: 'mqtt_admin',
+    password: 'Q32yrcmtp53tpnEpSZj7nTZUmqKML6mF'
+  },
+  { url: 'wss://broker.emqx.io:8084/mqtt' }, // Global EMQX (most reliable)
+  { url: 'wss://broker-cn.emqx.io:8084/mqtt' }, // China EMQX  
+  { url: 'wss://test.mosquitto.org:8081/mqtt' } // Mosquitto public broker
 ]
 
 interface SignalMessage {
@@ -202,9 +212,13 @@ class MQTTClient {
   private brokerUrl: string = ''
   private onDisconnectCallback: ((brokerUrl: string) => void) | null = null
   private isIntentionallyClosed = false
+  private username?: string
+  private password?: string
 
-  constructor(brokerUrl: string) {
+  constructor(brokerUrl: string, username?: string, password?: string) {
     this.brokerUrl = brokerUrl
+    this.username = username
+    this.password = password
     // Include broker identifier in client ID to avoid conflicts
     const brokerHash = brokerUrl.split('//')[1]?.split('.')[0] || 'unknown'
     this.clientId = `p2p_${selfId.substring(0, 6)}_${brokerHash}_${Math.random().toString(36).substring(2, 4)}`
@@ -349,25 +363,91 @@ class MQTTClient {
     const clientIdBytes = new TextEncoder().encode(this.clientId)
     const protocolName = new TextEncoder().encode('MQTT')
     
-    const remainingLength = 10 + 2 + clientIdBytes.length
-    const packet = new Uint8Array(2 + remainingLength)
+    let usernameBytes = new Uint8Array(0)
+    let passwordBytes = new Uint8Array(0)
     
+    if (this.username) {
+      usernameBytes = new TextEncoder().encode(this.username)
+    }
+    if (this.password) {
+      passwordBytes = new TextEncoder().encode(this.password)
+    }
+
+    // Variable Header (10 bytes) + Client ID (2 len + bytes)
+    let payloadLength = 10 + (2 + clientIdBytes.length)
+
+    if (this.username) {
+      payloadLength += (2 + usernameBytes.length)
+    }
+    if (this.password) {
+      payloadLength += (2 + passwordBytes.length)
+    }
+
+    const lengthBytes: number[] = []
+    let x = payloadLength
+    do {
+      let byte = x % 128
+      x = Math.floor(x / 128)
+      if (x > 0) byte |= 0x80
+      lengthBytes.push(byte)
+    } while (x > 0)
+
+    const packet = new Uint8Array(1 + lengthBytes.length + payloadLength)
     let i = 0
-    packet[i++] = 0x10  // CONNECT packet type
-    packet[i++] = remainingLength
-    packet[i++] = 0
-    packet[i++] = 4
+
+    // --- Fixed Header ---
+    packet[i++] = 0x10  // CONNECT Packet Type
+    
+    for (const b of lengthBytes) {
+      packet[i++] = b
+    }
+
+    // --- Variable Header ---
+    packet[i++] = 0     // Protocol Name Length MSB
+    packet[i++] = 4     // Protocol Name Length LSB
     packet.set(protocolName, i)
     i += 4
-    packet[i++] = 4     // Protocol level (MQTT 3.1.1)
-    packet[i++] = 2     // Connect flags (clean session)
-    packet[i++] = 0
-    packet[i++] = 30    // Keep alive (30 seconds)
+    
+    packet[i++] = 4     // Protocol Level (MQTT 3.1.1)
+    
+    // Connect Flags
+    // Clean Session (bit 1) = 2
+    // Username Flag (bit 7) = 0x80
+    // Password Flag (bit 6) = 0x40
+    let connectFlags = 2
+    if (this.username) connectFlags |= 0x80
+    if (this.password) connectFlags |= 0x40
+    packet[i++] = connectFlags
+    
+    packet[i++] = 0     // Keep Alive MSB
+    packet[i++] = 30    // Keep Alive LSB (30 seconds)
+
+    // --- Payload ---
+    // Client ID
     packet[i++] = (clientIdBytes.length >> 8) & 0xff
     packet[i++] = clientIdBytes.length & 0xff
     packet.set(clientIdBytes, i)
+    i += clientIdBytes.length
+
+    // User Name
+    if (this.username) {
+      packet[i++] = (usernameBytes.length >> 8) & 0xff
+      packet[i++] = usernameBytes.length & 0xff
+      packet.set(usernameBytes, i)
+      i += usernameBytes.length
+    }
+
+    // Password
+    if (this.password) {
+      packet[i++] = (passwordBytes.length >> 8) & 0xff
+      packet[i++] = passwordBytes.length & 0xff
+      packet.set(passwordBytes, i)
+      i += passwordBytes.length
+    }
     
-    this.ws?.send(packet)
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(packet)
+    }
   }
 
   async subscribe(topic: string, callback: (message: string) => void): Promise<boolean> {
@@ -589,13 +669,14 @@ class MultiBrokerMQTT {
     
     // Connect to all brokers in parallel
     const results = await Promise.allSettled(
-      MQTT_BROKERS.map(async (brokerUrl) => {
-        const client = new MQTTClient(brokerUrl)
+      MQTT_BROKERS.map(async (brokerConfig) => {
+        const brokerUrl = brokerConfig.url
+        const client = new MQTTClient(brokerUrl, brokerConfig.username, brokerConfig.password)
         
         // Set up disconnect handler for reconnection
         client.setOnDisconnect((url) => {
           if (!this.isShuttingDown) {
-            this.handleBrokerDisconnect(url)
+            this.handleBrokerDisconnect(url, brokerConfig.username, brokerConfig.password)
           }
         })
         
@@ -631,7 +712,7 @@ class MultiBrokerMQTT {
   /**
    * Handle unexpected broker disconnect with exponential backoff reconnection
    */
-  private async handleBrokerDisconnect(brokerUrl: string) {
+  private async handleBrokerDisconnect(brokerUrl: string, username?: string, password?: string) {
     if (this.isShuttingDown) return
     
     // Clean up old client
@@ -667,10 +748,10 @@ class MultiBrokerMQTT {
       if (this.isShuttingDown) return
       
       try {
-        const client = new MQTTClient(brokerUrl)
+        const client = new MQTTClient(brokerUrl, username, password)
         client.setOnDisconnect((url) => {
           if (!this.isShuttingDown) {
-            this.handleBrokerDisconnect(url)
+            this.handleBrokerDisconnect(url, username, password)
           }
         })
         
