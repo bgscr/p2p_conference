@@ -150,6 +150,7 @@ export default function App() {
     selectOutputDevice,
     toggleMute,
     refreshDevices
+    // Note: setOnStreamChange is available but we use the direct return value from switchInputDevice instead
   } = useMediaStream()
 
   /**
@@ -418,18 +419,30 @@ export default function App() {
 
   /**
    * Handle input device change
+   * Gets the new stream directly from switchInputDevice to ensure track replacement
    */
   const handleInputDeviceChange = useCallback(async (deviceId: string) => {
-    AppLog.debug('Switching input device', { deviceId })
-    await switchInputDevice(deviceId)
+    AppLog.info('Switching input device', { deviceId })
     
-    if (localStream) {
-      const newTrack = localStream.getAudioTracks()[0]
+    const newStream = await switchInputDevice(deviceId)
+    
+    if (newStream) {
+      const newTrack = newStream.getAudioTracks()[0]
       if (newTrack) {
+        AppLog.info('Replacing audio track in peer connections', { 
+          trackId: newTrack.id, 
+          label: newTrack.label 
+        })
         peerManager.replaceTrack(newTrack)
+        // Also update the local stream reference in peer manager
+        peerManager.setLocalStream(newStream)
+      } else {
+        AppLog.error('New stream has no audio tracks after device switch')
       }
+    } else {
+      AppLog.warn('switchInputDevice returned null - device switch may have failed')
     }
-  }, [switchInputDevice, localStream])
+  }, [switchInputDevice])
 
   /**
    * Handle settings change

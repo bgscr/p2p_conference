@@ -6,6 +6,17 @@
  * MQTT brokers simultaneously and broadcast messages on all of them. This ensures
  * that even if a user can only reach some brokers (due to network issues), they
  * can still communicate with others who share at least one common broker.
+ * 
+ * IMPORTANT NOTES ON SIGNALING CHANNELS:
+ * 1. MQTT (Multi-broker) - Primary signaling for remote peer discovery
+ *    - Messages are broadcast to all connected brokers
+ *    - Deduplication prevents processing same message multiple times
+ *    - Automatic reconnection with exponential backoff
+ * 
+ * 2. BroadcastChannel - Secondary channel for same-device testing ONLY
+ *    - ONLY works within the same browser on the same machine (same origin)
+ *    - CANNOT replace MQTT for remote communication
+ *    - Useful for development/testing without network
  */
 
 import { SignalingLog, PeerLog } from '../utils/Logger'
@@ -42,8 +53,10 @@ const ICE_SERVERS: RTCIceServer[] = [
 const ANNOUNCE_INTERVAL = 3000
 const ANNOUNCE_DURATION = 60000
 const MQTT_KEEPALIVE = 20000
-const MAX_ICE_RESTART_ATTEMPTS = 2
+const MAX_ICE_RESTART_ATTEMPTS = 3
 const ICE_RESTART_DELAY = 2000
+const ICE_DISCONNECT_GRACE_PERIOD = 5000  // Wait this long before triggering ICE restart
+const ICE_FAILED_TIMEOUT = 15000  // How long to wait for ICE restart before giving up
 const ANNOUNCE_DEBOUNCE = 100
 const MQTT_CONNECT_TIMEOUT = 8000
 
@@ -100,6 +113,9 @@ interface PeerConnection {
   isConnected: boolean
   muteStatus: MuteStatus
   iceRestartAttempts: number
+  iceRestartInProgress: boolean
+  disconnectTimer: NodeJS.Timeout | null
+  reconnectTimer: NodeJS.Timeout | null
 }
 
 type PeerEventCallback = (peerId: string, userName: string) => void
@@ -656,6 +672,15 @@ class MultiBrokerMQTT {
   private reconnectAttempts: Map<string, number> = new Map()
   private reconnectTimers: Map<string, NodeJS.Timeout> = new Map()
   private isShuttingDown = false
+  private onReconnect: ((brokerUrl: string) => void) | null = null
+
+  /**
+   * Set callback for broker reconnection events
+   * This is called when a broker successfully reconnects and resubscribes
+   */
+  setOnReconnect(callback: (brokerUrl: string) => void) {
+    this.onReconnect = callback
+  }
 
   /**
    * Connect to all configured MQTT brokers in parallel
@@ -764,6 +789,13 @@ class MultiBrokerMQTT {
           if (subscribed) {
             SignalingLog.info('MQTT broker reconnected and resubscribed', { broker: brokerUrl })
             this.reconnectAttempts.set(brokerUrl, 0)  // Reset on success
+            
+            // Trigger a re-announce event so SimplePeerManager can re-broadcast presence
+            // This helps with network recovery scenarios
+            if (this.onReconnect) {
+              SignalingLog.info('Triggering reconnection callback for re-announcement')
+              this.onReconnect(brokerUrl)
+            }
           } else {
             SignalingLog.warn('MQTT broker reconnected but subscribe failed', { broker: brokerUrl })
           }
@@ -1155,6 +1187,18 @@ export class SimplePeerManager {
         SignalingLog.info('Starting multi-broker MQTT connection')
         
         this.mqtt = new MultiBrokerMQTT()
+        
+        // Set up reconnection callback to re-announce presence after network recovery
+        this.mqtt.setOnReconnect((brokerUrl) => {
+          SignalingLog.info('MQTT broker reconnected, re-announcing presence', { broker: brokerUrl })
+          // Re-announce presence to help reconnect with peers after network recovery
+          this.broadcastAnnounce()
+          // Also restart the announce interval if we don't have peers
+          if (this.peers.size === 0) {
+            this.startAnnounceInterval()
+          }
+        })
+        
         connectedBrokers = await this.mqtt.connectAll()
         
         if (connectedBrokers.length === 0) {
@@ -1208,8 +1252,19 @@ export class SimplePeerManager {
       }
       
       if (!this.mqtt?.isConnected()) {
-        SignalingLog.warn('MQTT unavailable, using BroadcastChannel only (same-device connections only)')
-        this.updateSignalingState('connected')  // Still "connected" for local mode
+        // NOTE: BroadcastChannel CANNOT replace MQTT for remote communication.
+        // BroadcastChannel only works within the same browser on the same machine (same origin).
+        // This state means we failed to connect to any MQTT brokers, so:
+        // - Local testing (same machine) will still work via BroadcastChannel
+        // - Remote peers on different machines will NOT be able to connect
+        SignalingLog.warn('MQTT unavailable - remote connections will NOT work. Only same-device testing via BroadcastChannel is possible.')
+        // Still set to 'connected' so the user can see the room and wait for MQTT to recover
+        this.updateSignalingState('connected')
+        
+        // Log additional info for debugging
+        SignalingLog.info('BroadcastChannel is active for same-device communication only', {
+          note: 'To connect with remote peers, ensure at least one MQTT broker is reachable'
+        })
       }
       
       // Start announcing presence
@@ -1531,13 +1586,8 @@ export class SimplePeerManager {
   private handlePeerLeave(peerId: string) {
     const peer = this.peers.get(peerId)
     if (peer) {
-      PeerLog.info('Peer leaving', { peerId })
-      try {
-        peer.pc.close()
-      } catch {}
-      this.peers.delete(peerId)
-      this.pendingCandidates.delete(peerId)
-      this.onPeerLeave(peerId, peer.userName)
+      PeerLog.info('Peer leaving (via leave message)', { peerId })
+      this.cleanupPeer(peerId)
     }
   }
 
@@ -1551,7 +1601,10 @@ export class SimplePeerManager {
       connectionStartTime: Date.now(),
       isConnected: false,
       muteStatus: { micMuted: false, speakerMuted: false },
-      iceRestartAttempts: 0
+      iceRestartAttempts: 0,
+      iceRestartInProgress: false,
+      disconnectTimer: null,
+      reconnectTimer: null
     }
     
     this.peers.set(peerId, peerConn)
@@ -1576,28 +1629,70 @@ export class SimplePeerManager {
     
     pc.oniceconnectionstatechange = () => {
       const iceState = pc.iceConnectionState
+      const currentPeer = this.peers.get(peerId)
+      
       PeerLog.info('ICE state', { peerId, state: iceState })
       
-      if (iceState === 'failed') {
-        PeerLog.warn('ICE connection failed, attempting restart', { peerId })
-        setTimeout(() => this.attemptIceRestart(peerId), ICE_RESTART_DELAY)
-      } else if (iceState === 'disconnected') {
-        PeerLog.warn('ICE connection disconnected, waiting before restart', { peerId })
-        setTimeout(() => {
-          const currentPeer = this.peers.get(peerId)
-          if (currentPeer && currentPeer.pc.iceConnectionState === 'disconnected') {
-            this.attemptIceRestart(peerId)
+      if (iceState === 'connected' || iceState === 'completed') {
+        // Clear any pending timers on successful connection
+        if (currentPeer) {
+          if (currentPeer.disconnectTimer) {
+            clearTimeout(currentPeer.disconnectTimer)
+            currentPeer.disconnectTimer = null
           }
-        }, ICE_RESTART_DELAY * 2)
+          if (currentPeer.reconnectTimer) {
+            clearTimeout(currentPeer.reconnectTimer)
+            currentPeer.reconnectTimer = null
+          }
+          currentPeer.iceRestartInProgress = false
+          currentPeer.iceRestartAttempts = 0  // Reset attempts on success
+        }
+      } else if (iceState === 'failed') {
+        PeerLog.warn('ICE connection failed, attempting restart', { peerId })
+        // Don't call handlePeerLeave yet - try to restart first
+        this.attemptIceRestart(peerId)
+      } else if (iceState === 'disconnected') {
+        PeerLog.warn('ICE connection disconnected, scheduling reconnect attempt', { peerId })
+        
+        // Clear any existing timer
+        if (currentPeer?.disconnectTimer) {
+          clearTimeout(currentPeer.disconnectTimer)
+        }
+        
+        // Set a grace period timer - don't immediately restart, as disconnected can be transient
+        if (currentPeer) {
+          currentPeer.disconnectTimer = setTimeout(() => {
+            const peer = this.peers.get(peerId)
+            if (peer && peer.pc.iceConnectionState === 'disconnected') {
+              PeerLog.info('ICE still disconnected after grace period, attempting restart', { peerId })
+              this.attemptIceRestart(peerId)
+            }
+          }, ICE_DISCONNECT_GRACE_PERIOD)
+        }
       }
     }
     
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState
+      const currentPeer = this.peers.get(peerId)
+      
       PeerLog.info('Connection state', { peerId, state })
       
       if (state === 'connected') {
-        peerConn.isConnected = true
+        if (currentPeer) {
+          currentPeer.isConnected = true
+          currentPeer.iceRestartInProgress = false
+          
+          // Clear any pending timers
+          if (currentPeer.disconnectTimer) {
+            clearTimeout(currentPeer.disconnectTimer)
+            currentPeer.disconnectTimer = null
+          }
+          if (currentPeer.reconnectTimer) {
+            clearTimeout(currentPeer.reconnectTimer)
+            currentPeer.reconnectTimer = null
+          }
+        }
         this.stopAnnounceInterval()
         this.onPeerJoin(peerId, userName)
         
@@ -1610,10 +1705,21 @@ export class SimplePeerManager {
             data: this.localMuteStatus
           })
         }, 500)
-      } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-        if (peerConn.isConnected) {
-          peerConn.isConnected = false
-          this.handlePeerLeave(peerId)
+      } else if (state === 'disconnected') {
+        // DON'T immediately remove peer on disconnect - ICE restart might save it
+        PeerLog.warn('Connection disconnected, ICE restart may recover', { peerId })
+        // The ICE state handler will manage restart attempts
+      } else if (state === 'failed') {
+        // Connection failed - if we're not already trying to restart, give up
+        if (currentPeer && !currentPeer.iceRestartInProgress) {
+          PeerLog.warn('Connection failed and no restart in progress, removing peer', { peerId })
+          this.cleanupPeer(peerId)
+        }
+      } else if (state === 'closed') {
+        // Connection was explicitly closed
+        if (currentPeer?.isConnected) {
+          currentPeer.isConnected = false
+          this.cleanupPeer(peerId)
         } else {
           this.peers.delete(peerId)
         }
@@ -1651,22 +1757,103 @@ export class SimplePeerManager {
   }
 
   /**
-   * Attempt ICE restart for a peer connection
+   * Clean up a peer connection and notify listeners
+   * This is the single point of truth for removing a peer
    */
-  private async attemptIceRestart(peerId: string) {
+  private cleanupPeer(peerId: string) {
     const peer = this.peers.get(peerId)
     if (!peer) return
     
+    PeerLog.info('Cleaning up peer', { peerId, userName: peer.userName })
+    
+    // Clear any pending timers
+    if (peer.disconnectTimer) {
+      clearTimeout(peer.disconnectTimer)
+      peer.disconnectTimer = null
+    }
+    if (peer.reconnectTimer) {
+      clearTimeout(peer.reconnectTimer)
+      peer.reconnectTimer = null
+    }
+    
+    // Close the peer connection
+    try {
+      peer.pc.close()
+    } catch (err) {
+      PeerLog.warn('Error closing peer connection during cleanup', { peerId, error: String(err) })
+    }
+    
+    // Remove from maps
+    this.peers.delete(peerId)
+    this.pendingCandidates.delete(peerId)
+    
+    // Notify listeners
+    this.onPeerLeave(peerId, peer.userName)
+  }
+
+  /**
+   * Attempt ICE restart for a peer connection
+   * This is called when ICE connection becomes disconnected or failed
+   */
+  private async attemptIceRestart(peerId: string) {
+    const peer = this.peers.get(peerId)
+    if (!peer) {
+      PeerLog.warn('Cannot restart ICE - peer not found', { peerId })
+      return
+    }
+    
+    // Prevent concurrent restart attempts
+    if (peer.iceRestartInProgress) {
+      PeerLog.debug('ICE restart already in progress', { peerId })
+      return
+    }
+    
     if (peer.iceRestartAttempts >= MAX_ICE_RESTART_ATTEMPTS) {
-      PeerLog.warn('Max ICE restart attempts reached', { peerId, attempts: peer.iceRestartAttempts })
-      this.handlePeerLeave(peerId)
+      PeerLog.warn('Max ICE restart attempts reached, giving up', { peerId, attempts: peer.iceRestartAttempts })
+      this.cleanupPeer(peerId)
       return
     }
     
     peer.iceRestartAttempts++
-    PeerLog.info('Attempting ICE restart', { peerId, attempt: peer.iceRestartAttempts })
+    peer.iceRestartInProgress = true
+    
+    PeerLog.info('Attempting ICE restart', { 
+      peerId, 
+      attempt: peer.iceRestartAttempts,
+      maxAttempts: MAX_ICE_RESTART_ATTEMPTS,
+      currentIceState: peer.pc.iceConnectionState,
+      currentConnState: peer.pc.connectionState
+    })
+    
+    // Set a timeout for the restart attempt
+    if (peer.reconnectTimer) {
+      clearTimeout(peer.reconnectTimer)
+    }
+    
+    peer.reconnectTimer = setTimeout(() => {
+      const currentPeer = this.peers.get(peerId)
+      if (currentPeer && currentPeer.iceRestartInProgress) {
+        PeerLog.warn('ICE restart timed out', { peerId, attempt: currentPeer.iceRestartAttempts })
+        currentPeer.iceRestartInProgress = false
+        
+        // Try again if we have attempts left
+        if (currentPeer.iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS) {
+          this.attemptIceRestart(peerId)
+        } else {
+          this.cleanupPeer(peerId)
+        }
+      }
+    }, ICE_FAILED_TIMEOUT)
     
     try {
+      // Check if the connection is still usable
+      if (peer.pc.signalingState === 'closed') {
+        PeerLog.warn('Cannot restart ICE - peer connection is closed', { peerId })
+        peer.iceRestartInProgress = false
+        this.cleanupPeer(peerId)
+        return
+      }
+      
       const offer = await peer.pc.createOffer({ iceRestart: true })
       const configuredSdp = this.configureOpusCodec(offer.sdp || '')
       
@@ -1685,10 +1872,21 @@ export class SimplePeerManager {
         userName: this.userName
       })
       
-      PeerLog.info('ICE restart offer sent', { peerId })
+      PeerLog.info('ICE restart offer sent', { peerId, attempt: peer.iceRestartAttempts })
+      
     } catch (err) {
-      PeerLog.error('ICE restart failed', { peerId, error: String(err) })
-      this.handlePeerLeave(peerId)
+      PeerLog.error('ICE restart failed to create offer', { peerId, error: String(err) })
+      peer.iceRestartInProgress = false
+      
+      // If this was the last attempt, clean up
+      if (peer.iceRestartAttempts >= MAX_ICE_RESTART_ATTEMPTS) {
+        this.cleanupPeer(peerId)
+      } else {
+        // Schedule another attempt with exponential backoff
+        const delay = ICE_RESTART_DELAY * Math.pow(2, peer.iceRestartAttempts - 1)
+        PeerLog.info('Scheduling next ICE restart attempt', { peerId, delayMs: delay })
+        setTimeout(() => this.attemptIceRestart(peerId), delay)
+      }
     }
   }
 
@@ -1717,8 +1915,16 @@ export class SimplePeerManager {
         this.broadcast({ v: 1, type: 'leave', from: selfId, sessionId: this.sessionId })
       }
       
-      // Close all peer connections with error handling
+      // Close all peer connections with error handling and clear timers
       this.peers.forEach((peer, peerId) => {
+        // Clear any pending timers
+        if (peer.disconnectTimer) {
+          clearTimeout(peer.disconnectTimer)
+        }
+        if (peer.reconnectTimer) {
+          clearTimeout(peer.reconnectTimer)
+        }
+        
         try {
           peer.pc.close()
         } catch (err) {
@@ -1764,11 +1970,79 @@ export class SimplePeerManager {
     return result
   }
 
+  /**
+   * Replace audio track in all peer connections (for device switching)
+   * This is the critical method for microphone switching while in a call
+   */
   replaceTrack(newTrack: MediaStreamTrack) {
+    if (!newTrack) {
+      PeerLog.error('replaceTrack called with null/undefined track')
+      return
+    }
+
+    PeerLog.info('Replacing audio track in all peers', { 
+      trackId: newTrack.id, 
+      label: newTrack.label,
+      peerCount: this.peers.size,
+      trackEnabled: newTrack.enabled,
+      trackReadyState: newTrack.readyState
+    })
+
+    if (this.peers.size === 0) {
+      PeerLog.warn('No peers to replace track for')
+      return
+    }
+
     this.peers.forEach((peer, peerId) => {
-      const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio')
-      if (sender) {
-        sender.replaceTrack(newTrack).catch(() => PeerLog.error('Replace track failed', { peerId }))
+      const senders = peer.pc.getSenders()
+      PeerLog.debug('Peer senders', { 
+        peerId, 
+        senderCount: senders.length,
+        senderTracks: senders.map(s => ({ 
+          kind: s.track?.kind, 
+          id: s.track?.id,
+          readyState: s.track?.readyState 
+        }))
+      })
+
+      // Find audio sender - check for kind 'audio' or sender with null track (empty slot)
+      let audioSender = senders.find(s => s.track?.kind === 'audio')
+      
+      // If no audio sender with track, look for one that could accept an audio track
+      if (!audioSender) {
+        // Look for a sender that was created for audio but has no track
+        audioSender = senders.find(s => {
+          // Senders created for audio transceivers will have appropriate capabilities
+          const params = s.getParameters()
+          return params.codecs?.some(c => c.mimeType.toLowerCase().includes('audio'))
+        })
+      }
+
+      if (audioSender) {
+        PeerLog.info('Replacing track for peer', { 
+          peerId, 
+          oldTrackId: audioSender.track?.id,
+          newTrackId: newTrack.id 
+        })
+        
+        audioSender.replaceTrack(newTrack)
+          .then(() => {
+            PeerLog.info('Track replaced successfully', { peerId, trackId: newTrack.id })
+          })
+          .catch((err) => {
+            PeerLog.error('Replace track failed', { peerId, error: String(err) })
+          })
+      } else {
+        PeerLog.warn('No audio sender found for peer, attempting to add track', { peerId })
+        // If no audio sender exists, add the track
+        try {
+          if (this.localStream) {
+            peer.pc.addTrack(newTrack, this.localStream)
+            PeerLog.info('Track added to peer (no existing sender)', { peerId })
+          }
+        } catch (err) {
+          PeerLog.error('Failed to add track to peer', { peerId, error: String(err) })
+        }
       }
     })
   }

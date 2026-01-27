@@ -20,10 +20,11 @@ interface UseMediaStreamResult {
   
   startCapture: (config?: Partial<AudioProcessingConfig>) => Promise<MediaStream | null>
   stopCapture: () => void
-  switchInputDevice: (deviceId: string) => Promise<void>
+  switchInputDevice: (deviceId: string) => Promise<MediaStream | null>
   selectOutputDevice: (deviceId: string) => void
   toggleMute: () => void
   refreshDevices: () => Promise<void>
+  setOnStreamChange: (callback: (stream: MediaStream) => void) => void
 }
 
 // Default audio processing configuration
@@ -248,13 +249,24 @@ export function useMediaStream(): UseMediaStreamResult {
     }
   }, [localStream])
 
+  // Callback for notifying stream changes (used by peer manager)
+  const onStreamChangeRef = useRef<((stream: MediaStream) => void) | null>(null)
+
+  /**
+   * Set callback for stream changes (device switching)
+   */
+  const setOnStreamChange = useCallback((callback: (stream: MediaStream) => void) => {
+    onStreamChangeRef.current = callback
+  }, [])
+
   /**
    * Switch to a different input device without stopping the stream
+   * Returns the new stream for the caller to handle track replacement
    */
-  const switchInputDevice = useCallback(async (deviceId: string) => {
+  const switchInputDevice = useCallback(async (deviceId: string): Promise<MediaStream | null> => {
     if (!localStream) {
       setSelectedInputDevice(deviceId)
-      return
+      return null
     }
 
     MediaLog.info('Switching input device', { deviceId })
@@ -271,8 +283,11 @@ export function useMediaStream(): UseMediaStreamResult {
         video: false
       })
 
-      // Stop old tracks
-      localStream.getTracks().forEach(track => track.stop())
+      // Stop old tracks AFTER we have the new stream
+      localStream.getTracks().forEach(track => {
+        MediaLog.debug('Stopping old track', { kind: track.kind, label: track.label })
+        track.stop()
+      })
 
       // Update stream
       setLocalStream(newStream)
@@ -281,10 +296,23 @@ export function useMediaStream(): UseMediaStreamResult {
       // Re-setup audio monitoring
       setupAudioLevelMonitoring(newStream)
 
-      MediaLog.info('Input device switched', { deviceId })
+      // Notify listeners about stream change
+      if (onStreamChangeRef.current) {
+        MediaLog.debug('Notifying stream change listener')
+        onStreamChangeRef.current(newStream)
+      }
+
+      MediaLog.info('Input device switched successfully', { 
+        deviceId, 
+        newStreamId: newStream.id,
+        trackLabel: newStream.getAudioTracks()[0]?.label 
+      })
+      
+      return newStream
     } catch (err) {
       MediaLog.error('Failed to switch input device', { deviceId, error: err })
       setError('Failed to switch microphone')
+      return null
     }
   }, [localStream, setupAudioLevelMonitoring])
 
@@ -349,6 +377,7 @@ export function useMediaStream(): UseMediaStreamResult {
     switchInputDevice,
     selectOutputDevice,
     toggleMute,
-    refreshDevices
+    refreshDevices,
+    setOnStreamChange
   }
 }
