@@ -28,13 +28,20 @@ let isInCall = false
  * Creates a 16x16 (or 32x32 for retina) icon with a simple microphone design
  */
 function createTrayIcon(muted: boolean = false): Electron.NativeImage {
-  // Create a simple icon programmatically
+  // Use PNG icons for Windows/Linux to ensure they render correctly
+  if (process.platform !== 'darwin') {
+    const iconName = muted ? 'tray-muted.png' : 'tray-default.png'
+    const iconPath = join(__dirname, 'icons', iconName)
+    // MainLog.debug('Loading tray icon', { path: iconPath })
+    return nativeImage.createFromPath(iconPath)
+  }
+
+  // Create a simple icon programmatically for macOS (which handles data URLs well)
   // In production, you would use actual icon files
-  const size = process.platform === 'darwin' ? 22 : 16
-  const scale = process.platform === 'darwin' ? 2 : 1
-  
+  const size = 22
+  const scale = 2
+
   // Create a data URL for a simple microphone icon
-  // This is a placeholder - in production use actual .png/.ico files
   const canvas = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${size * scale}" height="${size * scale}" viewBox="0 0 24 24" fill="none" stroke="${muted ? '#ef4444' : '#3b82f6'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -44,10 +51,10 @@ function createTrayIcon(muted: boolean = false): Electron.NativeImage {
       ${muted ? '<line x1="1" y1="1" x2="23" y2="23" stroke="#ef4444" stroke-width="2.5"/>' : ''}
     </svg>
   `
-  
+
   // Convert SVG to data URL
   const dataUrl = `data:image/svg+xml;base64,${Buffer.from(canvas).toString('base64')}`
-  
+
   return nativeImage.createFromDataURL(dataUrl)
 }
 
@@ -57,11 +64,11 @@ function createTrayIcon(muted: boolean = false): Electron.NativeImage {
 function createTray(): void {
   const icon = createTrayIcon(isMuted)
   tray = new Tray(icon)
-  
+
   tray.setToolTip('P2P Conference')
-  
+
   updateTrayMenu()
-  
+
   // Click behavior differs by platform
   tray.on('click', () => {
     if (process.platform === 'darwin') {
@@ -78,14 +85,14 @@ function createTray(): void {
       }
     }
   })
-  
+
   tray.on('double-click', () => {
     if (mainWindow) {
       mainWindow.show()
       mainWindow.focus()
     }
   })
-  
+
   TrayLog.info('System tray created')
 }
 
@@ -94,7 +101,7 @@ function createTray(): void {
  */
 function updateTrayMenu(): void {
   if (!tray) return
-  
+
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'Show Window',
@@ -160,7 +167,7 @@ function updateTrayMenu(): void {
       }
     }
   ])
-  
+
   tray.setContextMenu(contextMenu)
 }
 
@@ -171,7 +178,7 @@ function updateTrayIcon(): void {
   if (!tray) return
   const icon = createTrayIcon(isMuted)
   tray.setImage(icon)
-  
+
   // Update tooltip
   let tooltip = 'P2P Conference'
   if (isInCall) {
@@ -185,7 +192,7 @@ function updateTrayIcon(): void {
  */
 function createMenu(): void {
   const isMac = process.platform === 'darwin'
-  
+
   const template: Electron.MenuItemConstructorOptions[] = [
     // App Menu (macOS only)
     ...(isMac ? [{
@@ -202,7 +209,7 @@ function createMenu(): void {
         { role: 'quit' as const }
       ]
     }] : []),
-    
+
     // File Menu
     {
       label: 'File',
@@ -236,7 +243,7 @@ function createMenu(): void {
         isMac ? { role: 'close' } : { role: 'quit' }
       ]
     },
-    
+
     // Edit Menu
     {
       label: 'Edit',
@@ -258,7 +265,7 @@ function createMenu(): void {
         ])
       ]
     },
-    
+
     // View Menu
     {
       label: 'View',
@@ -274,7 +281,7 @@ function createMenu(): void {
         { role: 'togglefullscreen' }
       ]
     },
-    
+
     // Window Menu
     {
       label: 'Window',
@@ -298,7 +305,7 @@ function createMenu(): void {
         ])
       ]
     },
-    
+
     // Help Menu
     {
       label: 'Help',
@@ -329,7 +336,7 @@ function createMenu(): void {
       ]
     }
   ]
-  
+
   const menu = Menu.buildFromTemplate(template)
   Menu.setApplicationMenu(menu)
 }
@@ -339,7 +346,7 @@ function createMenu(): void {
  */
 function createWindow(): void {
   MainLog.info('Creating main window')
-  
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -388,7 +395,7 @@ function createWindow(): void {
       event.preventDefault()
       mainWindow?.hide()
       MainLog.info('Window hidden to tray (call active)')
-      
+
       // Show notification that app is minimized to tray
       if (tray && process.platform !== 'darwin') {
         tray.displayBalloon({
@@ -413,16 +420,16 @@ async function requestMicrophonePermission(): Promise<boolean> {
   if (process.platform === 'darwin') {
     const status = systemPreferences.getMediaAccessStatus('microphone')
     MainLog.info('Checking microphone permission', { status })
-    
+
     if (status === 'not-determined') {
       const granted = await systemPreferences.askForMediaAccess('microphone')
       MainLog.info('Microphone permission requested', { granted })
       return granted
     }
-    
+
     return status === 'granted'
   }
-  
+
   return true
 }
 
@@ -432,7 +439,7 @@ async function requestMicrophonePermission(): Promise<boolean> {
 app.whenReady().then(async () => {
   // Initialize file logger first
   await fileLogger.init()
-  
+
   MainLog.info('App starting', {
     version: app.getVersion(),
     platform: process.platform,
@@ -440,7 +447,7 @@ app.whenReady().then(async () => {
     nodeVersion: process.version,
     electronVersion: process.versions.electron
   })
-  
+
   const micPermission = await requestMicrophonePermission()
   MainLog.info('Microphone permission', { granted: micPermission })
 

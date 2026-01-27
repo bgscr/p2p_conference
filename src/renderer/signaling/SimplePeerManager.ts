@@ -1521,7 +1521,8 @@ export class SimplePeerManager {
         type: 'offer',
         from: selfId,
         data: { type: configuredOffer.type, sdp: configuredOffer.sdp },
-        userName: this.userName
+        userName: this.userName,
+        platform: this.localPlatform
       })
 
       PeerLog.info('Offer sent (trickle ICE, Opus configured)', { peerId })
