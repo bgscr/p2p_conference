@@ -3,7 +3,7 @@
  * P2P Conference System - Serverless Audio Conferencing
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRoom } from './hooks/useRoom'
 import { useMediaStream } from './hooks/useMediaStream'
 import { useI18n } from './hooks/useI18n'
@@ -56,10 +56,19 @@ export default function App() {
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
   const [remoteMuteStatuses, setRemoteMuteStatuses] = useState<Map<string, MuteStatus>>(new Map())
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false)
-  
+
   // Audio pipeline
   const audioPipelineRef = useRef(getAudioPipeline())
   const [pipelineReady, setPipelineReady] = useState(false)
+
+  // Detect local platform for display
+  const localPlatform: 'win' | 'mac' | 'linux' = useMemo(() => {
+    const ua = navigator.userAgent.toLowerCase()
+    if (ua.includes('win')) return 'win'
+    if (ua.includes('mac')) return 'mac'
+    if (ua.includes('linux')) return 'linux'
+    return 'win'  // Default
+  }, [])
 
   /**
    * Show a toast notification
@@ -67,7 +76,7 @@ export default function App() {
   const showToast = useCallback((message: string, type: ToastMessage['type'] = 'info') => {
     const id = Math.random().toString(36).slice(2)
     setToasts(prev => [...prev, { id, message, type }])
-    
+
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id))
     }, 3000)
@@ -91,27 +100,27 @@ export default function App() {
       }
       showToast(t('room.participantJoined', { name: peerName }), 'success')
     }, [soundEnabled, showToast, t]),
-    
+
     onPeerLeave: useCallback((peerId: string, peerName: string) => {
       AppLog.info('Peer left', { peerId, peerName })
       if (soundEnabled) {
         soundManager.playLeave()
       }
       showToast(t('room.participantLeft', { name: peerName }), 'info')
-      
+
       setRemoteStreams(prev => {
         const updated = new Map(prev)
         updated.delete(peerId)
         return updated
       })
-      
+
       setRemoteMuteStatuses(prev => {
         const updated = new Map(prev)
         updated.delete(peerId)
         return updated
       })
     }, [soundEnabled, showToast, t]),
-    
+
     onConnectionStateChange: useCallback((state: ConnectionState) => {
       AppLog.info('Connection state changed', { state })
       if (state === 'connected' && soundEnabled) {
@@ -121,7 +130,7 @@ export default function App() {
       }
     }, [soundEnabled])
   }
-  
+
   // Room management
   const {
     roomId,
@@ -132,7 +141,7 @@ export default function App() {
     leaveRoom,
     error: roomError
   } = useRoom(roomCallbacks)
-  
+
   // Media stream management
   const {
     localStream,
@@ -159,7 +168,7 @@ export default function App() {
   useEffect(() => {
     logger.logSystemInfo()
     AppLog.info('Application starting')
-    
+
     const initPipeline = async () => {
       try {
         await audioPipelineRef.current.initialize()
@@ -170,11 +179,11 @@ export default function App() {
         setPipelineReady(true)
       }
     }
-    
+
     initPipeline()
-    
+
     const electronAPI = (window as any).electronAPI
-    
+
     // Listen for download-logs from menu bar
     let unsubscribeDownloadLogs: (() => void) | undefined
     if (electronAPI?.onDownloadLogs) {
@@ -184,7 +193,7 @@ export default function App() {
         showToast(t('settings.downloadLogs'), 'success')
       })
     }
-    
+
     // Listen for tray toggle mute
     let unsubscribeTrayMute: (() => void) | undefined
     if (electronAPI?.onTrayToggleMute) {
@@ -193,7 +202,7 @@ export default function App() {
         handleToggleMute()
       })
     }
-    
+
     // Listen for tray leave call
     let unsubscribeTrayLeave: (() => void) | undefined
     if (electronAPI?.onTrayLeaveCall) {
@@ -204,7 +213,7 @@ export default function App() {
         electronAPI?.showWindow?.()
       })
     }
-    
+
     return () => {
       unsubscribeDownloadLogs?.()
       unsubscribeTrayMute?.()
@@ -221,19 +230,19 @@ export default function App() {
   useEffect(() => {
     peerManager.setCallbacks({
       onRemoteStream: (peerId: string, stream: MediaStream) => {
-        AppLog.info('Remote stream received in App.tsx', { 
-          peerId, 
+        AppLog.info('Remote stream received in App.tsx', {
+          peerId,
           streamId: stream.id,
           trackCount: stream.getTracks().length,
           audioTracks: stream.getAudioTracks().map(t => ({ id: t.id, enabled: t.enabled, muted: t.muted }))
         })
-        
+
         // Verify the stream has audio tracks
         const audioTracks = stream.getAudioTracks()
         if (audioTracks.length === 0) {
           AppLog.warn('Remote stream has no audio tracks!', { peerId, streamId: stream.id })
         }
-        
+
         setRemoteStreams(prev => {
           const updated = new Map(prev)
           updated.set(peerId, stream)
@@ -286,7 +295,7 @@ export default function App() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return
       }
-      
+
       // Ctrl+Shift+L - Download logs (also handled by menu, but keep for direct use)
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'l') {
         e.preventDefault()
@@ -295,7 +304,7 @@ export default function App() {
         showToast(t('settings.downloadLogs'), 'success')
         return
       }
-      
+
       if (appView === 'room') {
         switch (e.key.toLowerCase()) {
           case 'm':
@@ -311,7 +320,7 @@ export default function App() {
         }
       }
     }
-    
+
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [appView, connectionState, showToast, t])
@@ -361,12 +370,12 @@ export default function App() {
   const handleJoinRoom = useCallback(async (roomIdInput: string, name: string) => {
     setUserName(name)
     setGlobalError(null)
-    
+
     AppLog.info('Attempting to join room', { roomId: roomIdInput, userName: name })
-    
+
     // Switch to room view IMMEDIATELY so user sees the searching overlay
     setAppView('room')
-    
+
     // Now do the async work (capture + join) - user sees the overlay during this
     try {
       // Start capture (this is the slow part)
@@ -375,16 +384,16 @@ export default function App() {
         noiseSuppression: settings.noiseSuppressionEnabled,
         autoGainControl: settings.autoGainControlEnabled
       })
-      
+
       if (stream) {
         peerManager.setLocalStream(stream)
       }
-      
+
       // Join the signaling room
       await joinRoom(roomIdInput, name)
-      
+
       AppLog.info('Successfully joined room', { roomId: roomIdInput })
-      
+
     } catch (err: any) {
       AppLog.error('Failed to join room', { roomId: roomIdInput, error: err })
       setGlobalError(err.message || t('errors.connectionFailed'))
@@ -423,15 +432,15 @@ export default function App() {
    */
   const handleInputDeviceChange = useCallback(async (deviceId: string) => {
     AppLog.info('Switching input device', { deviceId })
-    
+
     const newStream = await switchInputDevice(deviceId)
-    
+
     if (newStream) {
       const newTrack = newStream.getAudioTracks()[0]
       if (newTrack) {
-        AppLog.info('Replacing audio track in peer connections', { 
-          trackId: newTrack.id, 
-          label: newTrack.label 
+        AppLog.info('Replacing audio track in peer connections', {
+          trackId: newTrack.id,
+          label: newTrack.label
         })
         peerManager.replaceTrack(newTrack)
         // Also update the local stream reference in peer manager
@@ -449,11 +458,11 @@ export default function App() {
    */
   const handleSettingsChange = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings(prev => ({ ...prev, ...newSettings }))
-    
+
     if (newSettings.noiseSuppressionEnabled !== undefined) {
       audioPipelineRef.current.setNoiseSuppression(newSettings.noiseSuppressionEnabled)
     }
-    
+
     AppLog.debug('Settings changed', { newSettings })
   }, [])
 
@@ -485,7 +494,7 @@ export default function App() {
   const displayError = globalError || roomError || mediaError
 
   // Show overlay during signaling or connecting phases (but only if we're in room view)
-  const showConnectionOverlay = appView === 'room' && 
+  const showConnectionOverlay = appView === 'room' &&
     (connectionState === 'signaling' || connectionState === 'connecting' || connectionState === 'idle')
 
   // Render loading state
@@ -504,16 +513,16 @@ export default function App() {
     <div className="flex flex-col h-full bg-gray-100">
       {/* Error Banner */}
       {displayError && (
-        <ErrorBanner 
-          message={displayError} 
-          onDismiss={() => setGlobalError(null)} 
+        <ErrorBanner
+          message={displayError}
+          onDismiss={() => setGlobalError(null)}
         />
       )}
-      
+
       {/* Connection Overlay with Cancel */}
       {showConnectionOverlay && (
-        <ConnectionOverlay 
-          state={connectionState === 'idle' ? 'signaling' : connectionState} 
+        <ConnectionOverlay
+          state={connectionState === 'idle' ? 'signaling' : connectionState}
           onCancel={handleCancelSearch}
         />
       )}
@@ -537,10 +546,10 @@ export default function App() {
           />
         ))}
       </div>
-      
+
       {/* Main Content */}
       {appView === 'lobby' && (
-        <LobbyView 
+        <LobbyView
           onJoinRoom={handleJoinRoom}
           inputDevices={inputDevices}
           outputDevices={outputDevices}
@@ -554,12 +563,13 @@ export default function App() {
           onOpenSettings={() => setAppView('settings')}
         />
       )}
-      
+
       {appView === 'room' && (
         <RoomView
           userName={userName}
           roomId={roomId}
           localPeerId={localPeerId}
+          localPlatform={localPlatform}
           peers={peers}
           remoteStreams={remoteStreams}
           remoteMuteStatuses={remoteMuteStatuses}
@@ -583,7 +593,7 @@ export default function App() {
           onSettingsChange={handleSettingsChange}
         />
       )}
-      
+
       {appView === 'settings' && (
         <SettingsPanel
           settings={settings}

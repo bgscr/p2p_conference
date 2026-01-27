@@ -34,6 +34,7 @@ export interface Peer {
   isMuted: boolean
   audioLevel: number
   connectionState: RTCPeerConnectionState
+  platform?: 'win' | 'mac' | 'linux'
 }
 
 /**
@@ -76,4 +77,4 @@ export interface AudioProcessingConfig {
   autoGainControl: boolean
 }
 
-export {}
+export { }

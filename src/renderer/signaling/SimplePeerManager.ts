@@ -95,6 +95,7 @@ interface SignalMessage {
   to?: string
   data?: any
   userName?: string
+  platform?: 'win' | 'mac' | 'linux'
   ts?: number
   sessionId?: number
   msgId?: string  // Unique message ID for deduplication
@@ -109,6 +110,7 @@ interface PeerConnection {
   pc: RTCPeerConnection
   stream: MediaStream | null
   userName: string
+  platform: 'win' | 'mac' | 'linux'
   connectionStartTime: number
   isConnected: boolean
   muteStatus: MuteStatus
@@ -118,7 +120,7 @@ interface PeerConnection {
   reconnectTimer: NodeJS.Timeout | null
 }
 
-type PeerEventCallback = (peerId: string, userName: string) => void
+type PeerEventCallback = (peerId: string, userName: string, platform: 'win' | 'mac' | 'linux') => void
 type StreamCallback = (peerId: string, stream: MediaStream) => void
 type ErrorCallback = (error: Error, context: string) => void
 type MuteStatusCallback = (peerId: string, muteStatus: MuteStatus) => void
@@ -978,6 +980,7 @@ class MultiBrokerMQTT {
 export class SimplePeerManager {
   private roomId: string | null = null
   private userName: string = ''
+  private localPlatform: 'win' | 'mac' | 'linux' = 'win'  // Default to win, set properly on init
   private mqtt: MultiBrokerMQTT | null = null
   private topic: string = ''
   private peers: Map<string, PeerConnection> = new Map()
@@ -1153,6 +1156,18 @@ export class SimplePeerManager {
       this.announceStartTime = Date.now()
       this.topic = `p2p-conf/${roomId}`
 
+      // Detect local platform
+      const userAgent = navigator.userAgent.toLowerCase()
+      if (userAgent.includes('win')) {
+        this.localPlatform = 'win'
+      } else if (userAgent.includes('mac')) {
+        this.localPlatform = 'mac'
+      } else if (userAgent.includes('linux')) {
+        this.localPlatform = 'linux'
+      } else {
+        this.localPlatform = 'win'  // Default fallback
+      }
+
       SignalingLog.info('Joining room', {
         roomId, userName, selfId,
         topic: this.topic,
@@ -1301,6 +1316,7 @@ export class SimplePeerManager {
         type: 'announce',
         from: selfId,
         userName: this.userName,
+        platform: this.localPlatform,
         ts: Date.now(),
         sessionId: this.sessionId,
         msgId: generateMessageId()
@@ -1409,10 +1425,10 @@ export class SimplePeerManager {
 
     switch (message.type) {
       case 'announce':
-        this.handleAnnounce(message.from, message.userName || 'Unknown')
+        this.handleAnnounce(message.from, message.userName || 'Unknown', message.platform || 'win')
         break
       case 'offer':
-        this.handleOffer(message.from, message.data, message.userName || 'Unknown')
+        this.handleOffer(message.from, message.data, message.userName || 'Unknown', message.platform || 'win')
         break
       case 'answer':
         this.handleAnswer(message.from, message.data)
@@ -1444,8 +1460,8 @@ export class SimplePeerManager {
     }
   }
 
-  private async handleAnnounce(peerId: string, userName: string) {
-    PeerLog.info('Received announce', { peerId, userName })
+  private async handleAnnounce(peerId: string, userName: string, platform: 'win' | 'mac' | 'linux') {
+    PeerLog.info('Received announce', { peerId, userName, platform })
 
     const existingPeer = this.peers.get(peerId)
     if (existingPeer) {
@@ -1468,10 +1484,10 @@ export class SimplePeerManager {
 
     if (selfId > peerId) {
       PeerLog.info('Initiating connection', { selfId, peerId })
-      await this.createOffer(peerId, userName)
+      await this.createOffer(peerId, userName, platform)
     } else {
       PeerLog.info('Waiting for peer to initiate', { selfId, peerId })
-      this.sendToPeer(peerId, { v: 1, type: 'announce', from: selfId, userName: this.userName, ts: Date.now() })
+      this.sendToPeer(peerId, { v: 1, type: 'announce', from: selfId, userName: this.userName, platform: this.localPlatform, ts: Date.now() })
     }
   }
 
@@ -1485,11 +1501,11 @@ export class SimplePeerManager {
     )
   }
 
-  private async createOffer(peerId: string, userName: string) {
+  private async createOffer(peerId: string, userName: string, platform: 'win' | 'mac' | 'linux') {
     PeerLog.info('Creating offer', { peerId })
 
     try {
-      const pc = this.createPeerConnection(peerId, userName)
+      const pc = this.createPeerConnection(peerId, userName, platform)
       const offer = await pc.createOffer()
 
       const configuredSdp = this.configureOpusCodec(offer.sdp || '')
@@ -1515,7 +1531,7 @@ export class SimplePeerManager {
     }
   }
 
-  private async handleOffer(peerId: string, offer: RTCSessionDescriptionInit, userName: string) {
+  private async handleOffer(peerId: string, offer: RTCSessionDescriptionInit, userName: string, platform: 'win' | 'mac' | 'linux') {
     PeerLog.info('Received offer', { peerId })
 
     const existing = this.peers.get(peerId)
@@ -1527,7 +1543,7 @@ export class SimplePeerManager {
     }
 
     try {
-      const pc = this.createPeerConnection(peerId, userName)
+      const pc = this.createPeerConnection(peerId, userName, platform)
       await pc.setRemoteDescription(new RTCSessionDescription(offer))
 
       const pending = this.pendingCandidates.get(peerId) || []
@@ -1607,13 +1623,13 @@ export class SimplePeerManager {
     }
   }
 
-  private createPeerConnection(peerId: string, userName: string): RTCPeerConnection {
-    PeerLog.info('Creating RTCPeerConnection', { peerId, userName })
+  private createPeerConnection(peerId: string, userName: string, platform: 'win' | 'mac' | 'linux'): RTCPeerConnection {
+    PeerLog.info('Creating RTCPeerConnection', { peerId, userName, platform })
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
 
     const peerConn: PeerConnection = {
-      pc, stream: null, userName,
+      pc, stream: null, userName, platform,
       connectionStartTime: Date.now(),
       isConnected: false,
       muteStatus: { micMuted: false, speakerMuted: false },
@@ -1710,7 +1726,7 @@ export class SimplePeerManager {
           }
         }
         this.stopAnnounceInterval()
-        this.onPeerJoin(peerId, userName)
+        this.onPeerJoin(peerId, userName, platform)
 
         // Send our current mute status to the newly connected peer
         setTimeout(() => {
@@ -1804,7 +1820,7 @@ export class SimplePeerManager {
     this.pendingCandidates.delete(peerId)
 
     // Notify listeners
-    this.onPeerLeave(peerId, peer.userName)
+    this.onPeerLeave(peerId, peer.userName, peer.platform)
 
     // If no healthy peers remain, start looking for peers again
     if (this.getHealthyPeerCount() === 0 && this.roomId) {

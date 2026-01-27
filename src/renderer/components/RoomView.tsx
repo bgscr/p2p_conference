@@ -15,6 +15,7 @@ interface RoomViewProps {
   userName: string
   roomId: string | null
   localPeerId: string
+  localPlatform?: 'win' | 'mac' | 'linux'
   peers: Map<string, Peer>
   remoteStreams: Map<string, MediaStream>
   remoteMuteStatuses: Map<string, { micMuted: boolean; speakerMuted: boolean }>
@@ -42,6 +43,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
   userName,
   roomId,
   localPeerId,
+  localPlatform,
   peers,
   remoteStreams,
   remoteMuteStatuses,
@@ -69,7 +71,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const [elapsedTime, setElapsedTime] = useState(0)
   const [copied, setCopied] = useState(false)
   const [peerVolumes, setPeerVolumes] = useState<Map<string, number>>(new Map())
-  
+
   const startTimeRef = useRef(Date.now())
 
   // Get volume for a peer (default 100%)
@@ -91,7 +93,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
     const interval = setInterval(() => {
       setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 1000))
     }, 1000)
-    
+
     return () => clearInterval(interval)
   }, [])
 
@@ -100,7 +102,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
     const h = Math.floor(seconds / 3600)
     const m = Math.floor((seconds % 3600) / 60)
     const s = seconds % 60
-    
+
     if (h > 0) {
       return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
     }
@@ -145,11 +147,10 @@ export const RoomView: React.FC<RoomViewProps> = ({
           {/* Left: Connection Status */}
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <div className={`status-dot ${
-                connectionState === 'connected' ? 'status-connected' :
+              <div className={`status-dot ${connectionState === 'connected' ? 'status-connected' :
                 connectionState === 'connecting' || connectionState === 'signaling' ? 'status-connecting' :
-                connectionState === 'failed' ? 'status-failed' : ''
-              }`} />
+                  connectionState === 'failed' ? 'status-failed' : ''
+                }`} />
               <span className="text-sm text-gray-600">{getStatusText()}</span>
             </div>
           </div>
@@ -169,13 +170,13 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 </svg>
               ) : (
                 <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               )}
             </button>
           </div>
-          
+
           {/* Right: Duration */}
           <div className="text-sm font-mono text-gray-500">
             {formatDuration(elapsedTime)}
@@ -186,7 +187,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
         {showParticipantWarning && (
           <div className="mt-2 px-3 py-1.5 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2 text-sm text-yellow-800">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
             <span>{t('room.performanceWarning', { count: participantCount })}</span>
@@ -198,13 +199,12 @@ export const RoomView: React.FC<RoomViewProps> = ({
       <main className="flex-1 p-4 overflow-y-auto">
         <div className="max-w-4xl mx-auto">
           {/* Grid of participants */}
-          <div className={`grid gap-4 ${
-            peersArray.length === 0 ? 'grid-cols-1 max-w-xs mx-auto' :
+          <div className={`grid gap-4 ${peersArray.length === 0 ? 'grid-cols-1 max-w-xs mx-auto' :
             peersArray.length <= 1 ? 'grid-cols-2' :
-            peersArray.length <= 3 ? 'grid-cols-2' :
-            peersArray.length <= 5 ? 'grid-cols-3' :
-            'grid-cols-4'
-          }`}>
+              peersArray.length <= 3 ? 'grid-cols-2' :
+                peersArray.length <= 5 ? 'grid-cols-3' :
+                  'grid-cols-4'
+            }`}>
             {/* Local User Card */}
             <ParticipantCard
               name={`${userName} (${t('room.you')})`}
@@ -214,12 +214,13 @@ export const RoomView: React.FC<RoomViewProps> = ({
               isLocal={true}
               audioLevel={audioLevel}
               connectionState="connected"
+              platform={localPlatform}
             />
 
             {/* Remote Participants */}
             {peersArray.map(peer => {
               const muteStatus = remoteMuteStatuses.get(peer.id) || { micMuted: false, speakerMuted: false }
-              
+
               return (
                 <ParticipantCard
                   key={peer.id}
@@ -235,6 +236,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                   localSpeakerMuted={isSpeakerMuted}
                   volume={getPeerVolume(peer.id)}
                   onVolumeChange={(vol) => handlePeerVolumeChange(peer.id, vol)}
+                  platform={peer.platform}
                 />
               )
             })}
@@ -245,7 +247,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
             <div className="text-center py-12 animate-fade-in">
               <div className="inline-flex items-center justify-center w-20 h-20 bg-gray-100 rounded-full mb-4">
                 <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                     d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                 </svg>
               </div>
@@ -265,7 +267,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 ) : (
                   <>
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                         d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>
                     {t('room.copyRoomId')}
@@ -293,8 +295,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
               onClick={onToggleMute}
               className={`
                 w-14 h-14 rounded-full flex items-center justify-center transition-all
-                ${isMuted 
-                  ? 'bg-red-100 text-red-600 hover:bg-red-200' 
+                ${isMuted
+                  ? 'bg-red-100 text-red-600 hover:bg-red-200'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }
               `}
@@ -302,14 +304,14 @@ export const RoomView: React.FC<RoomViewProps> = ({
             >
               {isMuted ? (
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M3 3l18 18" />
                 </svg>
               ) : (
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                 </svg>
               )}
@@ -320,8 +322,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
               onClick={onToggleSpeakerMute}
               className={`
                 w-12 h-12 rounded-full flex items-center justify-center transition-all
-                ${isSpeakerMuted 
-                  ? 'bg-red-100 text-red-600 hover:bg-red-200' 
+                ${isSpeakerMuted
+                  ? 'bg-red-100 text-red-600 hover:bg-red-200'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }
               `}
@@ -329,14 +331,14 @@ export const RoomView: React.FC<RoomViewProps> = ({
             >
               {isSpeakerMuted ? (
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
                 </svg>
               ) : (
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                 </svg>
               )}
@@ -347,15 +349,15 @@ export const RoomView: React.FC<RoomViewProps> = ({
               onClick={onToggleSound}
               className={`
                 w-12 h-12 rounded-full flex items-center justify-center transition-all
-                ${soundEnabled 
-                  ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' 
+                ${soundEnabled
+                  ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
                 }
               `}
               title={soundEnabled ? t('room.muteNotifications') : t('room.enableNotifications')}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                 {!soundEnabled && (
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
@@ -368,15 +370,15 @@ export const RoomView: React.FC<RoomViewProps> = ({
               onClick={() => setShowDevicePanel(!showDevicePanel)}
               className={`
                 w-12 h-12 rounded-full flex items-center justify-center transition-all
-                ${showDevicePanel 
-                  ? 'bg-blue-100 text-blue-600' 
+                ${showDevicePanel
+                  ? 'bg-blue-100 text-blue-600'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }
               `}
               title={t('room.audioSettings')}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
@@ -389,7 +391,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               title={t('room.leaveCallHint')}
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
               </svg>
             </button>
@@ -420,7 +422,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               onSelect={onOutputDeviceChange}
               icon="speaker"
             />
-            
+
             {/* Noise Suppression Toggle */}
             <div className="col-span-2 flex items-center justify-between py-2">
               <label className="flex items-center gap-2 cursor-pointer">
@@ -436,7 +438,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 {settings.noiseSuppressionEnabled ? t('room.on') : t('room.off')}
               </span>
             </div>
-            
+
             {/* Download Logs Button */}
             <div className="col-span-2 flex items-center justify-between py-2 border-t border-gray-100 mt-2">
               <span className="text-sm text-gray-600">{t('room.havingIssues')}</span>
@@ -445,7 +447,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
                 {t('room.downloadLogs')}

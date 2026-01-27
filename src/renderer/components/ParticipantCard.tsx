@@ -20,6 +20,7 @@ interface ParticipantCardProps {
   localSpeakerMuted?: boolean  // Whether local user has muted their speaker
   volume?: number  // Per-participant volume (0-150, 100 = normal)
   onVolumeChange?: (volume: number) => void  // Callback for volume change
+  platform?: 'win' | 'mac' | 'linux'
 }
 
 export const ParticipantCard: React.FC<ParticipantCardProps> = ({
@@ -34,7 +35,8 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
   outputDeviceId,
   localSpeakerMuted = false,
   volume = 100,
-  onVolumeChange
+  onVolumeChange,
+  platform
 }) => {
   const { t } = useI18n()
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -77,10 +79,10 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     })
 
     audioElement.srcObject = stream
-    
+
     // Mute audio element if local speaker is muted
     audioElement.muted = localSpeakerMuted
-    
+
     // Try to play with retry mechanism
     const playAudio = async () => {
       try {
@@ -88,7 +90,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
         console.log('[ParticipantCard] Audio playback started successfully', { peerId })
       } catch (err: any) {
         console.warn('[ParticipantCard] Autoplay blocked, will retry on user interaction:', err.message)
-        
+
         // Set up a one-time click handler to retry playback
         const handleUserInteraction = () => {
           audioElement.play()
@@ -97,12 +99,12 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
           document.removeEventListener('click', handleUserInteraction)
           document.removeEventListener('keydown', handleUserInteraction)
         }
-        
+
         document.addEventListener('click', handleUserInteraction, { once: true })
         document.addEventListener('keydown', handleUserInteraction, { once: true })
       }
     }
-    
+
     playAudio()
 
     // Set up audio level monitoring
@@ -240,15 +242,15 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
         `}>
           {getInitials(name)}
         </div>
-        
+
         {/* Mic mute indicator (bottom-right) */}
         {showMicIndicator && (
-          <div 
+          <div
             className="absolute -bottom-1 -right-1 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center"
             title={t('room.micMuted')}
           >
             <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
             </svg>
@@ -257,14 +259,14 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
 
         {/* Speaker mute indicator (bottom-left) */}
         {showSpeakerIndicator && (
-          <div 
+          <div
             className="absolute -bottom-1 -left-1 w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center"
             title={t('room.speakerMuted')}
           >
             <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
             </svg>
           </div>
@@ -274,11 +276,32 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
         <div className={`absolute top-0 right-0 w-3 h-3 rounded-full border-2 border-white ${getStatusColor()}`} />
       </div>
 
-      {/* Name */}
+      {/* Name and Platform */}
       <div className="text-center">
-        <p className="font-medium text-gray-900 text-sm truncate max-w-[120px]">
-          {name}
-        </p>
+        <div className="flex items-center justify-center gap-1">
+          {platform && (
+            <span className="text-gray-400" title={platform === 'win' ? 'Windows' : platform === 'mac' ? 'macOS' : 'Linux'}>
+              {platform === 'win' && (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801" />
+                </svg>
+              )}
+              {platform === 'mac' && (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
+                </svg>
+              )}
+              {platform === 'linux' && (
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587.26 1.35.352 2.14.352.79 0 1.553-.092 2.14-.352.237.482.68.83 1.208.946.75.2 1.69-.004 2.616-.47.865-.465 1.964-.4 2.774-.6.406-.13.766-.267.94-.6.175-.34.143-.804-.105-1.485-.076-.242-.018-.571.039-.97.028-.135.055-.337.055-.536a1.08 1.08 0 00-.132-.602c-.205-.41-.551-.544-.864-.68-.312-.133-.598-.2-.797-.4a3.36 3.36 0 01-.664-.839.443.443 0 00-.109-.135c.123-.805-.009-1.657-.287-2.49-.589-1.77-1.83-3.469-2.716-4.52-.75-1.067-.974-1.928-1.05-3.021-.065-1.49 1.056-5.965-3.17-6.298-.165-.013-.325-.021-.48-.021z" />
+                </svg>
+              )}
+            </span>
+          )}
+          <p className="font-medium text-gray-900 text-sm truncate max-w-[120px]">
+            {name}
+          </p>
+        </div>
         {!isLocal && connectionState !== 'connected' && (
           <p className="text-xs text-gray-500 capitalize">
             {connectionState}
@@ -299,7 +322,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
             className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1 w-full justify-center"
           >
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
             </svg>
             {volume}%

@@ -58,11 +58,11 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
   const [peers, setPeers] = useState<Map<string, Peer>>(new Map())
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const [error, setError] = useState<string | null>(null)
-  
+
   const callbacksRef = useRef<RoomCallbacks>(callbacks || {})
   const localUserNameRef = useRef<string>('')
   const signalCallbackRef = useRef<((data: any, peerId: string) => void) | null>(null)
-  
+
   // Update callbacks ref when they change
   useEffect(() => {
     callbacksRef.current = callbacks || {}
@@ -98,44 +98,45 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
    */
   useEffect(() => {
     peerManager.setCallbacks({
-      onPeerJoin: (peerId: string, userName: string) => {
-        RoomLog.info('Peer joined', { peerId, userName })
-        
+      onPeerJoin: (peerId: string, userName: string, platform: 'win' | 'mac' | 'linux') => {
+        RoomLog.info('Peer joined', { peerId, userName, platform })
+
         const newPeer: Peer = {
           id: peerId,
           name: userName,
           isMuted: false,
           audioLevel: 0,
-          connectionState: 'connected'
+          connectionState: 'connected',
+          platform
         }
-        
+
         setPeers(prev => {
           const updated = new Map(prev)
           updated.set(peerId, newPeer)
           RoomLog.debug('Peers updated', { count: updated.size })
           return updated
         })
-        
+
         updateConnectionState('connected')
         callbacksRef.current.onPeerJoin?.(peerId, userName)
       },
-      
-      onPeerLeave: (peerId: string, userName: string) => {
+
+      onPeerLeave: (peerId: string, userName: string, _platform: 'win' | 'mac' | 'linux') => {
         RoomLog.info('Peer left', { peerId, userName })
-        
+
         setPeers(prev => {
           const updated = new Map(prev)
           updated.delete(peerId)
-          
+
           RoomLog.debug('Peers updated after leave', { count: updated.size })
-          
+
           if (updated.size === 0) {
             updateConnectionState('signaling')
           }
-          
+
           return updated
         })
-        
+
         callbacksRef.current.onPeerLeave?.(peerId, userName)
       }
       // NOTE: onRemoteStream is NOT set here - it's handled by App.tsx
@@ -164,13 +165,13 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
       RoomLog.info('Joining room', { roomId: roomIdInput, userName, selfId })
 
       await peerManager.joinRoom(roomIdInput, userName)
-      
+
       RoomLog.info('Successfully joined room', { roomId: roomIdInput })
 
     } catch (err: any) {
-      RoomLog.error('Failed to join room', { 
-        roomId: roomIdInput, 
-        error: err.message 
+      RoomLog.error('Failed to join room', {
+        roomId: roomIdInput,
+        error: err.message
       })
       setError('Failed to join room. Please try again.')
       updateConnectionState('failed')
@@ -182,15 +183,15 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
    */
   const leaveRoomCallback = useCallback(() => {
     RoomLog.info('Leaving room', { roomId })
-    
+
     peerManager.leaveRoom()
-    
+
     setRoomId(null)
     setPeers(new Map())
     updateConnectionState('idle')
     setError(null)
     localUserNameRef.current = ''
-    
+
     RoomLog.info('Left room successfully')
   }, [roomId, updateConnectionState])
 
