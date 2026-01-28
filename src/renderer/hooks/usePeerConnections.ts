@@ -4,7 +4,10 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { logger } from '../utils/Logger'
 import { ICE_SERVERS } from './useRoom'
+
+const WebRTCLog = logger.createModuleLogger('WebRTC')
 
 interface PeerConnectionData {
   connection: RTCPeerConnection
@@ -42,7 +45,7 @@ export function usePeerConnections(
    * Create a new RTCPeerConnection for a peer
    */
   const createPeerConnection = useCallback((peerId: string, isInitiator: boolean): RTCPeerConnection => {
-    console.log(`[WebRTC] Creating peer connection for ${peerId}, initiator: ${isInitiator}`)
+    WebRTCLog.info(`Creating peer connection for ${peerId}`, { initiator: isInitiator })
 
     const config: RTCConfiguration = {
       iceServers: ICE_SERVERS,
@@ -54,24 +57,24 @@ export function usePeerConnections(
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log(`[WebRTC] ICE candidate for ${peerId}:`, event.candidate.type || 'end')
+        WebRTCLog.debug(`ICE candidate for ${peerId}`, { type: event.candidate.type || 'end' })
         onIceCandidate(peerId, event.candidate.toJSON())
       }
     }
 
     // Handle ICE connection state changes
     pc.oniceconnectionstatechange = () => {
-      console.log(`[WebRTC] ICE state for ${peerId}:`, pc.iceConnectionState)
+      WebRTCLog.debug(`ICE state for ${peerId}: ${pc.iceConnectionState}`)
       
       if (pc.iceConnectionState === 'failed') {
-        console.error(`[WebRTC] ICE failed for ${peerId}, attempting restart`)
+        WebRTCLog.error(`ICE failed for ${peerId}, attempting restart`)
         pc.restartIce()
       }
     }
 
     // Handle connection state changes
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC] Connection state for ${peerId}:`, pc.connectionState)
+      WebRTCLog.info(`Connection state for ${peerId}: ${pc.connectionState}`)
       
       // Update local ref
       const data = connectionsRef.current.get(peerId)
@@ -88,13 +91,13 @@ export function usePeerConnections(
       
       // Handle disconnection
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        console.warn(`[WebRTC] Connection ${pc.connectionState} for ${peerId}`)
+        WebRTCLog.warn(`Connection ${pc.connectionState} for ${peerId}`)
       }
     }
 
     // Handle incoming tracks (remote audio)
     pc.ontrack = (event) => {
-      console.log(`[WebRTC] Received track from ${peerId}:`, event.track.kind)
+      WebRTCLog.info(`Received track from ${peerId}`, { kind: event.track.kind })
       
       const remoteStream = event.streams[0] || new MediaStream([event.track])
       
@@ -114,14 +117,14 @@ export function usePeerConnections(
 
     // Handle negotiation needed (renegotiation)
     pc.onnegotiationneeded = () => {
-      console.log(`[WebRTC] Negotiation needed for ${peerId}`)
+      WebRTCLog.debug(`Negotiation needed for ${peerId}`)
     }
 
     // Add local stream tracks if available
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
         pc.addTrack(track, localStreamRef.current!)
-        console.log(`[WebRTC] Added local ${track.kind} track to ${peerId}`)
+        WebRTCLog.debug(`Added local ${track.kind} track to ${peerId}`)
       })
     }
 
@@ -148,9 +151,9 @@ export function usePeerConnections(
     for (const candidate of pending) {
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate))
-        console.log(`[WebRTC] Added pending ICE candidate for ${peerId}`)
+        WebRTCLog.debug(`Added pending ICE candidate for ${peerId}`)
       } catch (err) {
-        console.warn(`[WebRTC] Failed to add pending candidate for ${peerId}:`, err)
+        WebRTCLog.warn(`Failed to add pending candidate for ${peerId}`, err)
       }
     }
     
@@ -180,10 +183,10 @@ export function usePeerConnections(
 
       await pc.setLocalDescription(offer)
       
-      console.log(`[WebRTC] Created offer for ${peerId}`)
+      WebRTCLog.info(`Created offer for ${peerId}`)
       return offer
     } catch (err) {
-      console.error(`[WebRTC] Failed to create offer for ${peerId}:`, err)
+      WebRTCLog.error(`Failed to create offer for ${peerId}`, err)
       return null
     }
   }, [createPeerConnection])
@@ -215,10 +218,10 @@ export function usePeerConnections(
 
       await pc.setLocalDescription(answer)
       
-      console.log(`[WebRTC] Created answer for ${peerId}`)
+      WebRTCLog.info(`Created answer for ${peerId}`)
       return answer
     } catch (err) {
-      console.error(`[WebRTC] Failed to handle offer from ${peerId}:`, err)
+      WebRTCLog.error(`Failed to handle offer from ${peerId}`, err)
       return null
     }
   }, [createPeerConnection, addPendingCandidates])
@@ -231,7 +234,7 @@ export function usePeerConnections(
       const pc = connectionsRef.current.get(peerId)?.connection
       
       if (!pc) {
-        console.error(`[WebRTC] No connection found for ${peerId}`)
+        WebRTCLog.error(`No connection found for ${peerId}`)
         return
       }
 
@@ -240,9 +243,9 @@ export function usePeerConnections(
       // Add any pending ICE candidates
       await addPendingCandidates(peerId, pc)
       
-      console.log(`[WebRTC] Set remote answer for ${peerId}`)
+      WebRTCLog.info(`Set remote answer for ${peerId}`)
     } catch (err) {
-      console.error(`[WebRTC] Failed to handle answer from ${peerId}:`, err)
+      WebRTCLog.error(`Failed to handle answer from ${peerId}`, err)
     }
   }, [addPendingCandidates])
 
@@ -258,7 +261,7 @@ export function usePeerConnections(
       
       if (!pc) {
         // Store candidate for later if connection doesn't exist yet
-        console.log(`[WebRTC] Storing ICE candidate for ${peerId} (no connection yet)`)
+        WebRTCLog.debug(`Storing ICE candidate for ${peerId} (no connection yet)`)
         const pending = pendingCandidatesRef.current.get(peerId) || []
         pending.push(candidate)
         pendingCandidatesRef.current.set(peerId, pending)
@@ -267,7 +270,7 @@ export function usePeerConnections(
 
       // Check if we have a remote description
       if (!pc.remoteDescription) {
-        console.log(`[WebRTC] Storing ICE candidate for ${peerId} (no remote description)`)
+        WebRTCLog.debug(`Storing ICE candidate for ${peerId} (no remote description)`)
         const pending = pendingCandidatesRef.current.get(peerId) || []
         pending.push(candidate)
         pendingCandidatesRef.current.set(peerId, pending)
@@ -275,9 +278,9 @@ export function usePeerConnections(
       }
 
       await pc.addIceCandidate(new RTCIceCandidate(candidate))
-      console.log(`[WebRTC] Added ICE candidate for ${peerId}`)
+      WebRTCLog.debug(`Added ICE candidate for ${peerId}`)
     } catch (err) {
-      console.error(`[WebRTC] Failed to add ICE candidate for ${peerId}:`, err)
+      WebRTCLog.error(`Failed to add ICE candidate for ${peerId}`, err)
     }
   }, [])
 
@@ -296,7 +299,7 @@ export function usePeerConnections(
         
         if (!trackAlreadyAdded) {
           data.connection.addTrack(track, stream)
-          console.log(`[WebRTC] Added local track to ${peerId}`)
+          WebRTCLog.debug(`Added local track to ${peerId}`)
         }
       })
     })
@@ -312,8 +315,8 @@ export function usePeerConnections(
       
       if (audioSender) {
         audioSender.replaceTrack(newTrack)
-          .then(() => console.log(`[WebRTC] Replaced track for ${peerId}`))
-          .catch(err => console.error(`[WebRTC] Failed to replace track for ${peerId}:`, err))
+          .then(() => WebRTCLog.debug(`Replaced track for ${peerId}`))
+          .catch(err => WebRTCLog.error(`Failed to replace track for ${peerId}`, err))
       }
     })
   }, [])
@@ -336,7 +339,7 @@ export function usePeerConnections(
         return updated
       })
       
-      console.log(`[WebRTC] Closed connection for ${peerId}`)
+      WebRTCLog.info(`Closed connection for ${peerId}`)
     }
   }, [])
 
@@ -346,7 +349,7 @@ export function usePeerConnections(
   const closeAllConnections = useCallback(() => {
     connectionsRef.current.forEach((data, peerId) => {
       data.connection.close()
-      console.log(`[WebRTC] Closed connection for ${peerId}`)
+      WebRTCLog.info(`Closed connection for ${peerId}`)
     })
     
     connectionsRef.current.clear()

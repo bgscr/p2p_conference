@@ -6,6 +6,7 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { AudioMeter } from './AudioMeter'
 import { useI18n } from '../hooks/useI18n'
+import { AudioLog } from '../utils/Logger'
 
 interface ParticipantCardProps {
   name: string
@@ -54,7 +55,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     const audioElement = audioRef.current
     if (!audioElement) return
 
-    console.log('[ParticipantCard] Setting up audio playback', {
+    AudioLog.debug('Setting up audio playback', {
       peerId,
       streamId: stream.id,
       trackCount: stream.getTracks().length,
@@ -64,13 +65,13 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     // Verify stream has audio tracks
     const audioTracks = stream.getAudioTracks()
     if (audioTracks.length === 0) {
-      console.error('[ParticipantCard] Stream has no audio tracks!', { peerId, streamId: stream.id })
+      AudioLog.error('Stream has no audio tracks!', { peerId, streamId: stream.id })
       return
     }
 
     // Log track state
     audioTracks.forEach((track, idx) => {
-      console.log(`[ParticipantCard] Audio track ${idx}:`, {
+      AudioLog.debug(`Audio track ${idx}`, {
         id: track.id,
         enabled: track.enabled,
         muted: track.muted,
@@ -87,15 +88,15 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     const playAudio = async () => {
       try {
         await audioElement.play()
-        console.log('[ParticipantCard] Audio playback started successfully', { peerId })
+        AudioLog.info('Audio playback started successfully', { peerId })
       } catch (err: any) {
-        console.warn('[ParticipantCard] Autoplay blocked, will retry on user interaction:', err.message)
+        AudioLog.warn('Autoplay blocked, will retry on user interaction', { error: err.message })
 
         // Set up a one-time click handler to retry playback
         const handleUserInteraction = () => {
           audioElement.play()
-            .then(() => console.log('[ParticipantCard] Audio playback started after user interaction', { peerId }))
-            .catch(e => console.error('[ParticipantCard] Still failed to play after interaction:', e))
+            .then(() => AudioLog.info('Audio playback started after user interaction', { peerId }))
+            .catch(e => AudioLog.error('Still failed to play after interaction', e))
           document.removeEventListener('click', handleUserInteraction)
           document.removeEventListener('keydown', handleUserInteraction)
         }
@@ -175,7 +176,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
 
     if ('setSinkId' in audioElement) {
       (audioElement as any).setSinkId(outputDeviceId).catch((err: Error) => {
-        console.warn('[ParticipantCard] Failed to set output device:', err)
+        AudioLog.warn('Failed to set output device', err)
       })
     }
   }, [outputDeviceId, isLocal])

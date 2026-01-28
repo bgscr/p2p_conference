@@ -3,6 +3,10 @@
  * Uses Web Audio API to generate simple notification sounds
  */
 
+import { logger } from '../utils/Logger'
+
+const SoundLog = logger.createModuleLogger('Sound')
+
 class SoundManager {
   private audioContext: AudioContext | null = null
   private enabled: boolean = true
@@ -63,7 +67,7 @@ class SoundManager {
       osc.start(now)
       osc.stop(now + 0.3)
     } catch (err) {
-      console.warn('[Sound] Failed to play join sound:', err)
+      SoundLog.warn('Failed to play join sound', err)
     }
   }
 
@@ -98,7 +102,7 @@ class SoundManager {
       osc.start(now)
       osc.stop(now + 0.25)
     } catch (err) {
-      console.warn('[Sound] Failed to play leave sound:', err)
+      SoundLog.warn('Failed to play leave sound', err)
     }
   }
 
@@ -129,7 +133,7 @@ class SoundManager {
       osc.start(now)
       osc.stop(now + 0.15)
     } catch (err) {
-      console.warn('[Sound] Failed to play connected sound:', err)
+      SoundLog.warn('Failed to play connected sound', err)
     }
   }
 
@@ -162,7 +166,7 @@ class SoundManager {
       osc.start(now)
       osc.stop(now + 0.3)
     } catch (err) {
-      console.warn('[Sound] Failed to play error sound:', err)
+      SoundLog.warn('Failed to play error sound', err)
     }
   }
 
@@ -192,7 +196,7 @@ class SoundManager {
       osc.start(now)
       osc.stop(now + 0.05)
     } catch (err) {
-      console.warn('[Sound] Failed to play click sound:', err)
+      SoundLog.warn('Failed to play click sound', err)
     }
   }
 
