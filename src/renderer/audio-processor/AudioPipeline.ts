@@ -13,8 +13,7 @@
 
 import { AudioLog } from '../utils/Logger';
 
-// WASM file path (relative to index.html - works with both dev server and file:// protocol)
-const RNNOISE_WASM_PATH = './audio-processor/rnnoise.wasm';
+// Processor path (relative to index.html - works with both dev server and file:// protocol)
 const PROCESSOR_PATH = './audio-processor/noise-processor.js';
 
 export class AudioPipeline {
@@ -25,14 +24,11 @@ export class AudioPipeline {
   private gainNode: GainNode | null = null;
   private analyserNode: AnalyserNode | null = null;
 
-  // WASM module storage
-  private wasmModule: WebAssembly.Module | null = null;
-  private wasmMemory: WebAssembly.Memory | null = null;
-
   // State
   private isInitialized: boolean = false;
   private isWasmReady: boolean = false;
   private noiseSuppressionEnabled: boolean = true;
+  private isDestroyed: boolean = false;
 
   /**
    * Initialize the audio pipeline
@@ -44,6 +40,7 @@ export class AudioPipeline {
     }
 
     AudioLog.info('Initializing AudioPipeline...');
+    this.isDestroyed = false;
 
     try {
       // Create audio context at 48kHz (required by RNNoise)
@@ -60,18 +57,29 @@ export class AudioPipeline {
         });
       }
 
-      // Load WASM module first
-      await this.loadWasmModule();
+      if (this.isDestroyed || !this.audioContext) {
+        AudioLog.warn('Pipeline destroyed during initialization, aborting');
+        return;
+      }
 
       // Load AudioWorklet processor
       try {
         AudioLog.debug('Loading AudioWorklet module...', { path: PROCESSOR_PATH });
         await this.audioContext.audioWorklet.addModule(PROCESSOR_PATH);
         AudioLog.info('AudioWorklet module loaded successfully');
+        // Mark WASM as ready - the worklet will self-initialize with embedded WASM
+        this.isWasmReady = true;
       } catch (workletError) {
         AudioLog.warn('Failed to load AudioWorklet - noise suppression will be unavailable', {
           error: workletError
         });
+        this.isWasmReady = false;
+      }
+
+      // Check if pipeline was destroyed during async worklet loading
+      if (this.isDestroyed || !this.audioContext) {
+        AudioLog.warn('Pipeline destroyed during worklet loading, aborting initialization');
+        return;
       }
 
       // Create destination node for WebRTC output
@@ -98,43 +106,7 @@ export class AudioPipeline {
     }
   }
 
-  /**
-   * Load the RNNoise WASM module
-   */
-  private async loadWasmModule(): Promise<void> {
-    try {
-      AudioLog.info('Loading RNNoise WASM module...', { path: RNNOISE_WASM_PATH });
 
-      // Fetch the WASM binary
-      const response = await fetch(RNNOISE_WASM_PATH);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch WASM: ${response.status} ${response.statusText}`);
-      }
-
-      const wasmBinary = await response.arrayBuffer();
-      AudioLog.info('WASM binary loaded', { size: wasmBinary.byteLength });
-
-      // Create shared memory for WASM
-      // RNNoise needs at least 256 pages (16MB) for its internal allocations
-      this.wasmMemory = new WebAssembly.Memory({
-        initial: 256,  // 16MB initial
-        maximum: 512,  // 32MB max
-        shared: false  // Shared memory requires special headers, keep false for compatibility
-      });
-
-      // Compile the WASM module
-      this.wasmModule = await WebAssembly.compile(wasmBinary);
-      AudioLog.info('WASM module compiled successfully');
-
-      this.isWasmReady = true;
-
-    } catch (error) {
-      AudioLog.error('Failed to load WASM module', { error });
-      this.isWasmReady = false;
-      // Don't throw - allow fallback to bypass mode
-    }
-  }
 
   /**
    * Connect an input stream through the processing pipeline
@@ -158,11 +130,10 @@ export class AudioPipeline {
     this.sourceNode = this.audioContext.createMediaStreamSource(inputStream);
 
     // Determine if we should use noise suppression
+    // The worklet now self-initializes with embedded WASM
     const useNoiseSuppression =
       this.noiseSuppressionEnabled &&
       this.isWasmReady &&
-      this.wasmModule &&
-      this.wasmMemory &&
       this.audioContext.audioWorklet;
 
     AudioLog.debug('Noise suppression decision', {
@@ -229,21 +200,24 @@ export class AudioPipeline {
   }
 
   /**
-   * Initialize WASM in the AudioWorklet
+   * Wait for WASM initialization in the AudioWorklet
+   * The worklet now self-initializes with an embedded WASM module
    */
   private async initializeWorkletWasm(): Promise<void> {
-    if (!this.workletNode || !this.wasmModule || !this.wasmMemory) {
-      throw new Error('Worklet or WASM not ready');
+    if (!this.workletNode) {
+      throw new Error('Worklet not ready');
     }
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('WASM initialization timeout'));
-      }, 5000);
+      }, 10000); // 10 second timeout for self-initialization
 
-      // Listen for ready/error messages
+      // Listen for ready/error messages from the self-initializing worklet
       const originalHandler = this.workletNode!.port.onmessage;
       this.workletNode!.port.onmessage = (event) => {
+        AudioLog.debug('Received worklet message', { type: event.data.type, data: event.data });
+
         if (event.data.type === 'ready') {
           clearTimeout(timeout);
           this.workletNode!.port.onmessage = originalHandler;
@@ -254,6 +228,8 @@ export class AudioPipeline {
           this.workletNode!.port.onmessage = originalHandler;
           AudioLog.error('Worklet WASM initialization failed', { error: event.data.error });
           reject(new Error(event.data.error));
+        } else if (event.data.type === 'log') {
+          AudioLog.info(`[Worklet Log] ${event.data.message}`);
         }
 
         // Also call original handler
@@ -262,15 +238,8 @@ export class AudioPipeline {
         }
       };
 
-      // Send WASM module to worklet
-      AudioLog.debug('Sending WASM module to worklet...');
-      this.workletNode!.port.postMessage({
-        type: 'init',
-        data: {
-          wasmModule: this.wasmModule,
-          wasmMemory: this.wasmMemory
-        }
-      });
+      // The worklet self-initializes - we just wait for the ready message
+      AudioLog.debug('Waiting for worklet self-initialization...');
     });
   }
 
@@ -433,6 +402,7 @@ export class AudioPipeline {
    * Cleanup and destroy the pipeline
    */
   async destroy(): Promise<void> {
+    this.isDestroyed = true;
     this.disconnect();
 
     if (this.audioContext) {
@@ -447,8 +417,6 @@ export class AudioPipeline {
     this.destinationNode = null;
     this.gainNode = null;
     this.analyserNode = null;
-    this.wasmModule = null;
-    this.wasmMemory = null;
     this.isInitialized = false;
     this.isWasmReady = false;
 
@@ -467,6 +435,13 @@ export class AudioPipeline {
    */
   getSampleRate(): number {
     return this.audioContext?.sampleRate || 48000;
+  }
+
+  /**
+   * Get the analyser node for visualization
+   */
+  getAnalyserNode(): AnalyserNode | null {
+    return this.analyserNode;
   }
 
   /**

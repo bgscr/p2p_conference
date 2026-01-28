@@ -8,6 +8,7 @@ import { DeviceSelector } from './DeviceSelector'
 import { AudioMeter } from './AudioMeter'
 import { useI18n } from '../hooks/useI18n'
 import { UILog } from '../utils/Logger'
+import { getAudioPipeline } from '../audio-processor/AudioPipeline'
 import type { AudioDevice } from '@/types'
 
 interface LobbyViewProps {
@@ -61,7 +62,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
 
   // Refs for audio testing
   const testStreamRef = useRef<MediaStream | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | null>(null)
 
@@ -110,15 +110,16 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
 
       onRefreshDevices()
 
-      const audioContext = new AudioContext()
-      audioContextRef.current = audioContext
+      const pipeline = getAudioPipeline()
+      await pipeline.initialize()
+      await pipeline.connectInputStream(stream)
 
-      const analyser = audioContext.createAnalyser()
-      analyser.fftSize = 256
-      analyserRef.current = analyser
+      analyserRef.current = pipeline.getAnalyserNode()
+      const analyser = analyserRef.current
 
-      const source = audioContext.createMediaStreamSource(stream)
-      source.connect(analyser)
+      if (!analyser) {
+        throw new Error('Pipeline analyser not available')
+      }
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount)
 
@@ -137,7 +138,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       updateLevel()
       setTestingMic(true)
 
-      UILog.info('Microphone test started successfully')
+      UILog.info('Microphone test started successfully with noise suppression pipeline')
     } catch (err) {
       UILog.error('Microphone test failed', { error: err })
       alert(t('lobby.micPermissionDenied'))
@@ -153,17 +154,16 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       animationFrameRef.current = null
     }
 
-    if (audioContextRef.current) {
-      audioContextRef.current.close()
-      audioContextRef.current = null
-    }
-    analyserRef.current = null
+    // Disconnect pipeline but don't destroy it (App manages destruction)
+    const pipeline = getAudioPipeline()
+    pipeline.disconnect()
 
     if (testStreamRef.current) {
       testStreamRef.current.getTracks().forEach(track => track.stop())
       testStreamRef.current = null
     }
 
+    analyserRef.current = null
     setTestAudioLevel(0)
     setTestingMic(false)
 

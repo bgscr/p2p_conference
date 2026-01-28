@@ -636,6 +636,7 @@ export default function App() {
           onToggleSound={handleToggleSound}
           settings={settings}
           onSettingsChange={handleSettingsChange}
+          p2pManager={peerManager}
         />
       )}
 

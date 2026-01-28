@@ -412,6 +412,30 @@ function createWindow(): void {
   // Get the application icon for the window
   const appIcon = getAppIcon(false)
 
+  // Robust preload path resolution
+  const possiblePaths = [
+    join(__dirname, '../preload/index.mjs'), // ESM build (default for type: module)
+    join(__dirname, '../preload/index.js'),  // CJS build fallback
+    join(app.getAppPath(), 'out/preload/index.mjs'),
+    join(app.getAppPath(), 'out/preload/index.js')
+  ]
+
+  let preloadPath = ''
+  for (const p of possiblePaths) {
+    if (existsSync(p)) {
+      preloadPath = p
+      break
+    }
+  }
+
+  if (preloadPath) {
+    MainLog.info('Preload script found', { path: preloadPath })
+  } else {
+    MainLog.error('Preload script NOT found', { searchedPaths: possiblePaths })
+    // Fallback to standard path even if not found (might work in some dev envs)
+    preloadPath = join(__dirname, '../preload/index.js')
+  }
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -419,13 +443,24 @@ function createWindow(): void {
     minHeight: 600,
     icon: appIcon,  // Set window/taskbar icon
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false
+  })
+
+  // Set COOP/COEP headers for SharedArrayBuffer support (WAS/AudioWorklet)
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Cross-Origin-Opener-Policy': ['same-origin'],
+        'Cross-Origin-Embedder-Policy': ['require-corp']
+      }
+    })
   })
 
   // Create the menu

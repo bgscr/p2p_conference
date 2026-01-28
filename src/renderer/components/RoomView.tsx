@@ -9,7 +9,8 @@ import { AudioMeter } from './AudioMeter'
 import { DeviceSelector } from './DeviceSelector'
 import { useI18n } from '../hooks/useI18n'
 import { logger } from '../utils/Logger'
-import type { Peer, AudioDevice, ConnectionState, AppSettings } from '@/types'
+import type { Peer, AudioDevice, ConnectionState, AppSettings, ConnectionQuality } from '@/types'
+import { SimplePeerManager } from '../signaling/SimplePeerManager'
 
 interface RoomViewProps {
   userName: string
@@ -37,6 +38,7 @@ interface RoomViewProps {
   onToggleSound: () => void
   settings: AppSettings
   onSettingsChange: (settings: Partial<AppSettings>) => void
+  p2pManager?: SimplePeerManager
 }
 
 export const RoomView: React.FC<RoomViewProps> = ({
@@ -64,13 +66,15 @@ export const RoomView: React.FC<RoomViewProps> = ({
   onCopyRoomId,
   onToggleSound,
   settings,
-  onSettingsChange
+  onSettingsChange,
+  p2pManager
 }) => {
   const { t } = useI18n()
   const [showDevicePanel, setShowDevicePanel] = useState(false)
   const [elapsedTime, setElapsedTime] = useState(0)
   const [copied, setCopied] = useState(false)
   const [peerVolumes, setPeerVolumes] = useState<Map<string, number>>(new Map())
+  const [connectionStats, setConnectionStats] = useState<Map<string, ConnectionQuality>>(new Map())
 
   const startTimeRef = useRef(Date.now())
 
@@ -96,6 +100,22 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
     return () => clearInterval(interval)
   }, [])
+
+  // Periodic connection stats update
+  useEffect(() => {
+    if (!p2pManager) return
+
+    const updateStats = async () => {
+      const stats = await p2pManager.getConnectionStats()
+      setConnectionStats(stats)
+    }
+
+    // Initial update
+    updateStats()
+
+    const interval = setInterval(updateStats, 2000)
+    return () => clearInterval(interval)
+  }, [p2pManager])
 
   // Format duration
   const formatDuration = (seconds: number): string => {
@@ -237,6 +257,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                   volume={getPeerVolume(peer.id)}
                   onVolumeChange={(vol) => handlePeerVolumeChange(peer.id, vol)}
                   platform={peer.platform}
+                  connectionQuality={connectionStats.get(peer.id)}
                 />
               )
             })}
