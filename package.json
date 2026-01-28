@@ -45,6 +45,16 @@
       "out/**/*",
       "public/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "build/icons",
+        "to": "icons",
+        "filter": ["*.png", "*.ico"]
+      }
+    ],
+    "asarUnpack": [
+      "**/icons/**"
+    ],
     "mac": {
       "target": ["zip"],
       "category": "public.app-category.social-networking",

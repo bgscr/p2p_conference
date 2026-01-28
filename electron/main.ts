@@ -5,6 +5,7 @@
 
 import { app, BrowserWindow, ipcMain, systemPreferences, Menu, shell, Tray, nativeImage } from 'electron'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { fileLogger, MainLog, TrayLog, IPCLog } from './logger'
 import type { LogLevel } from './logger'
 
@@ -24,45 +25,104 @@ let isMuted = false
 let isInCall = false
 
 /**
- * Create a simple tray icon using nativeImage
- * Creates a 16x16 (or 32x32 for retina) icon with a simple microphone design
+ * Get the application icon path - checks both development and production locations
+ * Uses build/icons/icon.png as the main application icon
  */
-function createTrayIcon(muted: boolean = false): Electron.NativeImage {
-  // Use PNG icons for Windows/Linux to ensure they render correctly
-  if (process.platform !== 'darwin') {
-    const iconName = muted ? 'tray-muted.png' : 'tray-default.png'
-    const iconPath = join(__dirname, 'icons', iconName)
-    // MainLog.debug('Loading tray icon', { path: iconPath })
-    return nativeImage.createFromPath(iconPath)
+function getAppIconPath(): string | undefined {
+  const possiblePaths = [
+    // Development: relative to project root
+    join(__dirname, '..', '..', 'build', 'icons', 'icon.png'),
+    // Production (packaged): in resources
+    join(process.resourcesPath || '', 'icons', 'icon.png'),
+    // Alternative: next to the executable
+    join(__dirname, 'icons', 'icon.png'),
+    // Packaged app: build folder copied to resources
+    join(process.resourcesPath || '', 'build', 'icons', 'icon.png'),
+  ]
+  
+  for (const iconPath of possiblePaths) {
+    if (existsSync(iconPath)) {
+      MainLog.debug('Found app icon', { path: iconPath })
+      return iconPath
+    }
   }
+  
+  MainLog.warn('App icon not found in any expected location')
+  return undefined
+}
 
-  // Create a simple icon programmatically for macOS (which handles data URLs well)
-  // In production, you would use actual icon files
-  const size = 22
-  const scale = 2
+/**
+ * Get the application icon as a NativeImage
+ * Resizes for tray use if needed
+ */
+function getAppIcon(forTray: boolean = false): Electron.NativeImage {
+  const iconPath = getAppIconPath()
+  
+  if (iconPath) {
+    try {
+      const icon = nativeImage.createFromPath(iconPath)
+      
+      if (!icon.isEmpty()) {
+        if (forTray) {
+          // Resize for system tray (16x16 or 32x32 on Windows)
+          const traySize = process.platform === 'win32' ? 32 : 22
+          const size = icon.getSize()
+          if (size.width !== traySize || size.height !== traySize) {
+            MainLog.debug('Resizing icon for tray', { original: size, target: traySize })
+            return icon.resize({ width: traySize, height: traySize, quality: 'best' })
+          }
+        }
+        return icon
+      }
+    } catch (err) {
+      MainLog.warn('Failed to load app icon', { path: iconPath, error: String(err) })
+    }
+  }
+  
+  // Return fallback icon
+  return createFallbackIcon(forTray)
+}
 
-  // Create a data URL for a simple microphone icon
-  const canvas = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size * scale}" height="${size * scale}" viewBox="0 0 24 24" fill="none" stroke="${muted ? '#ef4444' : '#3b82f6'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-      <line x1="12" y1="19" x2="12" y2="23"/>
-      <line x1="8" y1="23" x2="16" y2="23"/>
-      ${muted ? '<line x1="1" y1="1" x2="23" y2="23" stroke="#ef4444" stroke-width="2.5"/>' : ''}
+/**
+ * Create a fallback icon when icon files are not available
+ */
+function createFallbackIcon(forTray: boolean = false): Electron.NativeImage {
+  const size = forTray ? 32 : 256
+  
+  // Create a simple P2P network icon as SVG
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32">
+      <rect width="32" height="32" rx="6" fill="#3b82f6"/>
+      <g transform="translate(4, 4)" fill="none" stroke="white" stroke-width="1.5">
+        <!-- Top left node -->
+        <rect x="1" y="1" width="8" height="6" rx="1.5"/>
+        <!-- Top right node -->
+        <rect x="15" y="1" width="8" height="6" rx="1.5"/>
+        <!-- Bottom center node -->
+        <rect x="8" y="17" width="8" height="6" rx="1.5"/>
+        <!-- Connecting lines -->
+        <path d="M5 7 L5 11 L12 11 L12 17" stroke-linecap="round"/>
+        <path d="M19 7 L19 11 L12 11" stroke-linecap="round"/>
+      </g>
     </svg>
   `
-
-  // Convert SVG to data URL
-  const dataUrl = `data:image/svg+xml;base64,${Buffer.from(canvas).toString('base64')}`
-
+  
+  const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`
   return nativeImage.createFromDataURL(dataUrl)
+}
+
+/**
+ * Create the tray icon - uses the app icon
+ */
+function createTrayIcon(): Electron.NativeImage {
+  return getAppIcon(true)
 }
 
 /**
  * Create and configure the system tray
  */
 function createTray(): void {
-  const icon = createTrayIcon(isMuted)
+  const icon = createTrayIcon()
   tray = new Tray(icon)
 
   tray.setToolTip('P2P Conference')
@@ -176,7 +236,7 @@ function updateTrayMenu(): void {
  */
 function updateTrayIcon(): void {
   if (!tray) return
-  const icon = createTrayIcon(isMuted)
+  const icon = createTrayIcon()
   tray.setImage(icon)
 
   // Update tooltip
@@ -347,11 +407,15 @@ function createMenu(): void {
 function createWindow(): void {
   MainLog.info('Creating main window')
 
+  // Get the application icon for the window
+  const appIcon = getAppIcon(false)
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
     minHeight: 600,
+    icon: appIcon,  // Set window/taskbar icon
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
