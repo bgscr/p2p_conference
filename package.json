@@ -19,6 +19,7 @@
     "build:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
+    "@jitsi/rnnoise-wasm": "^0.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -45,6 +46,7 @@
     },
     "files": [
       "out/**/*",
+      "dist/**/*",
       "public/**/*"
     ],
     "extraResources": [
@@ -58,7 +60,8 @@
       }
     ],
     "asarUnpack": [
-      "**/icons/**"
+      "**/icons/**",
+      "public/audio-processor/**"
     ],
     "mac": {
       "target": [

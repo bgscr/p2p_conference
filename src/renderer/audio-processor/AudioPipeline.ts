@@ -1,61 +1,128 @@
 /**
  * AudioPipeline
- * Manages the audio processing chain including RNNoise noise suppression
+ * 
+ * Manages the complete audio processing chain including:
+ * - Audio context management (48kHz for RNNoise compatibility)
+ * - WASM module loading and transfer to AudioWorklet
+ * - RNNoise noise suppression
+ * - Gain control and visualization
+ * 
+ * Architecture:
+ * Microphone → [Browser AEC/AGC] → AudioContext → RNNoise AudioWorklet → WebRTC
  */
 
+// WASM file path (relative to public folder)
+const RNNOISE_WASM_PATH = '/audio-processor/rnnoise.wasm';
+const PROCESSOR_PATH = '/audio-processor/noise-processor.js';
+
 export class AudioPipeline {
-  private audioContext: AudioContext | null = null
-  private sourceNode: MediaStreamAudioSourceNode | null = null
-  private destinationNode: MediaStreamAudioDestinationNode | null = null
-  private workletNode: AudioWorkletNode | null = null
-  private gainNode: GainNode | null = null
-  private analyserNode: AnalyserNode | null = null
+  private audioContext: AudioContext | null = null;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private destinationNode: MediaStreamAudioDestinationNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private gainNode: GainNode | null = null;
+  private analyserNode: AnalyserNode | null = null;
   
-  private isInitialized: boolean = false
-  private noiseSuppressionEnabled: boolean = true
+  // WASM module storage
+  private wasmModule: WebAssembly.Module | null = null;
+  private wasmMemory: WebAssembly.Memory | null = null;
+  
+  // State
+  private isInitialized: boolean = false;
+  private isWasmReady: boolean = false;
+  private noiseSuppressionEnabled: boolean = true;
 
   /**
    * Initialize the audio pipeline
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) {
-      console.log('[AudioPipeline] Already initialized')
-      return
+      console.log('[AudioPipeline] Already initialized');
+      return;
     }
 
     try {
-      // Create audio context
+      // Create audio context at 48kHz (required by RNNoise)
       this.audioContext = new AudioContext({
-        sampleRate: 48000, // RNNoise works best at 48kHz
+        sampleRate: 48000,
         latencyHint: 'interactive'
-      })
+      });
 
-      // Load AudioWorklet processor
-      // Note: In production, ensure noise-processor.js is in public folder
-      try {
-        await this.audioContext.audioWorklet.addModule('/audio-processor/noise-processor.js')
-        console.log('[AudioPipeline] AudioWorklet loaded successfully')
-      } catch (workletError) {
-        console.warn('[AudioPipeline] AudioWorklet not available, using bypass mode:', workletError)
-        // Continue without noise suppression - it will be handled by browser
+      console.log('[AudioPipeline] AudioContext created, sample rate:', this.audioContext.sampleRate);
+
+      if (this.audioContext.sampleRate !== 48000) {
+        console.warn('[AudioPipeline] Sample rate is not 48kHz! RNNoise may not work correctly.');
       }
 
-      // Create destination node for WebRTC
-      this.destinationNode = this.audioContext.createMediaStreamDestination()
+      // Load WASM module first
+      await this.loadWasmModule();
+
+      // Load AudioWorklet processor
+      try {
+        await this.audioContext.audioWorklet.addModule(PROCESSOR_PATH);
+        console.log('[AudioPipeline] AudioWorklet module loaded');
+      } catch (workletError) {
+        console.warn('[AudioPipeline] Failed to load AudioWorklet:', workletError);
+        console.warn('[AudioPipeline] Noise suppression will be unavailable');
+      }
+
+      // Create destination node for WebRTC output
+      this.destinationNode = this.audioContext.createMediaStreamDestination();
 
       // Create gain node for volume control
-      this.gainNode = this.audioContext.createGain()
-      this.gainNode.gain.value = 1.0
+      this.gainNode = this.audioContext.createGain();
+      this.gainNode.gain.value = 1.0;
 
       // Create analyser for visualization
-      this.analyserNode = this.audioContext.createAnalyser()
-      this.analyserNode.fftSize = 256
+      this.analyserNode = this.audioContext.createAnalyser();
+      this.analyserNode.fftSize = 256;
+      this.analyserNode.smoothingTimeConstant = 0.8;
 
-      this.isInitialized = true
-      console.log('[AudioPipeline] Initialized successfully')
+      this.isInitialized = true;
+      console.log('[AudioPipeline] Initialization complete');
+      console.log('[AudioPipeline] WASM ready:', this.isWasmReady);
+
     } catch (err) {
-      console.error('[AudioPipeline] Failed to initialize:', err)
-      throw err
+      console.error('[AudioPipeline] Initialization failed:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Load the RNNoise WASM module
+   */
+  private async loadWasmModule(): Promise<void> {
+    try {
+      console.log('[AudioPipeline] Loading RNNoise WASM from:', RNNOISE_WASM_PATH);
+
+      // Fetch the WASM binary
+      const response = await fetch(RNNOISE_WASM_PATH);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch WASM: ${response.status} ${response.statusText}`);
+      }
+
+      const wasmBinary = await response.arrayBuffer();
+      console.log('[AudioPipeline] WASM binary loaded, size:', wasmBinary.byteLength, 'bytes');
+
+      // Create shared memory for WASM
+      // RNNoise needs at least 256 pages (16MB) for its internal allocations
+      this.wasmMemory = new WebAssembly.Memory({
+        initial: 256,  // 16MB initial
+        maximum: 512,  // 32MB max
+        shared: false  // Shared memory requires special headers, keep false for compatibility
+      });
+
+      // Compile the WASM module
+      this.wasmModule = await WebAssembly.compile(wasmBinary);
+      console.log('[AudioPipeline] WASM module compiled successfully');
+
+      this.isWasmReady = true;
+
+    } catch (error) {
+      console.error('[AudioPipeline] Failed to load WASM module:', error);
+      this.isWasmReady = false;
+      // Don't throw - allow fallback to bypass mode
     }
   }
 
@@ -65,82 +132,228 @@ export class AudioPipeline {
    */
   async connectInputStream(inputStream: MediaStream): Promise<MediaStream> {
     if (!this.audioContext || !this.destinationNode || !this.gainNode) {
-      throw new Error('AudioPipeline not initialized')
+      throw new Error('AudioPipeline not initialized');
     }
+
+    // Disconnect any existing connections
+    this.disconnect();
 
     // Resume audio context if suspended (browser autoplay policy)
     if (this.audioContext.state === 'suspended') {
-      await this.audioContext.resume()
+      await this.audioContext.resume();
+      console.log('[AudioPipeline] AudioContext resumed');
     }
 
     // Create source from input stream
-    this.sourceNode = this.audioContext.createMediaStreamSource(inputStream)
+    this.sourceNode = this.audioContext.createMediaStreamSource(inputStream);
 
-    // Build processing chain
-    if (this.noiseSuppressionEnabled && this.audioContext.audioWorklet) {
+    // Determine if we should use noise suppression
+    const useNoiseSuppression = 
+      this.noiseSuppressionEnabled && 
+      this.isWasmReady && 
+      this.wasmModule && 
+      this.wasmMemory &&
+      this.audioContext.audioWorklet;
+
+    if (useNoiseSuppression) {
       try {
         // Create noise suppression worklet node
         this.workletNode = new AudioWorkletNode(this.audioContext, 'noise-suppressor', {
           numberOfInputs: 1,
           numberOfOutputs: 1,
           channelCount: 1,
+          channelCountMode: 'explicit',
           processorOptions: {
             sampleRate: this.audioContext.sampleRate
           }
-        })
+        });
 
-        // Connect: source -> worklet -> gain -> analyser -> destination
-        this.sourceNode.connect(this.workletNode)
-        this.workletNode.connect(this.gainNode)
-        this.gainNode.connect(this.analyserNode!)
-        this.analyserNode!.connect(this.destinationNode)
+        // Set up message handler for worklet communication
+        this.workletNode.port.onmessage = this.handleWorkletMessage.bind(this);
 
-        console.log('[AudioPipeline] Connected with noise suppression')
+        // Initialize WASM in the worklet
+        await this.initializeWorkletWasm();
+
+        // Connect: source → worklet → gain → analyser → destination
+        this.sourceNode.connect(this.workletNode);
+        this.workletNode.connect(this.gainNode);
+        this.gainNode.connect(this.analyserNode!);
+        this.analyserNode!.connect(this.destinationNode);
+
+        console.log('[AudioPipeline] Connected with RNNoise AI noise suppression');
+
       } catch (err) {
-        console.warn('[AudioPipeline] Worklet connection failed, using bypass:', err)
-        // Fallback: direct connection
-        this.sourceNode.connect(this.gainNode)
-        this.gainNode.connect(this.analyserNode!)
-        this.analyserNode!.connect(this.destinationNode)
+        console.warn('[AudioPipeline] Failed to enable noise suppression:', err);
+        this.connectBypass();
       }
     } else {
-      // Bypass mode: direct connection
-      this.sourceNode.connect(this.gainNode)
-      this.gainNode.connect(this.analyserNode!)
-      this.analyserNode!.connect(this.destinationNode)
-      console.log('[AudioPipeline] Connected in bypass mode')
+      this.connectBypass();
     }
 
-    return this.destinationNode.stream
+    return this.destinationNode.stream;
+  }
+
+  /**
+   * Connect in bypass mode (no noise suppression)
+   */
+  private connectBypass(): void {
+    if (!this.sourceNode || !this.gainNode || !this.analyserNode || !this.destinationNode) {
+      return;
+    }
+
+    // Direct connection: source → gain → analyser → destination
+    this.sourceNode.connect(this.gainNode);
+    this.gainNode.connect(this.analyserNode);
+    this.analyserNode.connect(this.destinationNode);
+
+    console.log('[AudioPipeline] Connected in bypass mode (no AI noise suppression)');
+    console.log('[AudioPipeline] Reason: WASM ready:', this.isWasmReady, 
+                ', NS enabled:', this.noiseSuppressionEnabled);
+  }
+
+  /**
+   * Initialize WASM in the AudioWorklet
+   */
+  private async initializeWorkletWasm(): Promise<void> {
+    if (!this.workletNode || !this.wasmModule || !this.wasmMemory) {
+      throw new Error('Worklet or WASM not ready');
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('WASM initialization timeout'));
+      }, 5000);
+
+      // Listen for ready/error messages
+      const originalHandler = this.workletNode!.port.onmessage;
+      this.workletNode!.port.onmessage = (event) => {
+        if (event.data.type === 'ready') {
+          clearTimeout(timeout);
+          this.workletNode!.port.onmessage = originalHandler;
+          console.log('[AudioPipeline] Worklet WASM initialized');
+          resolve();
+        } else if (event.data.type === 'error') {
+          clearTimeout(timeout);
+          this.workletNode!.port.onmessage = originalHandler;
+          reject(new Error(event.data.error));
+        }
+        
+        // Also call original handler
+        if (originalHandler) {
+          originalHandler.call(this.workletNode!.port, event);
+        }
+      };
+
+      // Send WASM module to worklet
+      console.log('[AudioPipeline] Sending WASM module to worklet...');
+      this.workletNode!.port.postMessage({
+        type: 'init',
+        data: {
+          wasmModule: this.wasmModule,
+          wasmMemory: this.wasmMemory
+        }
+      });
+    });
+  }
+
+  /**
+   * Handle messages from the AudioWorklet
+   */
+  private handleWorkletMessage(event: MessageEvent): void {
+    const { type, data } = event.data;
+
+    switch (type) {
+      case 'ready':
+        console.log('[AudioPipeline] Worklet reports ready');
+        break;
+
+      case 'error':
+        console.error('[AudioPipeline] Worklet error:', data);
+        break;
+
+      case 'stats':
+        console.log('[AudioPipeline] Worklet stats:', data);
+        break;
+
+      default:
+        // Unknown message type
+        break;
+    }
   }
 
   /**
    * Get audio level for visualization (0-100)
    */
   getAudioLevel(): number {
-    if (!this.analyserNode) return 0
+    if (!this.analyserNode) return 0;
 
-    const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount)
-    this.analyserNode.getByteFrequencyData(dataArray)
+    const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount);
+    this.analyserNode.getByteFrequencyData(dataArray);
 
-    const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
-    return Math.min(100, (average / 128) * 100)
+    // Calculate RMS-like average
+    const average = dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
+    
+    // Scale to 0-100 with some compression for better visual feedback
+    return Math.min(100, Math.pow(average / 128, 0.7) * 100);
   }
 
   /**
    * Set noise suppression enabled/disabled
    */
   setNoiseSuppression(enabled: boolean): void {
-    this.noiseSuppressionEnabled = enabled
+    this.noiseSuppressionEnabled = enabled;
     
     if (this.workletNode) {
       this.workletNode.port.postMessage({ 
         type: 'setEnabled', 
-        enabled 
-      })
+        data: { enabled }
+      });
+      console.log('[AudioPipeline] Noise suppression:', enabled ? 'enabled' : 'disabled');
+    }
+  }
+
+  /**
+   * Check if RNNoise AI noise suppression is active
+   */
+  isNoiseSuppressionActive(): boolean {
+    return this.isWasmReady && this.noiseSuppressionEnabled && this.workletNode !== null;
+  }
+
+  /**
+   * Get noise suppression status
+   */
+  getNoiseSuppressionStatus(): { enabled: boolean; active: boolean; wasmReady: boolean } {
+    return {
+      enabled: this.noiseSuppressionEnabled,
+      active: this.isNoiseSuppressionActive(),
+      wasmReady: this.isWasmReady
+    };
+  }
+
+  /**
+   * Request performance statistics from the worklet
+   */
+  async getStats(): Promise<any> {
+    if (!this.workletNode) {
+      return { error: 'Worklet not available' };
     }
 
-    console.log('[AudioPipeline] Noise suppression:', enabled ? 'enabled' : 'disabled')
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve({ error: 'Stats request timeout' });
+      }, 1000);
+
+      const handler = (event: MessageEvent) => {
+        if (event.data.type === 'stats') {
+          clearTimeout(timeout);
+          this.workletNode!.port.removeEventListener('message', handler);
+          resolve(event.data.data);
+        }
+      };
+
+      this.workletNode.port.addEventListener('message', handler);
+      this.workletNode.port.postMessage({ type: 'getStats' });
+    });
   }
 
   /**
@@ -148,75 +361,117 @@ export class AudioPipeline {
    */
   setGain(value: number): void {
     if (this.gainNode) {
-      this.gainNode.gain.value = Math.max(0, Math.min(2, value))
+      // Clamp value between 0 and 2 (200%)
+      this.gainNode.gain.value = Math.max(0, Math.min(2, value));
     }
   }
 
   /**
-   * Disconnect and cleanup
+   * Disconnect audio nodes
    */
   disconnect(): void {
     if (this.sourceNode) {
-      this.sourceNode.disconnect()
-      this.sourceNode = null
+      try {
+        this.sourceNode.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
+      this.sourceNode = null;
     }
 
     if (this.workletNode) {
-      this.workletNode.disconnect()
-      this.workletNode = null
+      try {
+        this.workletNode.disconnect();
+        this.workletNode.port.postMessage({ type: 'destroy' });
+      } catch (e) {
+        // Ignore disconnect errors
+      }
+      this.workletNode = null;
     }
 
     if (this.gainNode) {
-      this.gainNode.disconnect()
+      try {
+        this.gainNode.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
     }
 
     if (this.analyserNode) {
-      this.analyserNode.disconnect()
+      try {
+        this.analyserNode.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
     }
 
-    console.log('[AudioPipeline] Disconnected')
+    console.log('[AudioPipeline] Disconnected');
   }
 
   /**
-   * Cleanup and destroy
+   * Cleanup and destroy the pipeline
    */
   async destroy(): Promise<void> {
-    this.disconnect()
+    this.disconnect();
 
     if (this.audioContext) {
-      await this.audioContext.close()
-      this.audioContext = null
+      try {
+        await this.audioContext.close();
+      } catch (e) {
+        console.warn('[AudioPipeline] Error closing AudioContext:', e);
+      }
+      this.audioContext = null;
     }
 
-    this.destinationNode = null
-    this.gainNode = null
-    this.analyserNode = null
-    this.isInitialized = false
+    this.destinationNode = null;
+    this.gainNode = null;
+    this.analyserNode = null;
+    this.wasmModule = null;
+    this.wasmMemory = null;
+    this.isInitialized = false;
+    this.isWasmReady = false;
 
-    console.log('[AudioPipeline] Destroyed')
+    console.log('[AudioPipeline] Destroyed');
   }
 
   /**
    * Get processed output stream
    */
   getOutputStream(): MediaStream | null {
-    return this.destinationNode?.stream || null
+    return this.destinationNode?.stream || null;
   }
 
   /**
    * Get audio context sample rate
    */
   getSampleRate(): number {
-    return this.audioContext?.sampleRate || 48000
+    return this.audioContext?.sampleRate || 48000;
+  }
+
+  /**
+   * Check if pipeline is initialized
+   */
+  isReady(): boolean {
+    return this.isInitialized;
   }
 }
 
 // Singleton instance
-let pipelineInstance: AudioPipeline | null = null
+let pipelineInstance: AudioPipeline | null = null;
 
 export function getAudioPipeline(): AudioPipeline {
   if (!pipelineInstance) {
-    pipelineInstance = new AudioPipeline()
+    pipelineInstance = new AudioPipeline();
   }
-  return pipelineInstance
+  return pipelineInstance;
+}
+
+/**
+ * Reset the singleton instance (useful for testing)
+ */
+export async function resetAudioPipeline(): Promise<void> {
+  if (pipelineInstance) {
+    await pipelineInstance.destroy();
+    pipelineInstance = null;
+  }
 }

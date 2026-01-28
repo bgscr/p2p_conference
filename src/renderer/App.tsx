@@ -379,14 +379,39 @@ export default function App() {
     // Now do the async work (capture + join) - user sees the overlay during this
     try {
       // Start capture (this is the slow part)
-      const stream = await startCapture({
+      // Use browser's built-in AEC first, then RNNoise for additional noise suppression
+      const rawStream = await startCapture({
         echoCancellation: settings.echoCancellationEnabled,
-        noiseSuppression: settings.noiseSuppressionEnabled,
+        noiseSuppression: false, // Let RNNoise handle this instead of browser
         autoGainControl: settings.autoGainControlEnabled
       })
 
-      if (stream) {
-        peerManager.setLocalStream(stream)
+      if (rawStream) {
+        // Process through AudioPipeline for RNNoise AI noise suppression
+        AppLog.info('Connecting stream to AudioPipeline for AI noise suppression')
+        
+        try {
+          // Set noise suppression state before connecting
+          audioPipelineRef.current.setNoiseSuppression(settings.noiseSuppressionEnabled)
+          
+          // Connect raw stream to pipeline, get processed stream
+          const processedStream = await audioPipelineRef.current.connectInputStream(rawStream)
+          
+          // Log pipeline status
+          const nsStatus = audioPipelineRef.current.getNoiseSuppressionStatus()
+          AppLog.info('AudioPipeline connected', {
+            enabled: nsStatus.enabled,
+            active: nsStatus.active,
+            wasmReady: nsStatus.wasmReady
+          })
+          
+          // Send processed stream to WebRTC
+          peerManager.setLocalStream(processedStream)
+        } catch (pipelineErr) {
+          AppLog.warn('AudioPipeline processing failed, using raw stream', { error: pipelineErr })
+          // Fallback: use raw stream if pipeline fails
+          peerManager.setLocalStream(rawStream)
+        }
       }
 
       // Join the signaling room
@@ -433,20 +458,34 @@ export default function App() {
   const handleInputDeviceChange = useCallback(async (deviceId: string) => {
     AppLog.info('Switching input device', { deviceId })
 
-    const newStream = await switchInputDevice(deviceId)
+    const newRawStream = await switchInputDevice(deviceId)
 
-    if (newStream) {
-      const newTrack = newStream.getAudioTracks()[0]
-      if (newTrack) {
-        AppLog.info('Replacing audio track in peer connections', {
-          trackId: newTrack.id,
-          label: newTrack.label
-        })
-        peerManager.replaceTrack(newTrack)
-        // Also update the local stream reference in peer manager
-        peerManager.setLocalStream(newStream)
-      } else {
-        AppLog.error('New stream has no audio tracks after device switch')
+    if (newRawStream) {
+      try {
+        // Reconnect through AudioPipeline for RNNoise processing
+        AppLog.info('Reconnecting new device through AudioPipeline')
+        const processedStream = await audioPipelineRef.current.connectInputStream(newRawStream)
+        
+        const newTrack = processedStream.getAudioTracks()[0]
+        if (newTrack) {
+          AppLog.info('Replacing audio track in peer connections', {
+            trackId: newTrack.id,
+            label: newTrack.label
+          })
+          peerManager.replaceTrack(newTrack)
+          // Also update the local stream reference in peer manager
+          peerManager.setLocalStream(processedStream)
+        } else {
+          AppLog.error('Processed stream has no audio tracks after device switch')
+        }
+      } catch (pipelineErr) {
+        // Fallback: use raw stream if pipeline fails
+        AppLog.warn('AudioPipeline failed on device switch, using raw stream', { error: pipelineErr })
+        const newTrack = newRawStream.getAudioTracks()[0]
+        if (newTrack) {
+          peerManager.replaceTrack(newTrack)
+          peerManager.setLocalStream(newRawStream)
+        }
       }
     } else {
       AppLog.warn('switchInputDevice returned null - device switch may have failed')
