@@ -30,6 +30,9 @@ function copyAppIconsPlugin() {
   }
 }
 
+// Determine if we're in production build
+const isProduction = process.env.NODE_ENV === 'production'
+
 export default defineConfig({
   main: {
     build: {
@@ -37,7 +40,25 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'electron/main.ts')
         }
-      }
+      },
+      // Enable minification for main process in production
+      minify: isProduction ? 'terser' : false,
+      terserOptions: isProduction ? {
+        compress: {
+          drop_console: false,  // Keep console for debugging if needed
+          drop_debugger: true,
+          passes: 2
+        },
+        mangle: {
+          // Mangle property names for better obfuscation
+          properties: {
+            regex: /^_/  // Only mangle private properties starting with _
+          }
+        },
+        format: {
+          comments: false  // Remove all comments
+        }
+      } : undefined
     },
     plugins: [copyAppIconsPlugin()]
   },
@@ -47,7 +68,20 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'electron/preload.ts')
         }
-      }
+      },
+      // Enable minification for preload in production
+      minify: isProduction ? 'terser' : false,
+      terserOptions: isProduction ? {
+        compress: {
+          drop_console: false,
+          drop_debugger: true,
+          passes: 2
+        },
+        mangle: true,
+        format: {
+          comments: false
+        }
+      } : undefined
     }
   },
   renderer: {
@@ -59,8 +93,29 @@ export default defineConfig({
         }
       },
       target: 'esnext',
-      minify: false,
-      sourcemap: true
+      // Enable minification and obfuscation for renderer in production
+      minify: isProduction ? 'terser' : false,
+      terserOptions: isProduction ? {
+        compress: {
+          drop_console: false,  // Keep console for user-facing errors
+          drop_debugger: true,
+          passes: 3,  // More passes for better compression
+          pure_funcs: ['console.debug'],  // Remove debug logs in production
+          dead_code: true,
+          unused: true
+        },
+        mangle: {
+          // Aggressive mangling for renderer code
+          toplevel: true,
+          properties: {
+            regex: /^_/  // Mangle private properties
+          }
+        },
+        format: {
+          comments: false
+        }
+      } : undefined,
+      sourcemap: !isProduction  // Disable sourcemaps in production
     },
     plugins: [react()],
     resolve: {

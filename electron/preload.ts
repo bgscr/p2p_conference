@@ -110,7 +110,31 @@ const electronAPI = {
     return () => {
       ipcRenderer.removeAllListeners('tray-leave-call')
     }
-  }
+  },
+  
+  // ============================================
+  // Credentials API (kept in main process for security)
+  // ============================================
+  
+  /**
+   * Get ICE server configuration (STUN + TURN)
+   * Credentials are stored in main process to avoid exposure in renderer
+   */
+  getICEServers: (): Promise<Array<{
+    urls: string | string[]
+    username?: string
+    credential?: string
+  }>> => ipcRenderer.invoke('get-ice-servers'),
+  
+  /**
+   * Get MQTT broker configurations
+   * Credentials are stored in main process to avoid exposure in renderer
+   */
+  getMQTTBrokers: (): Promise<Array<{
+    url: string
+    username?: string
+    password?: string
+  }>> => ipcRenderer.invoke('get-mqtt-brokers')
 }
 
 // Expose to renderer

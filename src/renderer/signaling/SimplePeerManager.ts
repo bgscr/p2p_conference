@@ -34,20 +34,73 @@ export const generatePeerId = (): string => {
 // Self ID for this client
 export const selfId = generatePeerId()
 
-// ICE servers for NAT traversal
-const ICE_SERVERS: RTCIceServer[] = [
+// ============================================
+// Credentials loaded from main process via IPC
+// This prevents hardcoded secrets in renderer code
+// ============================================
+
+// ICE servers will be populated from main process
+let ICE_SERVERS: RTCIceServer[] = [
+  // Fallback STUN servers (no credentials needed)
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' },
-  {
-    urls: [
-      'turn:47.111.10.155:3478',
-    ],
-    username: 'turnuser',
-    credential: 'huUKPizqnXPY5W94BXpPh3hZ4nZcdhA3'
-  }
+  { urls: 'stun:stun1.l.google.com:19302' }
 ]
+
+// Flag to track if credentials have been loaded
+let credentialsLoaded = false
+let credentialsLoadPromise: Promise<void> | null = null
+
+/**
+ * Load credentials from main process
+ * This should be called before joining a room
+ */
+export async function loadCredentials(): Promise<void> {
+  // Return existing promise if loading is already in progress
+  if (credentialsLoadPromise) {
+    return credentialsLoadPromise
+  }
+  
+  // Skip if already loaded
+  if (credentialsLoaded) {
+    return
+  }
+  
+  credentialsLoadPromise = (async () => {
+    try {
+      // Check if we're in Electron environment
+      if (typeof window !== 'undefined' && (window as any).electronAPI) {
+        SignalingLog.info('Loading credentials from main process...')
+        
+        // Load ICE servers (STUN + TURN)
+        const iceServers = await (window as any).electronAPI.getICEServers()
+        if (iceServers && iceServers.length > 0) {
+          ICE_SERVERS = iceServers
+          SignalingLog.info('ICE servers loaded', { count: iceServers.length })
+        }
+        
+        // Load MQTT brokers
+        const mqttBrokers = await (window as any).electronAPI.getMQTTBrokers()
+        if (mqttBrokers && mqttBrokers.length > 0) {
+          MQTT_BROKERS.length = 0  // Clear existing
+          mqttBrokers.forEach((broker: BrokerConfig) => MQTT_BROKERS.push(broker))
+          SignalingLog.info('MQTT brokers loaded', { count: mqttBrokers.length })
+        }
+        
+        credentialsLoaded = true
+        SignalingLog.info('Credentials loaded successfully')
+      } else {
+        SignalingLog.warn('Not in Electron environment, using fallback STUN servers only')
+      }
+    } catch (err) {
+      SignalingLog.error('Failed to load credentials', { error: String(err) })
+      // Continue with fallback servers
+    } finally {
+      credentialsLoadPromise = null
+    }
+  })()
+  
+  return credentialsLoadPromise
+}
 
 // Timing constants
 const ANNOUNCE_INTERVAL = 3000
@@ -77,12 +130,10 @@ interface BrokerConfig {
 
 // Multiple MQTT brokers for redundancy - we connect to ALL of them
 // and broadcast on all connected brokers to maximize connectivity
+// NOTE: This array is populated from main process via loadCredentials()
 const MQTT_BROKERS: BrokerConfig[] = [
-  {
-    url: 'ws://47.111.10.155:8083/mqtt',
-    username: 'mqtt_admin',
-    password: 'Q32yrcmtp53tpnEpSZj7nTZUmqKML6mF'
-  },
+  // Fallback public brokers (no credentials needed)
+  // Private broker with credentials will be added from main process
   { url: 'wss://broker.emqx.io:8084/mqtt' }, // Global EMQX (most reliable)
   { url: 'wss://broker-cn.emqx.io:8084/mqtt' }, // China EMQX  
   { url: 'wss://test.mosquitto.org:8081/mqtt' } // Mosquitto public broker
@@ -1150,6 +1201,10 @@ export class SimplePeerManager {
 
     try {
       this.updateSignalingState('connecting')
+      
+      // Load credentials from main process (TURN/MQTT secrets)
+      // This must be done before connecting to ensure we have the latest credentials
+      await loadCredentials()
 
       this.roomId = roomId
       this.userName = userName

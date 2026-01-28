@@ -8,6 +8,7 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { fileLogger, MainLog, TrayLog, IPCLog } from './logger'
 import type { LogLevel } from './logger'
+import { getICEServers, getMQTTBrokers } from './credentials'
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
 try {
@@ -628,4 +629,21 @@ ipcMain.on('show-window', () => {
 // Flash window to get attention
 ipcMain.on('flash-window', () => {
   mainWindow?.flashFrame(true)
+})
+
+/**
+ * Credentials IPC handlers
+ * These keep sensitive credentials in the main process
+ */
+
+// Get ICE servers configuration (STUN + TURN with credentials)
+ipcMain.handle('get-ice-servers', () => {
+  IPCLog.debug('ICE servers requested')
+  return getICEServers()
+})
+
+// Get MQTT brokers configuration
+ipcMain.handle('get-mqtt-brokers', () => {
+  IPCLog.debug('MQTT brokers requested')
+  return getMQTTBrokers()
 })
