@@ -67,6 +67,20 @@ export interface AppSettings {
 }
 
 /**
+ * Connection quality statistics
+ */
+export interface ConnectionQuality {
+  peerId: string
+  rtt: number // Round-trip time in ms
+  packetLoss: number // Packet loss percentage
+  jitter: number // Jitter in ms
+  bytesReceived: number
+  bytesSent: number
+  quality: 'excellent' | 'good' | 'fair' | 'poor'
+  connectionState: RTCPeerConnectionState
+}
+
+/**
  * Audio processing configuration
  */
 export interface AudioProcessingConfig {

@@ -16,7 +16,10 @@
     "preview": "electron-vite preview",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
-    "build:linux": "npm run build && electron-builder --linux"
+    "build:linux": "npm run build && electron-builder --linux",
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@jitsi/rnnoise-wasm": "^0.2.1",
@@ -35,6 +38,11 @@
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "terser": "^5.46.0",
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-react": "^7.34.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "typescript-eslint": "^8.0.0",
     "typescript": "^5.3.3",
     "vite": "^5.1.0"
   },

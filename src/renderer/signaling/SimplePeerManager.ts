@@ -20,6 +20,7 @@
  */
 
 import { SignalingLog, PeerLog } from '../utils/Logger'
+import type { ConnectionQuality } from '@/types'
 
 // Generate a random peer ID
 export const generatePeerId = (): string => {
@@ -2141,6 +2142,73 @@ export class SimplePeerManager {
         }
       }
     })
+  }
+
+  /**
+   * Get connection quality statistics for all peers
+   * Returns RTT, packet loss, jitter, and bandwidth info
+   */
+  async getConnectionStats(): Promise<Map<string, ConnectionQuality>> {
+    const stats = new Map<string, ConnectionQuality>()
+
+    for (const [peerId, peer] of this.peers) {
+      try {
+        const rtcStats = await peer.pc.getStats()
+        let rtt = 0
+        let packetLoss = 0
+        let jitter = 0
+        let bytesReceived = 0
+        let bytesSent = 0
+
+        rtcStats.forEach((stat) => {
+          // Get round-trip time from candidate-pair stats
+          if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
+            rtt = stat.currentRoundTripTime ? stat.currentRoundTripTime * 1000 : 0
+          }
+
+          // Get packet loss and jitter from inbound-rtp stats (audio)
+          if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+            if (stat.packetsReceived && stat.packetsLost) {
+              const totalPackets = stat.packetsReceived + stat.packetsLost
+              packetLoss = totalPackets > 0 ? (stat.packetsLost / totalPackets) * 100 : 0
+            }
+            jitter = stat.jitter ? stat.jitter * 1000 : 0
+            bytesReceived = stat.bytesReceived || 0
+          }
+
+          // Get bytes sent from outbound-rtp stats
+          if (stat.type === 'outbound-rtp' && stat.kind === 'audio') {
+            bytesSent = stat.bytesSent || 0
+          }
+        })
+
+        // Calculate quality score (0-100)
+        // Lower RTT, packet loss, and jitter = higher quality
+        let quality: 'excellent' | 'good' | 'fair' | 'poor' = 'excellent'
+        if (rtt > 300 || packetLoss > 5 || jitter > 50) {
+          quality = 'poor'
+        } else if (rtt > 200 || packetLoss > 2 || jitter > 30) {
+          quality = 'fair'
+        } else if (rtt > 100 || packetLoss > 1 || jitter > 15) {
+          quality = 'good'
+        }
+
+        stats.set(peerId, {
+          peerId,
+          rtt: Math.round(rtt),
+          packetLoss: Math.round(packetLoss * 100) / 100,
+          jitter: Math.round(jitter * 100) / 100,
+          bytesReceived,
+          bytesSent,
+          quality,
+          connectionState: peer.pc.connectionState
+        })
+      } catch (err) {
+        PeerLog.warn('Failed to get stats for peer', { peerId, error: String(err) })
+      }
+    }
+
+    return stats
   }
 
   getDebugInfo(): object {
