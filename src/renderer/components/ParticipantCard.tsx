@@ -22,6 +22,12 @@ interface ParticipantCardProps {
   volume?: number  // Per-participant volume (0-150, 100 = normal)
   onVolumeChange?: (volume: number) => void  // Callback for volume change
   platform?: 'win' | 'mac' | 'linux'
+  connectionQuality?: {  // Connection quality stats
+    rtt: number
+    packetLoss: number
+    jitter: number
+    quality: 'excellent' | 'good' | 'fair' | 'poor'
+  }
 }
 
 export const ParticipantCard: React.FC<ParticipantCardProps> = ({
@@ -37,7 +43,8 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
   localSpeakerMuted = false,
   volume = 100,
   onVolumeChange,
-  platform
+  platform,
+  connectionQuality
 }) => {
   const { t } = useI18n()
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -148,6 +155,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
         gainNodeRef.current = null
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream, isLocal])
 
   // Update audio element volume when volume prop changes
@@ -196,6 +204,40 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     }
   }
 
+  // Get quality indicator color
+  const getQualityColor = (): string => {
+    if (!connectionQuality) return 'text-gray-400'
+    switch (connectionQuality.quality) {
+      case 'excellent':
+        return 'text-green-500'
+      case 'good':
+        return 'text-green-400'
+      case 'fair':
+        return 'text-yellow-500'
+      case 'poor':
+        return 'text-red-500'
+      default:
+        return 'text-gray-400'
+    }
+  }
+
+  // Get quality signal bars count (1-4)
+  const getQualityBars = (): number => {
+    if (!connectionQuality) return 0
+    switch (connectionQuality.quality) {
+      case 'excellent':
+        return 4
+      case 'good':
+        return 3
+      case 'fair':
+        return 2
+      case 'poor':
+        return 1
+      default:
+        return 0
+    }
+  }
+
   // Generate avatar initials
   const getInitials = (name: string): string => {
     return name
@@ -225,6 +267,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
   const displayLevel = isLocal ? audioLevel : remoteAudioLevel
   const showMicIndicator = isMicMuted
   const showSpeakerIndicator = isSpeakerMuted
+  const qualityBars = getQualityBars()
 
   return (
     <div className={`
@@ -273,8 +316,24 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
           </div>
         )}
 
-        {/* Connection status dot */}
-        <div className={`absolute top-0 right-0 w-3 h-3 rounded-full border-2 border-white ${getStatusColor()}`} />
+        {/* Connection status dot / quality indicator */}
+        {connectionQuality && !isLocal ? (
+          <div
+            className={`absolute top-0 right-0 flex items-end gap-0.5 ${getQualityColor()}`}
+            title={`${t('room.connectionQuality')}: ${connectionQuality.quality}\nRTT: ${connectionQuality.rtt}ms\nPacket Loss: ${connectionQuality.packetLoss.toFixed(1)}%\nJitter: ${connectionQuality.jitter.toFixed(1)}ms`}
+          >
+            {/* Signal bars */}
+            {[1, 2, 3, 4].map(bar => (
+              <div
+                key={bar}
+                className={`w-1 rounded-sm ${bar <= qualityBars ? 'bg-current' : 'bg-gray-300'}`}
+                style={{ height: `${bar * 3}px` }}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className={`absolute top-0 right-0 w-3 h-3 rounded-full border-2 border-white ${getStatusColor()}`} />
+        )}
       </div>
 
       {/* Name and Platform */}

@@ -60,25 +60,25 @@ export async function loadCredentials(): Promise<void> {
   if (credentialsLoadPromise) {
     return credentialsLoadPromise
   }
-  
+
   // Skip if already loaded
   if (credentialsLoaded) {
     return
   }
-  
+
   credentialsLoadPromise = (async () => {
     try {
       // Check if we're in Electron environment
       if (typeof window !== 'undefined' && (window as any).electronAPI) {
         SignalingLog.info('Loading credentials from main process...')
-        
+
         // Load ICE servers (STUN + TURN)
         const iceServers = await (window as any).electronAPI.getICEServers()
         if (iceServers && iceServers.length > 0) {
           ICE_SERVERS = iceServers
           SignalingLog.info('ICE servers loaded', { count: iceServers.length })
         }
-        
+
         // Load MQTT brokers
         const mqttBrokers = await (window as any).electronAPI.getMQTTBrokers()
         if (mqttBrokers && mqttBrokers.length > 0) {
@@ -86,7 +86,7 @@ export async function loadCredentials(): Promise<void> {
           mqttBrokers.forEach((broker: BrokerConfig) => MQTT_BROKERS.push(broker))
           SignalingLog.info('MQTT brokers loaded', { count: mqttBrokers.length })
         }
-        
+
         credentialsLoaded = true
         SignalingLog.info('Credentials loaded successfully')
       } else {
@@ -99,7 +99,7 @@ export async function loadCredentials(): Promise<void> {
       credentialsLoadPromise = null
     }
   })()
-  
+
   return credentialsLoadPromise
 }
 
@@ -623,11 +623,11 @@ class MQTTClient {
 
       let idx = 1
       let multiplier = 1
-      let remainingLength = 0
+      let _remainingLength = 0
 
       while (idx < data.length) {
         const byte = data[idx]
-        remainingLength += (byte & 0x7F) * multiplier
+        _remainingLength += (byte & 0x7F) * multiplier
         multiplier *= 128
         idx++
         if ((byte & 0x80) === 0) break
@@ -690,7 +690,7 @@ class MQTTClient {
         if (this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(new Uint8Array([0xe0, 0x00]))  // DISCONNECT
         }
-      } catch { }
+      } catch { /* ignore send errors on disconnect */ }
       this.ws.close()
       this.ws = null
     }
@@ -1202,7 +1202,7 @@ export class SimplePeerManager {
 
     try {
       this.updateSignalingState('connecting')
-      
+
       // Load credentials from main process (TURN/MQTT secrets)
       // This must be done before connecting to ensure we have the latest credentials
       await loadCredentials()
@@ -1234,7 +1234,7 @@ export class SimplePeerManager {
       if (this.broadcastChannel) {
         try {
           this.broadcastChannel.close()
-        } catch { }
+        } catch { /* ignore close errors */ }
         this.broadcastChannel = null
       }
 
@@ -1250,7 +1250,7 @@ export class SimplePeerManager {
           this.handleSignalingMessage(event.data)
         }
         SignalingLog.debug('BroadcastChannel connected')
-      } catch (err) {
+      } catch {
         SignalingLog.warn('BroadcastChannel not available')
       }
 
@@ -1432,7 +1432,7 @@ export class SimplePeerManager {
     }
 
     const jsonStr = JSON.stringify(message)
-    let sentVia: string[] = []
+    const sentVia: string[] = []
 
     // Publish to ALL connected MQTT brokers
     if (this.mqtt?.isConnected()) {
@@ -1447,7 +1447,7 @@ export class SimplePeerManager {
       try {
         this.broadcastChannel.postMessage(message)
         sentVia.push('BroadcastChannel')
-      } catch { }
+      } catch { /* BroadcastChannel may be closed */ }
     }
 
     if (message.type !== 'ping' && message.type !== 'pong' && message.type !== 'mute-status') {
@@ -1534,7 +1534,7 @@ export class SimplePeerManager {
       PeerLog.info('Cleaning up dead peer', { peerId, state })
       try {
         existingPeer.pc.close()
-      } catch { }
+      } catch { /* ignore close errors */ }
       this.peers.delete(peerId)
     }
 
@@ -1595,7 +1595,7 @@ export class SimplePeerManager {
     if (existing) {
       try {
         existing.pc.close()
-      } catch { }
+      } catch { /* ignore close errors */ }
       this.peers.delete(peerId)
     }
 
@@ -1607,7 +1607,7 @@ export class SimplePeerManager {
       for (const c of pending) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(c))
-        } catch (e) {
+        } catch {
           PeerLog.warn('Failed to add pending ICE candidate', { peerId })
         }
       }
@@ -1642,7 +1642,7 @@ export class SimplePeerManager {
       for (const c of pending) {
         try {
           await peer.pc.addIceCandidate(new RTCIceCandidate(c))
-        } catch (e) {
+        } catch {
           PeerLog.warn('Failed to add pending ICE candidate', { peerId })
         }
       }
@@ -2041,7 +2041,7 @@ export class SimplePeerManager {
       if (this.broadcastChannel) {
         try {
           this.broadcastChannel.close()
-        } catch { }
+        } catch { /* ignored */ }
         this.broadcastChannel = null
       }
 

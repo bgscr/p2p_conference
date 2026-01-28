@@ -195,6 +195,7 @@ export default function App() {
     }
 
     // Listen for tray toggle mute
+    // Note: handleToggleMute excluded from deps intentionally - listener re-subscribes via IPC
     let unsubscribeTrayMute: (() => void) | undefined
     if (electronAPI?.onTrayToggleMute) {
       unsubscribeTrayMute = electronAPI.onTrayToggleMute(() => {
@@ -214,14 +215,18 @@ export default function App() {
       })
     }
 
+    // Capture the current pipeline reference for cleanup
+    const pipeline = audioPipelineRef.current
+
     return () => {
       unsubscribeDownloadLogs?.()
       unsubscribeTrayMute?.()
       unsubscribeTrayLeave?.()
-      audioPipelineRef.current.destroy()
+      pipeline.destroy()
       soundManager.destroy()
       AppLog.info('Application cleanup')
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showToast, t])
 
   /**
@@ -323,6 +328,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appView, connectionState, showToast, t])
 
   /**
@@ -389,14 +395,14 @@ export default function App() {
       if (rawStream) {
         // Process through AudioPipeline for RNNoise AI noise suppression
         AppLog.info('Connecting stream to AudioPipeline for AI noise suppression')
-        
+
         try {
           // Set noise suppression state before connecting
           audioPipelineRef.current.setNoiseSuppression(settings.noiseSuppressionEnabled)
-          
+
           // Connect raw stream to pipeline, get processed stream
           const processedStream = await audioPipelineRef.current.connectInputStream(rawStream)
-          
+
           // Log pipeline status
           const nsStatus = audioPipelineRef.current.getNoiseSuppressionStatus()
           AppLog.info('AudioPipeline connected', {
@@ -404,7 +410,7 @@ export default function App() {
             active: nsStatus.active,
             wasmReady: nsStatus.wasmReady
           })
-          
+
           // Send processed stream to WebRTC
           peerManager.setLocalStream(processedStream)
         } catch (pipelineErr) {
@@ -465,7 +471,7 @@ export default function App() {
         // Reconnect through AudioPipeline for RNNoise processing
         AppLog.info('Reconnecting new device through AudioPipeline')
         const processedStream = await audioPipelineRef.current.connectInputStream(newRawStream)
-        
+
         const newTrack = processedStream.getAudioTracks()[0]
         if (newTrack) {
           AppLog.info('Replacing audio track in peer connections', {

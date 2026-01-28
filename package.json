@@ -17,8 +17,8 @@
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux",
-    "lint": "eslint . --ext .ts,.tsx",
-    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "lint": "npx eslint . --ext .ts,.tsx",
+    "lint:fix": "npx eslint . --ext .ts,.tsx --fix",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -41,7 +41,7 @@
     "@eslint/js": "^9.0.0",
     "eslint": "^9.0.0",
     "eslint-plugin-react": "^7.34.0",
-    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
     "typescript-eslint": "^8.0.0",
     "typescript": "^5.3.3",
     "vite": "^5.1.0"

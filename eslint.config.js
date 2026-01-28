@@ -21,22 +21,22 @@ export default tseslint.config(
     },
     rules: {
       // TypeScript
-      '@typescript-eslint/no-unused-vars': ['warn', { 
+      '@typescript-eslint/no-unused-vars': ['warn', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
       }],
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
-      
+
       // React
       'react/react-in-jsx-scope': 'off',
       'react/prop-types': 'off',
-      
+
       // React Hooks
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
-      
+
       // General
       'no-console': 'off',
       'prefer-const': 'warn',
@@ -61,6 +61,7 @@ export default tseslint.config(
       'dist/**',
       'release/**',
       'public/audio-processor/**',
+      '.agent/**',
     ],
   }
 )

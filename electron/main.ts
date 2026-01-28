@@ -12,6 +12,7 @@ import { getICEServers, getMQTTBrokers } from './credentials'
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
 try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   if (require('electron-squirrel-startup')) {
     app.quit()
   }
@@ -40,14 +41,14 @@ function getAppIconPath(): string | undefined {
     // Packaged app: build folder copied to resources
     join(process.resourcesPath || '', 'build', 'icons', 'icon.png'),
   ]
-  
+
   for (const iconPath of possiblePaths) {
     if (existsSync(iconPath)) {
       MainLog.debug('Found app icon', { path: iconPath })
       return iconPath
     }
   }
-  
+
   MainLog.warn('App icon not found in any expected location')
   return undefined
 }
@@ -58,11 +59,11 @@ function getAppIconPath(): string | undefined {
  */
 function getAppIcon(forTray: boolean = false): Electron.NativeImage {
   const iconPath = getAppIconPath()
-  
+
   if (iconPath) {
     try {
       const icon = nativeImage.createFromPath(iconPath)
-      
+
       if (!icon.isEmpty()) {
         if (forTray) {
           // Resize for system tray (16x16 or 32x32 on Windows)
@@ -79,7 +80,7 @@ function getAppIcon(forTray: boolean = false): Electron.NativeImage {
       MainLog.warn('Failed to load app icon', { path: iconPath, error: String(err) })
     }
   }
-  
+
   // Return fallback icon
   return createFallbackIcon(forTray)
 }
@@ -89,7 +90,7 @@ function getAppIcon(forTray: boolean = false): Electron.NativeImage {
  */
 function createFallbackIcon(forTray: boolean = false): Electron.NativeImage {
   const size = forTray ? 32 : 256
-  
+
   // Create a simple P2P network icon as SVG
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32">
@@ -107,7 +108,7 @@ function createFallbackIcon(forTray: boolean = false): Electron.NativeImage {
       </g>
     </svg>
   `
-  
+
   const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`
   return nativeImage.createFromDataURL(dataUrl)
 }

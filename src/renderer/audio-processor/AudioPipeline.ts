@@ -55,8 +55,8 @@ export class AudioPipeline {
       AudioLog.info('AudioContext created', { sampleRate: this.audioContext.sampleRate });
 
       if (this.audioContext.sampleRate !== 48000) {
-        AudioLog.warn('Sample rate is not 48kHz! RNNoise may not work correctly.', { 
-          actualRate: this.audioContext.sampleRate 
+        AudioLog.warn('Sample rate is not 48kHz! RNNoise may not work correctly.', {
+          actualRate: this.audioContext.sampleRate
         });
       }
 
@@ -69,8 +69,8 @@ export class AudioPipeline {
         await this.audioContext.audioWorklet.addModule(PROCESSOR_PATH);
         AudioLog.info('AudioWorklet module loaded successfully');
       } catch (workletError) {
-        AudioLog.warn('Failed to load AudioWorklet - noise suppression will be unavailable', { 
-          error: workletError 
+        AudioLog.warn('Failed to load AudioWorklet - noise suppression will be unavailable', {
+          error: workletError
         });
       }
 
@@ -87,7 +87,7 @@ export class AudioPipeline {
       this.analyserNode.smoothingTimeConstant = 0.8;
 
       this.isInitialized = true;
-      AudioLog.info('AudioPipeline initialization complete', { 
+      AudioLog.info('AudioPipeline initialization complete', {
         wasmReady: this.isWasmReady,
         sampleRate: this.audioContext.sampleRate
       });
@@ -394,7 +394,7 @@ export class AudioPipeline {
     if (this.sourceNode) {
       try {
         this.sourceNode.disconnect();
-      } catch (e) {
+      } catch {
         // Ignore disconnect errors
       }
       this.sourceNode = null;
@@ -404,7 +404,7 @@ export class AudioPipeline {
       try {
         this.workletNode.disconnect();
         this.workletNode.port.postMessage({ type: 'destroy' });
-      } catch (e) {
+      } catch {
         // Ignore disconnect errors
       }
       this.workletNode = null;
@@ -413,7 +413,7 @@ export class AudioPipeline {
     if (this.gainNode) {
       try {
         this.gainNode.disconnect();
-      } catch (e) {
+      } catch {
         // Ignore disconnect errors
       }
     }
@@ -421,7 +421,7 @@ export class AudioPipeline {
     if (this.analyserNode) {
       try {
         this.analyserNode.disconnect();
-      } catch (e) {
+      } catch {
         // Ignore disconnect errors
       }
     }

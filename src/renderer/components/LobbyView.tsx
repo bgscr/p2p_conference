@@ -58,7 +58,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const [testAudioLevel, setTestAudioLevel] = useState(0)
   const [showPrivacyNotice, setShowPrivacyNotice] = useState(false)
   const [isJoining, setIsJoining] = useState(false)  // Immediate loading state
-  
+
   // Refs for audio testing
   const testStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -88,6 +88,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       stopMicTest()
       startMicTest()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInputDevice])
 
   /**
@@ -95,47 +96,47 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
    */
   const startMicTest = async () => {
     UILog.info('Starting microphone test')
-    
+
     try {
       const constraints: MediaStreamConstraints = {
-        audio: selectedInputDevice 
+        audio: selectedInputDevice
           ? { deviceId: { exact: selectedInputDevice } }
           : true,
         video: false
       }
-      
+
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
       testStreamRef.current = stream
-      
+
       onRefreshDevices()
-      
+
       const audioContext = new AudioContext()
       audioContextRef.current = audioContext
-      
+
       const analyser = audioContext.createAnalyser()
       analyser.fftSize = 256
       analyserRef.current = analyser
-      
+
       const source = audioContext.createMediaStreamSource(stream)
       source.connect(analyser)
-      
+
       const dataArray = new Uint8Array(analyser.frequencyBinCount)
-      
+
       const updateLevel = () => {
         if (!analyserRef.current) return
-        
+
         analyserRef.current.getByteFrequencyData(dataArray)
-        
+
         const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
         const normalizedLevel = Math.min(100, (average / 128) * 100)
-        
+
         setTestAudioLevel(normalizedLevel)
         animationFrameRef.current = requestAnimationFrame(updateLevel)
       }
-      
+
       updateLevel()
       setTestingMic(true)
-      
+
       UILog.info('Microphone test started successfully')
     } catch (err) {
       UILog.error('Microphone test failed', { error: err })
@@ -151,21 +152,21 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       cancelAnimationFrame(animationFrameRef.current)
       animationFrameRef.current = null
     }
-    
+
     if (audioContextRef.current) {
       audioContextRef.current.close()
       audioContextRef.current = null
     }
     analyserRef.current = null
-    
+
     if (testStreamRef.current) {
       testStreamRef.current.getTracks().forEach(track => track.stop())
       testStreamRef.current = null
     }
-    
+
     setTestAudioLevel(0)
     setTestingMic(false)
-    
+
     UILog.debug('Microphone test stopped')
   }
 
@@ -189,17 +190,17 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       alert(t('lobby.nameMinLength'))
       return
     }
-    
+
     setIsJoining(true)
     UILog.info('Joining room', { roomId: roomId.trim(), userName: userName.trim() })
-    
+
     // Stop mic test FIRST and wait for release
     stopMicTest()
-    
+
     // Give the audio system time to fully release the mic
     // This prevents race condition on Linux where getUserMedia hangs
     await new Promise(resolve => setTimeout(resolve, 100))
-    
+
     onJoinRoom(roomId.trim(), userName.trim())
   }
 
@@ -218,7 +219,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
             <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
           </div>
@@ -322,12 +323,12 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
 
           {/* Privacy Notice */}
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-            <div 
+            <div
               className="flex items-start gap-2 cursor-pointer"
               onClick={() => setShowPrivacyNotice(!showPrivacyNotice)}
             >
               <svg className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
               <div className="flex-1">
@@ -338,8 +339,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   </p>
                 )}
               </div>
-              <svg 
-                className={`w-4 h-4 text-yellow-600 transform transition-transform ${showPrivacyNotice ? 'rotate-180' : ''}`} 
+              <svg
+                className={`w-4 h-4 text-yellow-600 transform transition-transform ${showPrivacyNotice ? 'rotate-180' : ''}`}
                 fill="none" stroke="currentColor" viewBox="0 0 24 24"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -377,7 +378,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>

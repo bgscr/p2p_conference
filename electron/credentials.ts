@@ -62,19 +62,19 @@ export interface MQTTBrokerConfig {
  */
 export function getICEServers(): ICEServerConfig[] {
   const servers: ICEServerConfig[] = []
-  
+
   // Add STUN servers
   STUN_SERVERS.forEach(url => {
     servers.push({ urls: url })
   })
-  
+
   // Add TURN server with credentials
   servers.push({
     urls: TURN_CONFIG.urls,
     username: TURN_CONFIG.username,
     credential: TURN_CONFIG.credential
   })
-  
+
   return servers
 }
 
@@ -83,19 +83,19 @@ export function getICEServers(): ICEServerConfig[] {
  */
 export function getMQTTBrokers(): MQTTBrokerConfig[] {
   const brokers: MQTTBrokerConfig[] = []
-  
+
   // Add private broker with credentials
   brokers.push({
     url: MQTT_CONFIG.private.url,
     username: MQTT_CONFIG.private.username,
     password: MQTT_CONFIG.private.password
   })
-  
+
   // Add public brokers
   MQTT_CONFIG.public.forEach(broker => {
     brokers.push(broker)
   })
-  
+
   return brokers
 }
 
@@ -112,16 +112,17 @@ export function generateTURNCredentials(
   username: string,
   ttl: number = 86400
 ): { username: string; credential: string } {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const crypto = require('crypto')
-  
+
   // Timestamp-based username format: timestamp:username
   const timestamp = Math.floor(Date.now() / 1000) + ttl
   const turnUsername = `${timestamp}:${username}`
-  
+
   // HMAC-SHA1 of the username using the shared secret
   const hmac = crypto.createHmac('sha1', sharedSecret)
   hmac.update(turnUsername)
   const credential = hmac.digest('base64')
-  
+
   return { username: turnUsername, credential }
 }
