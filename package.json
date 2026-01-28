@@ -73,12 +73,19 @@
     ],
     "mac": {
       "target": [
+        "dmg",
         "zip"
       ],
       "category": "public.app-category.social-networking",
       "icon": "build/icons/icon.png",
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "P2P Conference needs microphone access to enable voice communication in audio calls.",
+        "NSAppleEventsUsageDescription": "P2P Conference needs to send Apple events to provide audio functionality."
+      }
     },
     "dmg": {
       "sign": false
