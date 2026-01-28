@@ -11,9 +11,9 @@
  * Microphone → [Browser AEC/AGC] → AudioContext → RNNoise AudioWorklet → WebRTC
  */
 
-// WASM file path (relative to public folder)
-const RNNOISE_WASM_PATH = '/audio-processor/rnnoise.wasm';
-const PROCESSOR_PATH = '/audio-processor/noise-processor.js';
+// WASM file path (relative to index.html - works with both dev server and file:// protocol)
+const RNNOISE_WASM_PATH = './audio-processor/rnnoise.wasm';
+const PROCESSOR_PATH = './audio-processor/noise-processor.js';
 
 export class AudioPipeline {
   private audioContext: AudioContext | null = null;
@@ -22,11 +22,11 @@ export class AudioPipeline {
   private workletNode: AudioWorkletNode | null = null;
   private gainNode: GainNode | null = null;
   private analyserNode: AnalyserNode | null = null;
-  
+
   // WASM module storage
   private wasmModule: WebAssembly.Module | null = null;
   private wasmMemory: WebAssembly.Memory | null = null;
-  
+
   // State
   private isInitialized: boolean = false;
   private isWasmReady: boolean = false;
@@ -97,7 +97,7 @@ export class AudioPipeline {
 
       // Fetch the WASM binary
       const response = await fetch(RNNOISE_WASM_PATH);
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch WASM: ${response.status} ${response.statusText}`);
       }
@@ -148,10 +148,10 @@ export class AudioPipeline {
     this.sourceNode = this.audioContext.createMediaStreamSource(inputStream);
 
     // Determine if we should use noise suppression
-    const useNoiseSuppression = 
-      this.noiseSuppressionEnabled && 
-      this.isWasmReady && 
-      this.wasmModule && 
+    const useNoiseSuppression =
+      this.noiseSuppressionEnabled &&
+      this.isWasmReady &&
+      this.wasmModule &&
       this.wasmMemory &&
       this.audioContext.audioWorklet;
 
@@ -207,8 +207,8 @@ export class AudioPipeline {
     this.analyserNode.connect(this.destinationNode);
 
     console.log('[AudioPipeline] Connected in bypass mode (no AI noise suppression)');
-    console.log('[AudioPipeline] Reason: WASM ready:', this.isWasmReady, 
-                ', NS enabled:', this.noiseSuppressionEnabled);
+    console.log('[AudioPipeline] Reason: WASM ready:', this.isWasmReady,
+      ', NS enabled:', this.noiseSuppressionEnabled);
   }
 
   /**
@@ -237,7 +237,7 @@ export class AudioPipeline {
           this.workletNode!.port.onmessage = originalHandler;
           reject(new Error(event.data.error));
         }
-        
+
         // Also call original handler
         if (originalHandler) {
           originalHandler.call(this.workletNode!.port, event);
@@ -292,7 +292,7 @@ export class AudioPipeline {
 
     // Calculate RMS-like average
     const average = dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
-    
+
     // Scale to 0-100 with some compression for better visual feedback
     return Math.min(100, Math.pow(average / 128, 0.7) * 100);
   }
@@ -302,10 +302,10 @@ export class AudioPipeline {
    */
   setNoiseSuppression(enabled: boolean): void {
     this.noiseSuppressionEnabled = enabled;
-    
+
     if (this.workletNode) {
-      this.workletNode.port.postMessage({ 
-        type: 'setEnabled', 
+      this.workletNode.port.postMessage({
+        type: 'setEnabled',
         data: { enabled }
       });
       console.log('[AudioPipeline] Noise suppression:', enabled ? 'enabled' : 'disabled');

@@ -10,12 +10,12 @@ function copyAppIconsPlugin() {
     closeBundle() {
       const srcDir = resolve(__dirname, 'build/icons')
       const destDir = resolve(__dirname, 'out/main/icons')
-      
+
       // Create destination directory if it doesn't exist
       if (!existsSync(destDir)) {
         mkdirSync(destDir, { recursive: true })
       }
-      
+
       // Copy icon files
       const icons = ['icon.png', 'icon.ico']
       icons.forEach(icon => {
@@ -86,6 +86,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
+    publicDir: resolve(__dirname, 'public'),
     build: {
       rollupOptions: {
         input: {
