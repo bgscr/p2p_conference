@@ -3,7 +3,7 @@
  * P2P Conference System - Serverless Audio Conferencing
  */
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRoom } from './hooks/useRoom'
 import { useMediaStream } from './hooks/useMediaStream'
 import { useI18n } from './hooks/useI18n'

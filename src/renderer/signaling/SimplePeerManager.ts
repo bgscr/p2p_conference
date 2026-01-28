@@ -1262,7 +1262,7 @@ export class SimplePeerManager {
         this.mqtt = new MultiBrokerMQTT()
 
         // Set up reconnection callback to re-announce presence after network recovery
-        this.mqtt.setOnReconnect((brokerUrl) => {
+        this.mqtt.setOnReconnect((_brokerUrl) => {
           // Reset announce timing for fresh discovery after network recovery
           this.announceStartTime = Date.now()
           this.broadcastAnnounce()

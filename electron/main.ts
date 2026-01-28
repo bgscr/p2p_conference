@@ -444,10 +444,8 @@ function createWindow(): void {
     MainLog.error('Failed to load', { errorCode, errorDescription })
   })
 
-  mainWindow.webContents.on('console-message', (_, __, message) => {
-    // Note: Renderer logs are now handled via IPC for file logging
-    // This just catches any stray console.log calls
-  })
+  // Note: Renderer logs are now handled via IPC for file logging
+  // No need to capture console-message events here
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()

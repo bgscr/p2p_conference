@@ -110,20 +110,31 @@ class Logger {
   /**
    * Sanitize data for logging (handle circular references, etc.)
    */
-  private sanitizeData(data: any): any {
+  private sanitizeData(data: any, depth: number = 0): any {
+    // Prevent infinite recursion
+    if (depth > 5) {
+      return '[max depth exceeded]'
+    }
+
     try {
+      // Handle null/undefined
+      if (data === null || data === undefined) {
+        return data
+      }
+
       // Handle common non-serializable types
       if (data instanceof Error) {
         return {
+          _type: 'Error',
           name: data.name,
           message: data.message,
-          stack: data.stack
+          stack: data.stack?.split('\n').slice(0, 5).join('\n') // Truncate stack
         }
       }
       
       if (data instanceof MediaStream) {
         return {
-          type: 'MediaStream',
+          _type: 'MediaStream',
           id: data.id,
           active: data.active,
           tracks: data.getTracks().map(t => ({
@@ -137,11 +148,49 @@ class Logger {
 
       if (data instanceof RTCPeerConnection) {
         return {
-          type: 'RTCPeerConnection',
+          _type: 'RTCPeerConnection',
           connectionState: data.connectionState,
           iceConnectionState: data.iceConnectionState,
           signalingState: data.signalingState
         }
+      }
+
+      // Handle DOM elements
+      if (data instanceof Element || data instanceof Node) {
+        return {
+          _type: 'DOMNode',
+          nodeName: data.nodeName,
+          id: (data as HTMLElement).id || undefined
+        }
+      }
+
+      // Handle arrays - sanitize each element
+      if (Array.isArray(data)) {
+        return data.map(item => this.sanitizeData(item, depth + 1))
+      }
+
+      // Handle plain objects - sanitize each property
+      if (typeof data === 'object') {
+        const sanitized: Record<string, any> = {}
+        for (const key of Object.keys(data)) {
+          try {
+            const value = data[key]
+            // Skip functions
+            if (typeof value === 'function') {
+              sanitized[key] = '[function]'
+            } else {
+              sanitized[key] = this.sanitizeData(value, depth + 1)
+            }
+          } catch {
+            sanitized[key] = '[error accessing property]'
+          }
+        }
+        return sanitized
+      }
+
+      // Primitives are safe
+      if (typeof data === 'string' || typeof data === 'number' || typeof data === 'boolean') {
+        return data
       }
 
       // Try to serialize
