@@ -131,6 +131,19 @@ class Logger {
           stack: data.stack?.split('\n').slice(0, 5).join('\n') // Truncate stack
         }
       }
+
+      // Handle DOMException and similar error-like objects
+      if (data && typeof data === 'object' && 
+          (data.name || data.message) && 
+          (typeof data.name === 'string' || typeof data.message === 'string')) {
+        return {
+          _type: data.constructor?.name || 'ErrorLike',
+          name: data.name || 'Unknown',
+          message: data.message || 'No message',
+          code: data.code !== undefined ? data.code : undefined,
+          stack: data.stack?.split?.('\n').slice(0, 5).join('\n')
+        }
+      }
       
       if (data instanceof MediaStream) {
         return {
