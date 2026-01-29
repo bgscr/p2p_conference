@@ -1,440 +1,221 @@
 /**
- * Unit tests for SimplePeerManager
- * Tests the testable units: generatePeerId, generateMessageId, MessageDeduplicator
+ * @vitest-environment jsdom
  */
-
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { SimplePeerManager, generatePeerId } from '../renderer/signaling/SimplePeerManager'
 
-// ============================================
-// Extracted functions for testing
-// ============================================
-
-/**
- * Generate a random peer ID (same logic as SimplePeerManager)
- */
-function generatePeerId(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    let result = ''
-    for (let i = 0; i < 16; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length))
+// Mock Logger
+vi.mock('../renderer/utils/Logger', () => ({
+    SignalingLog: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn()
+    },
+    PeerLog: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn()
     }
-    return result
-}
+}))
 
-/**
- * Generate a unique message ID for deduplication
- */
-function generateMessageId(selfId: string): string {
-    return `${selfId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
-}
+// Smart Mock WebSocket for MQTT
+class MockWebSocket {
+    static instances: MockWebSocket[] = []
 
-// ============================================
-// MessageDeduplicator class (extracted for testing)
-// ============================================
+    onopen: (() => void) | null = null
+    onmessage: ((event: any) => void) | null = null
+    onclose: (() => void) | null = null
+    onerror: ((error: any) => void) | null = null
 
-const MESSAGE_DEDUP_WINDOW_SIZE = 500
-const MESSAGE_DEDUP_TTL_MS = 30000
+    // Standard WebSocket properties
+    readyState = 0 // CONNECTING
+    binaryType = 'arraybuffer'
+    url: string
+    static OPEN = 1
+    static CONNECTING = 0
+    static CLOSING = 2
+    static CLOSED = 3
 
-class MessageDeduplicator {
-    private seen: Map<string, number> = new Map()
-    private cleanupInterval: ReturnType<typeof setInterval> | null = null
+    constructor(url: string) {
+        this.url = url
+        MockWebSocket.instances.push(this)
 
-    constructor(enableAutoCleanup: boolean = false) {
-        if (enableAutoCleanup) {
-            this.cleanupInterval = setInterval(() => this.cleanup(), MESSAGE_DEDUP_TTL_MS / 2)
-        }
-    }
-
-    /**
-     * Check if message was already seen. If not, mark it as seen.
-     * @returns true if this is a duplicate, false if it's new
-     */
-    isDuplicate(msgId: string): boolean {
-        if (!msgId) return false
-
-        if (this.seen.has(msgId)) {
-            return true
-        }
-
-        this.seen.set(msgId, Date.now())
-
-        if (this.seen.size > MESSAGE_DEDUP_WINDOW_SIZE) {
-            const entries = Array.from(this.seen.entries())
-            entries.sort((a, b) => a[1] - b[1])
-            const toRemove = entries.slice(0, entries.length - MESSAGE_DEDUP_WINDOW_SIZE)
-            toRemove.forEach(([key]) => this.seen.delete(key))
-        }
-
-        return false
+        // Simulate async connection
+        setTimeout(() => {
+            this.readyState = MockWebSocket.OPEN
+            if (this.onopen) this.onopen()
+        }, 10)
     }
 
-    /**
-     * Remove entries older than TTL
-     */
-    cleanup() {
-        const cutoff = Date.now() - MESSAGE_DEDUP_TTL_MS
-        const toDelete: string[] = []
+    send = vi.fn((data: Uint8Array) => {
+        // Parse MQTT Packet Type
+        const type = data[0] & 0xF0
 
-        this.seen.forEach((timestamp, msgId) => {
-            if (timestamp < cutoff) {
-                toDelete.push(msgId)
+        // Simulate network delay for response
+        setTimeout(() => {
+            if (this.readyState !== MockWebSocket.OPEN) return
+
+            if (type === 0x10) { // CONNECT
+                // Send CONACK: 0x20 0x02 0x00 0x00
+                this.triggerMessage(new Uint8Array([0x20, 0x02, 0x00, 0x00]))
+            } else if (type === 0x80) { // SUBSCRIBE (0x82 is 0x80 masked)
+                // Extract Message ID (bytes 2 and 3)
+                const msgIdMsb = data[2]
+                const msgIdLsb = data[3]
+                // SUBACK: 0x90 0x03 msgIdMsb msgIdLsb 0x00
+                this.triggerMessage(new Uint8Array([0x90, 0x03, msgIdMsb, msgIdLsb, 0x00]))
             }
-        })
+        }, 10)
+    })
 
-        toDelete.forEach(msgId => this.seen.delete(msgId))
-        return toDelete.length
-    }
+    close = vi.fn(() => {
+        this.readyState = MockWebSocket.CLOSED
+        setTimeout(() => {
+            if (this.onclose) this.onclose()
+        }, 1)
+    })
 
-    /**
-     * Clear all entries and stop cleanup timer
-     */
-    destroy() {
-        if (this.cleanupInterval) {
-            clearInterval(this.cleanupInterval)
-            this.cleanupInterval = null
+    // Helper to simulate receiving a message
+    public triggerMessage(data: Uint8Array) {
+        if (this.onmessage) {
+            this.onmessage({ data: data.buffer }) // WebSocket receives ArrayBuffer
         }
-        this.seen.clear()
-    }
-
-    /**
-     * Get current cache size
-     */
-    size(): number {
-        return this.seen.size
-    }
-
-    /**
-     * For testing: add an old entry
-     */
-    addWithTimestamp(msgId: string, timestamp: number) {
-        this.seen.set(msgId, timestamp)
     }
 }
 
-// ============================================
-// Test Suites
-// ============================================
+// Mock RTCPeerConnection
+class MockRTCPeerConnection {
+    createDataChannel = vi.fn()
+    setLocalDescription = vi.fn()
+    setRemoteDescription = vi.fn()
+    addTrack = vi.fn()
+    close = vi.fn()
+    getSenders = vi.fn().mockReturnValue([])
+    createOffer = vi.fn().mockResolvedValue({ type: 'offer', sdp: 'mock-sdp' })
+    createAnswer = vi.fn().mockResolvedValue({ type: 'answer', sdp: 'mock-sdp' })
+    addEventListener = vi.fn()
+    removeEventListener = vi.fn()
+    connectionState = 'new'
+    iceConnectionState = 'new'
+    signalingState = 'stable'
+    static generateCertificate = vi.fn()
+}
 
-describe('generatePeerId', () => {
-    it('should generate a 16-character string', () => {
-        const id = generatePeerId()
-        expect(id).toHaveLength(16)
-    })
-
-    it('should only contain alphanumeric characters', () => {
-        const id = generatePeerId()
-        expect(/^[A-Za-z0-9]+$/.test(id)).toBe(true)
-    })
-
-    it('should generate unique IDs', () => {
-        const ids = new Set<string>()
-        for (let i = 0; i < 100; i++) {
-            ids.add(generatePeerId())
-        }
-        // All IDs should be unique
-        expect(ids.size).toBe(100)
-    })
-
-    it('should be randomly distributed', () => {
-        // Generate many IDs and check character distribution
-        const ids = Array.from({ length: 100 }, () => generatePeerId())
-        const allChars = ids.join('')
-
-        // Should have a mix of uppercase, lowercase, and numbers
-        expect(/[A-Z]/.test(allChars)).toBe(true)
-        expect(/[a-z]/.test(allChars)).toBe(true)
-        expect(/[0-9]/.test(allChars)).toBe(true)
-    })
+// Setup globals
+vi.stubGlobal('WebSocket', MockWebSocket)
+vi.stubGlobal('RTCPeerConnection', MockRTCPeerConnection)
+vi.stubGlobal('BroadcastChannel', class {
+    onmessage = null
+    postMessage = vi.fn()
+    close = vi.fn()
 })
 
-describe('generateMessageId', () => {
-    it('should include the selfId', () => {
-        const selfId = 'testPeer123'
-        const msgId = generateMessageId(selfId)
-        expect(msgId.startsWith('testPeer123-')).toBe(true)
-    })
-
-    it('should include a timestamp', () => {
-        const before = Date.now()
-        const selfId = 'peer'
-        const msgId = generateMessageId(selfId)
-        const after = Date.now()
-
-        // Extract timestamp from message ID
-        const parts = msgId.split('-')
-        const timestamp = parseInt(parts[1], 10)
-
-        expect(timestamp).toBeGreaterThanOrEqual(before)
-        expect(timestamp).toBeLessThanOrEqual(after)
-    })
-
-    it('should include a random suffix', () => {
-        const selfId = 'peer'
-        const msgId = generateMessageId(selfId)
-        const parts = msgId.split('-')
-
-        // Should have 3 parts: selfId, timestamp, random
-        expect(parts.length).toBe(3)
-        expect(parts[2].length).toBe(6)
-    })
-
-    it('should generate unique IDs even in rapid succession', () => {
-        const selfId = 'peer'
-        const ids = new Set<string>()
-
-        for (let i = 0; i < 100; i++) {
-            ids.add(generateMessageId(selfId))
-        }
-
-        // All should be unique due to the random component
-        expect(ids.size).toBe(100)
-    })
-})
-
-describe('MessageDeduplicator', () => {
-    let dedup: MessageDeduplicator
+describe('SimplePeerManager', () => {
+    let manager: SimplePeerManager
 
     beforeEach(() => {
-        dedup = new MessageDeduplicator(false) // Disable auto-cleanup for tests
+        vi.useFakeTimers()
+        vi.clearAllMocks()
+        MockWebSocket.instances = []
+
+        // Mock electronAPI
+        const mockElectronAPI = {
+            getICEServers: vi.fn().mockResolvedValue([]),
+            getMQTTBrokers: vi.fn().mockResolvedValue([{ url: 'wss://test-broker/mqtt' }])
+        }
+
+        Object.defineProperty(window, 'electronAPI', {
+            value: mockElectronAPI,
+            writable: true,
+            configurable: true
+        })
+
+        manager = new SimplePeerManager()
     })
 
     afterEach(() => {
-        dedup.destroy()
+        manager.leaveRoom()
+        vi.runOnlyPendingTimers()
+        vi.useRealTimers()
+        // Clean up window properties
+        // @ts-ignore
+        delete window.electronAPI
     })
 
-    describe('Basic Deduplication', () => {
-        it('should return false for first occurrence', () => {
-            expect(dedup.isDuplicate('msg-1')).toBe(false)
-        })
-
-        it('should return true for second occurrence', () => {
-            dedup.isDuplicate('msg-1')
-            expect(dedup.isDuplicate('msg-1')).toBe(true)
-        })
-
-        it('should track multiple different messages', () => {
-            expect(dedup.isDuplicate('msg-1')).toBe(false)
-            expect(dedup.isDuplicate('msg-2')).toBe(false)
-            expect(dedup.isDuplicate('msg-3')).toBe(false)
-
-            expect(dedup.isDuplicate('msg-1')).toBe(true)
-            expect(dedup.isDuplicate('msg-2')).toBe(true)
-            expect(dedup.isDuplicate('msg-3')).toBe(true)
-        })
-
-        it('should handle empty message ID', () => {
-            // Empty string should be treated as "can't dedupe"
-            expect(dedup.isDuplicate('')).toBe(false)
-            expect(dedup.isDuplicate('')).toBe(false) // Still false, not tracked
+    describe('generatePeerId', () => {
+        it('should generate valid peer ID', () => {
+            const id = generatePeerId()
+            expect(id).toHaveLength(16)
         })
     })
 
-    describe('Window Size Limiting', () => {
-        it('should respect window size limit', () => {
-            // Add more than window size
-            for (let i = 0; i < MESSAGE_DEDUP_WINDOW_SIZE + 100; i++) {
-                dedup.isDuplicate(`msg-${i}`)
-            }
+    describe('joinRoom', () => {
+        it('should join room and connect to MQTT', async () => {
+            const joinPromise = manager.joinRoom('test-room', 'Alice')
 
-            // Should not exceed window size
-            expect(dedup.size()).toBe(MESSAGE_DEDUP_WINDOW_SIZE)
+            // Allow loadCredentials logic to proceed (Promise microtasks)
+            await Promise.resolve()
+            await Promise.resolve()
+
+            // Advance time for WebSocket open (10ms) and CONNACK (10ms + overhead)
+            await vi.advanceTimersByTimeAsync(100)
+
+            await joinPromise
+
+            expect(manager.getSignalingState()).toBe('connected')
+            expect(MockWebSocket.instances.length).toBeGreaterThan(0)
+            expect(MockWebSocket.instances[0].url).toBe('wss://test-broker/mqtt')
         })
 
-        it('should remove oldest entries when exceeding limit', () => {
-            // Fill to window size
-            for (let i = 0; i < MESSAGE_DEDUP_WINDOW_SIZE; i++) {
-                dedup.isDuplicate(`msg-${i}`)
-            }
+        it('should handle MQTT connection failure', async () => {
+            // Restore WebSocket to be mocked differently for this test
+            const originalWebSocket = global.WebSocket
 
-            // First message should still be a duplicate
-            expect(dedup.isDuplicate('msg-0')).toBe(true)
+            // Override WebSocket directly on global
+            // We use a class expression to create a specific broken WebSocket
+            vi.stubGlobal('WebSocket', class extends MockWebSocket {
+                constructor(url: string) {
+                    super(url)
+                    // Disable automatic open to simulate timeout
+                    this.onopen = null
+                }
+            })
 
-            // Add 100 more
-            for (let i = MESSAGE_DEDUP_WINDOW_SIZE; i < MESSAGE_DEDUP_WINDOW_SIZE + 100; i++) {
-                dedup.isDuplicate(`msg-${i}`)
-            }
+            const joinPromise = manager.joinRoom('test-room', 'Alice')
 
-            // Oldest entries (0-99) should have been removed
-            expect(dedup.isDuplicate('msg-0')).toBe(false) // Now treated as new
-            expect(dedup.isDuplicate('msg-99')).toBe(false)
+            // Allow initial sync startup code
+            await Promise.resolve()
 
-            // Newer entries should still be duplicates
-            expect(dedup.isDuplicate('msg-500')).toBe(true)
-        })
-    })
+            // Advance time past MQTT_CONNECT_TIMEOUT (8000ms)
+            // We need to advance enough to trigger the timeout in SimplePeerManager
+            await vi.advanceTimersByTimeAsync(10000)
 
-    describe('TTL Cleanup', () => {
-        it('should remove old entries on cleanup', () => {
-            const now = Date.now()
+            await joinPromise
 
-            // Add old entries
-            dedup.addWithTimestamp('old-1', now - MESSAGE_DEDUP_TTL_MS - 1000)
-            dedup.addWithTimestamp('old-2', now - MESSAGE_DEDUP_TTL_MS - 2000)
+            // Should fall back to connected state (using BroadcastChannel)
+            expect(manager.getSignalingState()).toBe('connected')
 
-            // Add recent entries
-            dedup.addWithTimestamp('new-1', now - 1000)
-            dedup.addWithTimestamp('new-2', now - 2000)
-
-            expect(dedup.size()).toBe(4)
-
-            // Run cleanup
-            const removed = dedup.cleanup()
-
-            expect(removed).toBe(2)
-            expect(dedup.size()).toBe(2)
-
-            // Old entries should be gone (treated as new)
-            expect(dedup.isDuplicate('old-1')).toBe(false)
-            expect(dedup.isDuplicate('old-2')).toBe(false)
-
-            // New entries should still be duplicates
-            expect(dedup.isDuplicate('new-1')).toBe(true)
-            expect(dedup.isDuplicate('new-2')).toBe(true)
-        })
-
-        it('should not remove recent entries', () => {
-            // Add recent entries
-            dedup.isDuplicate('recent-1')
-            dedup.isDuplicate('recent-2')
-
-            const removed = dedup.cleanup()
-
-            expect(removed).toBe(0)
-            expect(dedup.size()).toBe(2)
+            // Restore WebSocket
+            vi.stubGlobal('WebSocket', originalWebSocket)
         })
     })
 
-    describe('Destroy', () => {
-        it('should clear all entries on destroy', () => {
-            dedup.isDuplicate('msg-1')
-            dedup.isDuplicate('msg-2')
-            dedup.isDuplicate('msg-3')
+    describe('Cleanup', () => {
+        it('should disconnect cleanly', async () => {
+            const joinPromise = manager.joinRoom('test-room', 'Alice')
+            await Promise.resolve()
+            await vi.advanceTimersByTimeAsync(100)
+            await joinPromise
 
-            expect(dedup.size()).toBe(3)
+            expect(manager.getSignalingState()).toBe('connected')
 
-            dedup.destroy()
+            manager.leaveRoom()
 
-            expect(dedup.size()).toBe(0)
+            expect(manager.getSignalingState()).toBe('idle')
+            // Verify all sockets closed
+            MockWebSocket.instances.forEach(ws => expect(ws.close).toHaveBeenCalled())
         })
-
-        it('should handle destroy when empty', () => {
-            expect(() => dedup.destroy()).not.toThrow()
-        })
-    })
-
-    describe('Size Tracking', () => {
-        it('should accurately track size', () => {
-            expect(dedup.size()).toBe(0)
-
-            dedup.isDuplicate('msg-1')
-            expect(dedup.size()).toBe(1)
-
-            dedup.isDuplicate('msg-2')
-            expect(dedup.size()).toBe(2)
-
-            // Duplicate doesn't increase size
-            dedup.isDuplicate('msg-1')
-            expect(dedup.size()).toBe(2)
-        })
-    })
-})
-
-describe('SignalMessage Types', () => {
-    // Test that message types are valid
-    const validTypes = ['announce', 'offer', 'answer', 'ice-candidate', 'leave', 'ping', 'pong', 'mute-status']
-
-    it('should have all expected message types', () => {
-        expect(validTypes).toContain('announce')
-        expect(validTypes).toContain('offer')
-        expect(validTypes).toContain('answer')
-        expect(validTypes).toContain('ice-candidate')
-        expect(validTypes).toContain('leave')
-        expect(validTypes).toContain('ping')
-        expect(validTypes).toContain('pong')
-        expect(validTypes).toContain('mute-status')
-    })
-})
-
-describe('Platform Detection', () => {
-    // Simulate platform detection logic
-    function detectPlatform(): 'win' | 'mac' | 'linux' {
-        // In real code, this would check navigator.platform or process.platform
-        const platform = 'win32' // Simulated
-
-        if (platform.includes('darwin') || platform.includes('mac')) {
-            return 'mac'
-        } else if (platform.includes('linux')) {
-            return 'linux'
-        } else {
-            return 'win'
-        }
-    }
-
-    it('should detect Windows', () => {
-        expect(detectPlatform()).toBe('win')
-    })
-})
-
-describe('ICE Server Configuration', () => {
-    const defaultIceServers = [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-    ]
-
-    it('should have fallback STUN servers', () => {
-        expect(defaultIceServers.length).toBeGreaterThanOrEqual(2)
-        expect(defaultIceServers[0].urls).toContain('stun:')
-    })
-
-    it('should use valid STUN server format', () => {
-        defaultIceServers.forEach(server => {
-            expect(server.urls).toMatch(/^stun:[\w.]+:\d+$/)
-        })
-    })
-})
-
-describe('Timing Constants', () => {
-    // Define timing constants (should match SimplePeerManager)
-    const ANNOUNCE_INTERVAL = 3000
-    const ANNOUNCE_DURATION = 60000
-    const MQTT_KEEPALIVE = 20000
-    const MAX_ICE_RESTART_ATTEMPTS = 3
-    const ICE_RESTART_DELAY = 2000
-    const ICE_DISCONNECT_GRACE_PERIOD = 5000
-    const ICE_FAILED_TIMEOUT = 15000
-
-    it('should have reasonable announce interval', () => {
-        expect(ANNOUNCE_INTERVAL).toBeGreaterThanOrEqual(1000)
-        expect(ANNOUNCE_INTERVAL).toBeLessThanOrEqual(10000)
-    })
-
-    it('should have sufficient announce duration', () => {
-        expect(ANNOUNCE_DURATION).toBeGreaterThanOrEqual(30000)
-        expect(ANNOUNCE_DURATION / ANNOUNCE_INTERVAL).toBeGreaterThanOrEqual(10)
-    })
-
-    it('should have reasonable keepalive interval', () => {
-        expect(MQTT_KEEPALIVE).toBeGreaterThanOrEqual(10000)
-        expect(MQTT_KEEPALIVE).toBeLessThanOrEqual(60000)
-    })
-
-    it('should have limited ICE restart attempts', () => {
-        expect(MAX_ICE_RESTART_ATTEMPTS).toBeGreaterThanOrEqual(1)
-        expect(MAX_ICE_RESTART_ATTEMPTS).toBeLessThanOrEqual(10)
-    })
-
-    it('should have appropriate ICE restart delay', () => {
-        expect(ICE_RESTART_DELAY).toBeGreaterThanOrEqual(1000)
-        expect(ICE_RESTART_DELAY).toBeLessThanOrEqual(10000)
-    })
-
-    it('should have grace period before declaring disconnect', () => {
-        expect(ICE_DISCONNECT_GRACE_PERIOD).toBeGreaterThanOrEqual(3000)
-        expect(ICE_DISCONNECT_GRACE_PERIOD).toBeLessThanOrEqual(15000)
-    })
-
-    it('should have reasonable ICE failed timeout', () => {
-        expect(ICE_FAILED_TIMEOUT).toBeGreaterThan(ICE_RESTART_DELAY)
-        expect(ICE_FAILED_TIMEOUT).toBeLessThanOrEqual(30000)
     })
 })

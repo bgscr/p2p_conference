@@ -31,10 +31,7 @@ interface ToastMessage {
   type: 'info' | 'success' | 'warning' | 'error'
 }
 
-interface MuteStatus {
-  micMuted: boolean
-  speakerMuted: boolean
-}
+
 
 const DEFAULT_SETTINGS: AppSettings = {
   noiseSuppressionEnabled: true,
@@ -54,7 +51,6 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
-  const [remoteMuteStatuses, setRemoteMuteStatuses] = useState<Map<string, MuteStatus>>(new Map())
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false)
 
   // Audio pipeline
@@ -109,12 +105,6 @@ export default function App() {
       showToast(t('room.participantLeft', { name: peerName }), 'info')
 
       setRemoteStreams(prev => {
-        const updated = new Map(prev)
-        updated.delete(peerId)
-        return updated
-      })
-
-      setRemoteMuteStatuses(prev => {
         const updated = new Map(prev)
         updated.delete(peerId)
         return updated
@@ -258,14 +248,6 @@ export default function App() {
       onError: (error: Error, context: string) => {
         AppLog.error('Peer manager error', { context, error: error.message })
         showToast(`Connection error: ${error.message}`, 'error')
-      },
-      onPeerMuteChange: (peerId: string, muteStatus: MuteStatus) => {
-        AppLog.debug('Remote peer mute status changed', { peerId, ...muteStatus })
-        setRemoteMuteStatuses(prev => {
-          const updated = new Map(prev)
-          updated.set(peerId, muteStatus)
-          return updated
-        })
       }
     })
   }, [showToast])
@@ -366,7 +348,6 @@ export default function App() {
     stopCapture()
     audioPipelineRef.current.disconnect()
     setRemoteStreams(new Map())
-    setRemoteMuteStatuses(new Map())
     setAppView('lobby')
   }, [leaveRoom, stopCapture])
 
@@ -452,7 +433,6 @@ export default function App() {
     stopCapture()
     audioPipelineRef.current.disconnect()
     setRemoteStreams(new Map())
-    setRemoteMuteStatuses(new Map())
     setIsSpeakerMuted(false)
     setAppView('lobby')
   }, [leaveRoom, stopCapture, roomId])
@@ -617,7 +597,6 @@ export default function App() {
           localPlatform={localPlatform}
           peers={peers}
           remoteStreams={remoteStreams}
-          remoteMuteStatuses={remoteMuteStatuses}
           connectionState={connectionState}
           isMuted={isMuted}
           isSpeakerMuted={isSpeakerMuted}

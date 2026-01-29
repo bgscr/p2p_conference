@@ -32,6 +32,7 @@ export interface Peer {
   id: string
   name: string
   isMuted: boolean
+  isSpeakerMuted?: boolean
   audioLevel: number
   connectionState: RTCPeerConnectionState
   platform?: 'win' | 'mac' | 'linux'

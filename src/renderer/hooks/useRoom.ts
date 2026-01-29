@@ -105,6 +105,7 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
           id: peerId,
           name: userName,
           isMuted: false,
+          isSpeakerMuted: false,
           audioLevel: 0,
           connectionState: 'connected',
           platform
@@ -138,6 +139,25 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
         })
 
         callbacksRef.current.onPeerLeave?.(peerId, userName)
+      },
+
+      onPeerMuteChange: (peerId: string, muteStatus: { micMuted: boolean, speakerMuted: boolean }) => {
+        RoomLog.debug('Peer mute status changed', { peerId, muteStatus })
+
+        setPeers(prev => {
+          const updated = new Map(prev)
+          const peer = updated.get(peerId)
+
+          if (peer) {
+            updated.set(peerId, {
+              ...peer,
+              isMuted: muteStatus.micMuted,
+              isSpeakerMuted: muteStatus.speakerMuted
+            })
+          }
+
+          return updated
+        })
       }
       // NOTE: onRemoteStream is NOT set here - it's handled by App.tsx
       // to properly store streams in remoteStreams state for audio playback

@@ -19,7 +19,6 @@ interface RoomViewProps {
   localPlatform?: 'win' | 'mac' | 'linux'
   peers: Map<string, Peer>
   remoteStreams: Map<string, MediaStream>
-  remoteMuteStatuses: Map<string, { micMuted: boolean; speakerMuted: boolean }>
   connectionState: ConnectionState
   isMuted: boolean
   isSpeakerMuted: boolean
@@ -48,7 +47,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
   localPlatform,
   peers,
   remoteStreams,
-  remoteMuteStatuses,
   connectionState,
   isMuted,
   isSpeakerMuted,
@@ -142,8 +140,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
       setNetworkStatus(prev => {
         // Only update if changed
         if (prev.isOnline !== status.isOnline ||
-            prev.reconnectAttempts !== status.reconnectAttempts ||
-            prev.isReconnecting !== status.wasInRoomWhenOffline) {
+          prev.reconnectAttempts !== status.reconnectAttempts ||
+          prev.isReconnecting !== status.wasInRoomWhenOffline) {
           return {
             isOnline: status.isOnline,
             isReconnecting: status.wasInRoomWhenOffline && status.reconnectAttempts > 0,
@@ -156,7 +154,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
     return () => {
       clearInterval(statusInterval)
-      p2pManager.setOnNetworkStatusChange(() => {})  // Clear callback
+      p2pManager.setOnNetworkStatusChange(() => { })  // Clear callback
     }
   }, [p2pManager])
 
@@ -213,9 +211,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
     <div className="flex flex-col h-full">
       {/* Network Status Banner */}
       {(!networkStatus.isOnline || networkStatus.isReconnecting) && (
-        <div className={`px-4 py-2 flex items-center justify-between ${
-          !networkStatus.isOnline ? 'bg-red-500' : 'bg-yellow-500'
-        } text-white text-sm`}>
+        <div className={`px-4 py-2 flex items-center justify-between ${!networkStatus.isOnline ? 'bg-red-500' : 'bg-yellow-500'
+          } text-white text-sm`}>
           <div className="flex items-center gap-2">
             {!networkStatus.isOnline ? (
               <>
@@ -324,15 +321,13 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
             {/* Remote Participants */}
             {peersArray.map(peer => {
-              const muteStatus = remoteMuteStatuses.get(peer.id) || { micMuted: false, speakerMuted: false }
-
               return (
                 <ParticipantCard
                   key={peer.id}
                   name={peer.name}
                   peerId={peer.id}
-                  isMicMuted={muteStatus.micMuted}
-                  isSpeakerMuted={muteStatus.speakerMuted}
+                  isMicMuted={peer.isMuted}
+                  isSpeakerMuted={peer.isSpeakerMuted || false}
                   isLocal={false}
                   audioLevel={peer.audioLevel}
                   connectionState={peer.connectionState}
