@@ -88,8 +88,35 @@ class MockAudioContext {
 }
 
 vi.stubGlobal('AudioContext', MockAudioContext)
-vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 16) as any)
-vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+// Track animation frame IDs for cleanup
+let animFrameId = 0
+const pendingFrames = new Map<number, NodeJS.Timeout>()
+
+vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    const id = ++animFrameId
+    const timeout = setTimeout(() => {
+        pendingFrames.delete(id)
+        // Only call callback if window still exists (test not torn down)
+        if (typeof window !== 'undefined') {
+            try {
+                cb(0)
+            } catch {
+                // Ignore errors during cleanup
+            }
+        }
+    }, 16)
+    pendingFrames.set(id, timeout)
+    return id
+})
+
+vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    const timeout = pendingFrames.get(id)
+    if (timeout) {
+        clearTimeout(timeout)
+        pendingFrames.delete(id)
+    }
+})
 
 
 describe('useMediaStream Hook', () => {
@@ -100,6 +127,12 @@ describe('useMediaStream Hook', () => {
     })
 
     afterEach(() => {
+        // Cancel all pending animation frames
+        pendingFrames.forEach((timeout, id) => {
+            clearTimeout(timeout)
+        })
+        pendingFrames.clear()
+        
         // Clear all pending timers to prevent leaky state update errors
         vi.clearAllTimers()
 

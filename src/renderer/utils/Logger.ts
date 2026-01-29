@@ -131,21 +131,9 @@ class Logger {
           stack: data.stack?.split('\n').slice(0, 5).join('\n') // Truncate stack
         }
       }
-
-      // Handle DOMException and similar error-like objects
-      if (data && typeof data === 'object' && 
-          (data.name || data.message) && 
-          (typeof data.name === 'string' || typeof data.message === 'string')) {
-        return {
-          _type: data.constructor?.name || 'ErrorLike',
-          name: data.name || 'Unknown',
-          message: data.message || 'No message',
-          code: data.code !== undefined ? data.code : undefined,
-          stack: data.stack?.split?.('\n').slice(0, 5).join('\n')
-        }
-      }
       
-      if (data instanceof MediaStream) {
+      // Handle MediaStream (check if class exists first to avoid ReferenceError)
+      if (typeof MediaStream !== 'undefined' && data instanceof MediaStream) {
         return {
           _type: 'MediaStream',
           id: data.id,
@@ -159,7 +147,8 @@ class Logger {
         }
       }
 
-      if (data instanceof RTCPeerConnection) {
+      // Handle RTCPeerConnection (check if class exists first)
+      if (typeof RTCPeerConnection !== 'undefined' && data instanceof RTCPeerConnection) {
         return {
           _type: 'RTCPeerConnection',
           connectionState: data.connectionState,
@@ -168,12 +157,27 @@ class Logger {
         }
       }
 
-      // Handle DOM elements
-      if (data instanceof Element || data instanceof Node) {
+      // Handle DOM elements (check if classes exist first)
+      if ((typeof Element !== 'undefined' && data instanceof Element) || 
+          (typeof Node !== 'undefined' && data instanceof Node)) {
         return {
           _type: 'DOMNode',
           nodeName: data.nodeName,
           id: (data as HTMLElement).id || undefined
+        }
+      }
+
+      // Handle DOMException and similar error-like objects
+      // Check this AFTER the specific type checks to avoid false positives
+      if (data && typeof data === 'object' && 
+          (data.name || data.message) && 
+          (typeof data.name === 'string' || typeof data.message === 'string')) {
+        return {
+          _type: data.constructor?.name || 'ErrorLike',
+          name: data.name || 'Unknown',
+          message: data.message || 'No message',
+          code: data.code !== undefined ? data.code : undefined,
+          stack: data.stack?.split?.('\n').slice(0, 5).join('\n')
         }
       }
 
