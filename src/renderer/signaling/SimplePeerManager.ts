@@ -2065,6 +2065,7 @@ export class SimplePeerManager {
     // Remove from maps
     this.peers.delete(peerId)
     this.pendingCandidates.delete(peerId)
+    this.previousStats.delete(peerId)  // Clean up stats tracking
 
     // Notify listeners
     this.onPeerLeave(peerId, peer.userName, peer.platform)
@@ -2239,6 +2240,7 @@ export class SimplePeerManager {
       this.topic = ''
       this.localStream = null
       this.localMuteStatus = { micMuted: false, speakerMuted: false }
+      this.previousStats.clear()  // Clear stats tracking on room leave
 
       // Reset network reconnect state
       if (this.networkReconnectTimer) {
@@ -2343,6 +2345,9 @@ export class SimplePeerManager {
     })
   }
 
+  // Track previous stats for calculating deltas (packet loss rate)
+  private previousStats: Map<string, { packetsReceived: number; packetsLost: number; timestamp: number }> = new Map()
+
   /**
    * Get connection quality statistics for all peers
    * Returns RTT, packet loss, jitter, and bandwidth info
@@ -2352,25 +2357,62 @@ export class SimplePeerManager {
 
     for (const [peerId, peer] of this.peers) {
       try {
+        // If connection is not yet established, return default values
+        if (peer.pc.connectionState !== 'connected') {
+          stats.set(peerId, {
+            peerId,
+            rtt: 0,
+            packetLoss: 0,
+            jitter: 0,
+            bytesReceived: 0,
+            bytesSent: 0,
+            quality: 'fair',  // Show as 'fair' while connecting
+            connectionState: peer.pc.connectionState
+          })
+          continue
+        }
+
         const rtcStats = await peer.pc.getStats()
         let rtt = 0
         let packetLoss = 0
         let jitter = 0
         let bytesReceived = 0
         let bytesSent = 0
+        let currentPacketsReceived = 0
+        let currentPacketsLost = 0
+
+        // First pass: find the transport to get selectedCandidatePairId
+        let selectedCandidatePairId: string | null = null
+        rtcStats.forEach((stat) => {
+          if (stat.type === 'transport' && stat.selectedCandidatePairId) {
+            selectedCandidatePairId = stat.selectedCandidatePairId
+          }
+        })
 
         rtcStats.forEach((stat) => {
-          // Get round-trip time from candidate-pair stats
-          if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
-            rtt = stat.currentRoundTripTime ? stat.currentRoundTripTime * 1000 : 0
+          // Get round-trip time from the selected/nominated candidate-pair
+          if (stat.type === 'candidate-pair') {
+            // Check if this is the nominated/selected pair
+            const isSelected = selectedCandidatePairId 
+              ? stat.id === selectedCandidatePairId
+              : (stat.nominated === true || stat.state === 'succeeded')
+            
+            if (isSelected) {
+              // Prefer currentRoundTripTime (instant measurement)
+              if (stat.currentRoundTripTime !== undefined && stat.currentRoundTripTime > 0) {
+                rtt = stat.currentRoundTripTime * 1000
+              } 
+              // Fallback to average RTT from totalRoundTripTime / responsesReceived
+              else if (stat.totalRoundTripTime !== undefined && stat.responsesReceived > 0) {
+                rtt = (stat.totalRoundTripTime / stat.responsesReceived) * 1000
+              }
+            }
           }
 
           // Get packet loss and jitter from inbound-rtp stats (audio)
           if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
-            if (stat.packetsReceived && stat.packetsLost) {
-              const totalPackets = stat.packetsReceived + stat.packetsLost
-              packetLoss = totalPackets > 0 ? (stat.packetsLost / totalPackets) * 100 : 0
-            }
+            currentPacketsReceived = stat.packetsReceived || 0
+            currentPacketsLost = stat.packetsLost || 0
             jitter = stat.jitter ? stat.jitter * 1000 : 0
             bytesReceived = stat.bytesReceived || 0
           }
@@ -2381,7 +2423,35 @@ export class SimplePeerManager {
           }
         })
 
-        // Calculate quality score (0-100)
+        // Calculate delta packet loss (recent packet loss, not cumulative)
+        const prevStats = this.previousStats.get(peerId)
+        const now = Date.now()
+        
+        if (prevStats && (now - prevStats.timestamp) > 0) {
+          const deltaReceived = currentPacketsReceived - prevStats.packetsReceived
+          const deltaLost = currentPacketsLost - prevStats.packetsLost
+          const deltaTotal = deltaReceived + deltaLost
+          
+          if (deltaTotal > 0) {
+            // Recent packet loss percentage
+            packetLoss = (deltaLost / deltaTotal) * 100
+          }
+        } else {
+          // First measurement or no previous data - use cumulative as fallback
+          const totalPackets = currentPacketsReceived + currentPacketsLost
+          if (totalPackets > 0) {
+            packetLoss = (currentPacketsLost / totalPackets) * 100
+          }
+        }
+
+        // Store current stats for next delta calculation
+        this.previousStats.set(peerId, {
+          packetsReceived: currentPacketsReceived,
+          packetsLost: currentPacketsLost,
+          timestamp: now
+        })
+
+        // Calculate quality score based on thresholds
         // Lower RTT, packet loss, and jitter = higher quality
         let quality: 'excellent' | 'good' | 'fair' | 'poor' = 'excellent'
         if (rtt > 300 || packetLoss > 5 || jitter > 50) {
