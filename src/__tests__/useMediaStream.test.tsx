@@ -128,11 +128,11 @@ describe('useMediaStream Hook', () => {
 
     afterEach(() => {
         // Cancel all pending animation frames
-        pendingFrames.forEach((timeout, id) => {
+        pendingFrames.forEach((timeout) => {
             clearTimeout(timeout)
         })
         pendingFrames.clear()
-        
+
         // Clear all pending timers to prevent leaky state update errors
         vi.clearAllTimers()
 

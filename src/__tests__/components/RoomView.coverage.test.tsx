@@ -7,7 +7,6 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
-import * as React from 'react'
 
 // Mock dependencies
 vi.mock('../../renderer/hooks/useI18n', () => ({
@@ -122,7 +121,7 @@ describe('RoomView Component - Coverage Tests', () => {
 
       // Should update (the actual time may vary slightly)
       expect(screen.getByText(/0:0/)).toBeInTheDocument()
-      
+
       vi.useRealTimers()
     })
   })
@@ -149,7 +148,7 @@ describe('RoomView Component - Coverage Tests', () => {
 
     it('should show reconnecting banner with retry count', () => {
       vi.useFakeTimers()
-      
+
       const mockP2PManager = {
         getConnectionStats: vi.fn().mockResolvedValue(new Map()),
         setOnNetworkStatusChange: vi.fn(),
@@ -170,13 +169,13 @@ describe('RoomView Component - Coverage Tests', () => {
 
       expect(screen.getByText(/Reconnecting/)).toBeInTheDocument()
       expect(screen.getByText(/2\/5/)).toBeInTheDocument()
-      
+
       vi.useRealTimers()
     })
 
     it('should call manualReconnect when retry button clicked', () => {
       vi.useFakeTimers()
-      
+
       const mockManualReconnect = vi.fn()
       const mockP2PManager = {
         getConnectionStats: vi.fn().mockResolvedValue(new Map()),
@@ -199,7 +198,7 @@ describe('RoomView Component - Coverage Tests', () => {
       fireEvent.click(retryButton)
 
       expect(mockManualReconnect).toHaveBeenCalled()
-      
+
       vi.useRealTimers()
     })
   })
@@ -232,7 +231,7 @@ describe('RoomView Component - Coverage Tests', () => {
 
     it('should not show empty state when peers exist', () => {
       const peers = new Map([
-        ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected', platform: 'mac' as const }]
+        ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected' as const, platform: 'mac' as const }]
       ])
 
       render(
@@ -248,7 +247,7 @@ describe('RoomView Component - Coverage Tests', () => {
 
     it('should copy room ID from empty state button', () => {
       const onCopyRoomId = vi.fn()
-      
+
       render(
         <RoomView
           {...defaultProps}
@@ -273,14 +272,14 @@ describe('RoomView Component - Coverage Tests', () => {
       // Find the audio settings button by title
       const settingsButton = screen.getByTitle('Audio Settings')
       fireEvent.click(settingsButton)
-      
+
       // Device panel should appear with microphone label
       expect(screen.getByText('Microphone')).toBeInTheDocument()
     })
 
     it('should toggle noise suppression setting', () => {
       const onSettingsChange = vi.fn()
-      
+
       render(
         <RoomView
           {...defaultProps}
@@ -368,7 +367,7 @@ describe('RoomView Component - Coverage Tests', () => {
       }
 
       const peers = new Map([
-        ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected', platform: 'mac' as const }]
+        ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected' as const, platform: 'mac' as const }]
       ])
 
       render(
@@ -449,7 +448,7 @@ describe('RoomView Component - Coverage Tests', () => {
     it('should show warning styling when 8+ participants', () => {
       const peers = new Map<string, any>()
       for (let i = 0; i < 8; i++) {
-        peers.set(`peer-${i}`, { id: `peer-${i}`, name: `User ${i}`, isMuted: false, audioLevel: 0, connectionState: 'connected', platform: 'win' })
+        peers.set(`peer-${i}`, { id: `peer-${i}`, name: `User ${i}`, isMuted: false, audioLevel: 0, connectionState: 'connected' as const, platform: 'win' })
       }
 
       render(<RoomView {...defaultProps} peers={peers} />)
@@ -482,7 +481,7 @@ describe('RoomView Component - Coverage Tests', () => {
 
     it('should show participant count when connected', () => {
       const peers = new Map([
-        ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected', platform: 'mac' as const }]
+        ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected' as const, platform: 'mac' as const }]
       ])
       render(<RoomView {...defaultProps} connectionState="connected" peers={peers} />)
       expect(screen.getByText('1 participants')).toBeInTheDocument()
@@ -502,7 +501,7 @@ describe('RoomView Component - Coverage Tests', () => {
 
     it('should show copied feedback after clicking', () => {
       vi.useFakeTimers()
-      
+
       const onCopyRoomId = vi.fn()
       render(<RoomView {...defaultProps} onCopyRoomId={onCopyRoomId} />)
 
@@ -518,7 +517,7 @@ describe('RoomView Component - Coverage Tests', () => {
       })
 
       expect(screen.queryByText(/Copied!/)).not.toBeInTheDocument()
-      
+
       vi.useRealTimers()
     })
   })
@@ -526,7 +525,7 @@ describe('RoomView Component - Coverage Tests', () => {
   describe('Volume Controls for Peers', () => {
     it('should render peer with volume control', () => {
       const peers = new Map([
-        ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0.5, connectionState: 'connected', platform: 'mac' as const }]
+        ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0.5, connectionState: 'connected' as const, platform: 'mac' as const }]
       ])
 
       render(
@@ -543,13 +542,13 @@ describe('RoomView Component - Coverage Tests', () => {
   describe('Audio Level Display', () => {
     it('should show muted text when muted', () => {
       render(<RoomView {...defaultProps} isMuted={true} />)
-      
+
       expect(screen.getByText('Muted')).toBeInTheDocument()
     })
 
     it('should show live text when not muted', () => {
       render(<RoomView {...defaultProps} isMuted={false} />)
-      
+
       expect(screen.getByText('Live')).toBeInTheDocument()
     })
   })

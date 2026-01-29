@@ -6,13 +6,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { 
-  SimplePeerManager, 
-  generatePeerId, 
-  selfId, 
+import {
+  SimplePeerManager,
+  generatePeerId,
+  selfId,
   MultiBrokerMQTT,
   MQTTClient,
-  resetCredentialsCacheForTesting 
+  resetCredentialsCacheForTesting
 } from '../renderer/signaling/SimplePeerManager'
 
 // Mock Logger
@@ -52,7 +52,7 @@ class MockWebSocket {
   constructor(url: string) {
     this.url = url
     mockWebSockets.push(this)
-    
+
     setTimeout(() => {
       this.readyState = MockWebSocket.OPEN
       this.onopen?.()
@@ -64,7 +64,7 @@ class MockWebSocket {
     const packetType = data[0] & 0xF0
     setTimeout(() => {
       if (this.readyState !== MockWebSocket.OPEN) return
-      
+
       // CONNECT -> CONNACK
       if (packetType === 0x10) {
         this.triggerMessage(new Uint8Array([0x20, 0x02, 0x00, 0x00]))
@@ -97,7 +97,7 @@ class MockWebSocket {
     const topicBytes = new TextEncoder().encode(topic)
     const messageBytes = new TextEncoder().encode(payload)
     const remainingLength = 2 + topicBytes.length + messageBytes.length
-    
+
     const packet = new Uint8Array(2 + remainingLength)
     let i = 0
     packet[i++] = 0x30
@@ -107,7 +107,7 @@ class MockWebSocket {
     packet.set(topicBytes, i)
     i += topicBytes.length
     packet.set(messageBytes, i)
-    
+
     this.triggerMessage(packet)
   }
 }
@@ -117,59 +117,59 @@ class MockRTCPeerConnection {
   oniceconnectionstatechange: (() => void) | null = null
   onconnectionstatechange: (() => void) | null = null
   ontrack: ((event: any) => void) | null = null
-  
+
   connectionState = 'new'
   iceConnectionState = 'new'
   signalingState = 'stable'
   localDescription: RTCSessionDescription | null = null
   remoteDescription: RTCSessionDescription | null = null
-  
+
   private senders: any[] = []
-  
+
   constructor() {
     mockPeerConnections.push(this)
   }
-  
+
   createOffer = vi.fn(async (options?: RTCOfferOptions) => {
-    return { 
-      type: 'offer', 
-      sdp: options?.iceRestart ? 'mock-sdp-offer-restart' : 'mock-sdp-offer' 
+    return {
+      type: 'offer',
+      sdp: options?.iceRestart ? 'mock-sdp-offer-restart' : 'mock-sdp-offer'
     }
   })
-  
+
   createAnswer = vi.fn().mockResolvedValue({ type: 'answer', sdp: 'mock-sdp-answer' })
-  
+
   setLocalDescription = vi.fn(async (desc: RTCSessionDescriptionInit) => {
     this.localDescription = desc as RTCSessionDescription
   })
-  
+
   setRemoteDescription = vi.fn(async (desc: RTCSessionDescriptionInit) => {
     this.remoteDescription = desc as RTCSessionDescription
   })
-  
+
   addIceCandidate = vi.fn().mockResolvedValue(undefined)
-  
-  addTrack = vi.fn((track: any, stream: any) => {
+
+  addTrack = vi.fn((track: any, _stream: any) => {
     const sender = { track, replaceTrack: vi.fn().mockResolvedValue(undefined), getParameters: vi.fn().mockReturnValue({ codecs: [{ mimeType: 'audio/opus' }] }) }
     this.senders.push(sender)
     return sender
   })
-  
+
   getSenders = vi.fn(() => this.senders)
-  
+
   getStats = vi.fn().mockResolvedValue(new Map([
     ['transport-1', { type: 'transport', selectedCandidatePairId: 'candidate-pair-1' }],
     ['candidate-pair-1', { type: 'candidate-pair', id: 'candidate-pair-1', nominated: true, currentRoundTripTime: 0.05 }],
     ['inbound-rtp-1', { type: 'inbound-rtp', kind: 'audio', packetsReceived: 1000, packetsLost: 10, jitter: 0.015, bytesReceived: 50000 }],
     ['outbound-rtp-1', { type: 'outbound-rtp', kind: 'audio', bytesSent: 48000 }]
   ]))
-  
+
   close = vi.fn(() => {
     this.connectionState = 'closed'
     this.iceConnectionState = 'closed'
     this.signalingState = 'closed'
   })
-  
+
   simulateState(connState: string, iceState: string) {
     this.connectionState = connState
     this.iceConnectionState = iceState
@@ -178,13 +178,13 @@ class MockRTCPeerConnection {
       this.oniceconnectionstatechange?.()
     }, 0)
   }
-  
+
   simulateTrack(track: any, stream: any) {
     setTimeout(() => {
       this.ontrack?.({ track, streams: [stream] })
     }, 0)
   }
-  
+
   simulateIceCandidate(candidate: any) {
     setTimeout(() => {
       this.onicecandidate?.({ candidate })
@@ -196,11 +196,11 @@ class MockMediaStream {
   id = `stream-${Math.random().toString(36).substr(2, 9)}`
   active = true
   private tracks: any[] = []
-  
+
   constructor(tracks?: any[]) {
     if (tracks) this.tracks = tracks
   }
-  
+
   getTracks() { return this.tracks }
   getAudioTracks() { return this.tracks.filter(t => t.kind === 'audio') }
   addTrack(track: any) { this.tracks.push(track) }
@@ -212,7 +212,7 @@ class MockMediaStreamTrack {
   label = 'Test Microphone'
   enabled = true
   readyState = 'live'
-  
+
   constructor(kind = 'audio') { this.kind = kind }
   stop = vi.fn()
 }
@@ -230,13 +230,13 @@ class MockRTCIceCandidate {
   candidate: string
   sdpMid: string | null
   sdpMLineIndex: number | null
-  
+
   constructor(init: any) {
     this.candidate = init.candidate || ''
     this.sdpMid = init.sdpMid || null
     this.sdpMLineIndex = init.sdpMLineIndex || null
   }
-  
+
   toJSON() {
     return {
       candidate: this.candidate,
@@ -249,7 +249,7 @@ class MockRTCIceCandidate {
 class MockBroadcastChannel {
   name: string
   onmessage: ((event: any) => void) | null = null
-  
+
   constructor(name: string) { this.name = name }
   postMessage = vi.fn()
   close = vi.fn()
@@ -265,14 +265,14 @@ vi.stubGlobal('MediaStream', MockMediaStream)
 
 describe('SimplePeerManager - ICE Handling', () => {
   let manager: SimplePeerManager
-  
+
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
     mockWebSockets = []
     mockPeerConnections = []
     resetCredentialsCacheForTesting()
-    
+
     Object.defineProperty(window, 'electronAPI', {
       value: {
         getICEServers: vi.fn().mockResolvedValue([{ urls: 'stun:stun.test:19302' }]),
@@ -281,13 +281,13 @@ describe('SimplePeerManager - ICE Handling', () => {
       writable: true,
       configurable: true
     })
-    
+
     Object.defineProperty(navigator, 'onLine', { value: true, writable: true, configurable: true })
     Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (Windows NT 10.0)', writable: true, configurable: true })
-    
+
     manager = new SimplePeerManager()
   })
-  
+
   afterEach(() => {
     manager.leaveRoom()
     vi.runOnlyPendingTimers()
@@ -303,14 +303,14 @@ describe('SimplePeerManager - ICE Handling', () => {
       expect(typeof manager.leaveRoom).toBe('function')
       expect(typeof manager.setCallbacks).toBe('function')
     })
-    
+
     it('should handle offer/answer exchange', async () => {
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await vi.advanceTimersByTimeAsync(200)
       await joinPromise
-      
+
       const ws = mockWebSockets[0]
-      
+
       // Receive offer from peer
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -322,20 +322,20 @@ describe('SimplePeerManager - ICE Handling', () => {
         platform: 'win',
         msgId: 'msg-2'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(100)
-      
+
       // Verify answer was sent
       expect(ws.send).toHaveBeenCalled()
     })
-    
+
     it('should handle ICE candidates', async () => {
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await vi.advanceTimersByTimeAsync(200)
       await joinPromise
-      
+
       const ws = mockWebSockets[0]
-      
+
       // First establish connection with offer
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -347,9 +347,9 @@ describe('SimplePeerManager - ICE Handling', () => {
         platform: 'win',
         msgId: 'msg-3'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(100)
-      
+
       // Then send ICE candidate
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -359,22 +359,22 @@ describe('SimplePeerManager - ICE Handling', () => {
         data: { candidate: 'candidate:1 1 UDP 2122...', sdpMid: '0', sdpMLineIndex: 0 },
         msgId: 'msg-4'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(100)
-      
+
       // Verify ICE candidate was added
       if (mockPeerConnections[0]) {
         expect(mockPeerConnections[0].addIceCandidate).toHaveBeenCalled()
       }
     })
-    
+
     it('should queue ICE candidates before remote description is set', async () => {
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await vi.advanceTimersByTimeAsync(200)
       await joinPromise
-      
+
       const ws = mockWebSockets[0]
-      
+
       // Send ICE candidate before offer (should be queued)
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -384,9 +384,9 @@ describe('SimplePeerManager - ICE Handling', () => {
         data: { candidate: 'candidate:1 1 UDP ...', sdpMid: '0', sdpMLineIndex: 0 },
         msgId: 'msg-5'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(50)
-      
+
       // Then send offer
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -398,27 +398,27 @@ describe('SimplePeerManager - ICE Handling', () => {
         platform: 'linux',
         msgId: 'msg-6'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(100)
-      
+
       // Queued candidate should be added after remote description
       if (mockPeerConnections[0]) {
         expect(mockPeerConnections[0].addIceCandidate).toHaveBeenCalled()
       }
     })
   })
-  
+
   describe('Connection State Transitions', () => {
     it('should notify peer join when connected', async () => {
       const onPeerJoin = vi.fn()
       manager.setCallbacks({ onPeerJoin })
-      
+
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await vi.advanceTimersByTimeAsync(200)
       await joinPromise
-      
+
       const ws = mockWebSockets[0]
-      
+
       // Receive offer
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -430,29 +430,29 @@ describe('SimplePeerManager - ICE Handling', () => {
         platform: 'win',
         msgId: 'msg-7'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(100)
-      
+
       // Simulate connection success
       const pc = mockPeerConnections[mockPeerConnections.length - 1]
       if (pc) {
         pc.simulateState('connected', 'connected')
         await vi.advanceTimersByTimeAsync(50)
-        
+
         expect(onPeerJoin).toHaveBeenCalledWith('peer-789', 'Charlie', 'win')
       }
     })
-    
+
     it('should notify peer leave when connection closes', async () => {
       const onPeerLeave = vi.fn()
       manager.setCallbacks({ onPeerLeave })
-      
+
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await vi.advanceTimersByTimeAsync(200)
       await joinPromise
-      
+
       const ws = mockWebSockets[0]
-      
+
       // Receive offer and establish connection
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -464,15 +464,15 @@ describe('SimplePeerManager - ICE Handling', () => {
         platform: 'mac',
         msgId: 'msg-8'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(100)
-      
+
       const pc = mockPeerConnections[mockPeerConnections.length - 1]
       if (pc) {
         // First connect
         pc.simulateState('connected', 'connected')
         await vi.advanceTimersByTimeAsync(50)
-        
+
         // Then receive leave message
         ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
           v: 1,
@@ -480,25 +480,25 @@ describe('SimplePeerManager - ICE Handling', () => {
           from: 'peer-abc',
           msgId: 'msg-9'
         }))
-        
+
         await vi.advanceTimersByTimeAsync(100)
-        
+
         expect(onPeerLeave).toHaveBeenCalled()
       }
     })
   })
-  
+
   describe('Remote Stream Handling', () => {
     it('should notify when remote stream is received', async () => {
       const onRemoteStream = vi.fn()
       manager.setCallbacks({ onRemoteStream })
-      
+
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await vi.advanceTimersByTimeAsync(200)
       await joinPromise
-      
+
       const ws = mockWebSockets[0]
-      
+
       // Establish connection
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -510,34 +510,34 @@ describe('SimplePeerManager - ICE Handling', () => {
         platform: 'win',
         msgId: 'msg-10'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(100)
-      
+
       const pc = mockPeerConnections[mockPeerConnections.length - 1]
       if (pc) {
         // Simulate track event
         const mockTrack = new MockMediaStreamTrack()
         const mockStream = new MockMediaStream([mockTrack])
         pc.simulateTrack(mockTrack, mockStream)
-        
+
         await vi.advanceTimersByTimeAsync(50)
-        
+
         expect(onRemoteStream).toHaveBeenCalled()
       }
     })
   })
-  
+
   describe('Mute Status', () => {
     it('should handle mute status messages from peers', async () => {
       const onPeerMuteChange = vi.fn()
       manager.setCallbacks({ onPeerMuteChange })
-      
+
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await vi.advanceTimersByTimeAsync(200)
       await joinPromise
-      
+
       const ws = mockWebSockets[0]
-      
+
       // Establish connection first
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
@@ -549,14 +549,14 @@ describe('SimplePeerManager - ICE Handling', () => {
         platform: 'win',
         msgId: 'msg-11'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(100)
-      
+
       const pc = mockPeerConnections[mockPeerConnections.length - 1]
       if (pc) {
         pc.simulateState('connected', 'connected')
         await vi.advanceTimersByTimeAsync(50)
-        
+
         // Send mute status
         ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
           v: 1,
@@ -565,9 +565,9 @@ describe('SimplePeerManager - ICE Handling', () => {
           data: { micMuted: true, speakerMuted: false },
           msgId: 'msg-12'
         }))
-        
+
         await vi.advanceTimersByTimeAsync(50)
-        
+
         expect(onPeerMuteChange).toHaveBeenCalledWith(
           'peer-mute',
           { micMuted: true, speakerMuted: false }
@@ -575,15 +575,15 @@ describe('SimplePeerManager - ICE Handling', () => {
       }
     })
   })
-  
+
   describe('Ping/Pong', () => {
     it('should respond to ping with pong', async () => {
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await vi.advanceTimersByTimeAsync(200)
       await joinPromise
-      
+
       const ws = mockWebSockets[0]
-      
+
       ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
         v: 1,
         type: 'ping',
@@ -591,9 +591,9 @@ describe('SimplePeerManager - ICE Handling', () => {
         to: selfId,
         msgId: 'msg-13'
       }))
-      
+
       await vi.advanceTimersByTimeAsync(50)
-      
+
       // Should have sent a pong response
       expect(ws.send).toHaveBeenCalled()
     })
@@ -602,14 +602,14 @@ describe('SimplePeerManager - ICE Handling', () => {
 
 describe('SimplePeerManager - Connection Stats', () => {
   let manager: SimplePeerManager
-  
+
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
     mockWebSockets = []
     mockPeerConnections = []
     resetCredentialsCacheForTesting()
-    
+
     Object.defineProperty(window, 'electronAPI', {
       value: {
         getICEServers: vi.fn().mockResolvedValue([{ urls: 'stun:stun.test:19302' }]),
@@ -618,12 +618,12 @@ describe('SimplePeerManager - Connection Stats', () => {
       writable: true,
       configurable: true
     })
-    
+
     Object.defineProperty(navigator, 'onLine', { value: true, writable: true, configurable: true })
-    
+
     manager = new SimplePeerManager()
   })
-  
+
   afterEach(() => {
     manager.leaveRoom()
     vi.runOnlyPendingTimers()
@@ -631,14 +631,14 @@ describe('SimplePeerManager - Connection Stats', () => {
     // @ts-ignore
     delete window.electronAPI
   })
-  
+
   it('should calculate quality based on RTT, packet loss, and jitter', async () => {
     const joinPromise = manager.joinRoom('test-room', 'Alice')
     await vi.advanceTimersByTimeAsync(200)
     await joinPromise
-    
+
     const ws = mockWebSockets[0]
-    
+
     // Establish a peer connection
     ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
       v: 1,
@@ -650,16 +650,16 @@ describe('SimplePeerManager - Connection Stats', () => {
       platform: 'win',
       msgId: 'msg-14'
     }))
-    
+
     await vi.advanceTimersByTimeAsync(100)
-    
+
     const pc = mockPeerConnections[mockPeerConnections.length - 1]
     if (pc) {
       pc.simulateState('connected', 'connected')
       await vi.advanceTimersByTimeAsync(50)
-      
+
       const stats = await manager.getConnectionStats()
-      
+
       const peerStats = stats.get('peer-stats')
       if (peerStats) {
         expect(peerStats.rtt).toBeDefined()
@@ -670,14 +670,14 @@ describe('SimplePeerManager - Connection Stats', () => {
       }
     }
   })
-  
+
   it('should return default values for connecting peers', async () => {
     const joinPromise = manager.joinRoom('test-room', 'Alice')
     await vi.advanceTimersByTimeAsync(200)
     await joinPromise
-    
+
     const ws = mockWebSockets[0]
-    
+
     // Start connection but don't complete
     ws.simulatePublish('p2p-conf/test-room', JSON.stringify({
       v: 1,
@@ -689,12 +689,12 @@ describe('SimplePeerManager - Connection Stats', () => {
       platform: 'win',
       msgId: 'msg-15'
     }))
-    
+
     await vi.advanceTimersByTimeAsync(50)
-    
+
     // Don't simulate 'connected' state - leave as 'new'
     const stats = await manager.getConnectionStats()
-    
+
     const peerStats = stats.get('peer-connecting')
     if (peerStats) {
       expect(peerStats.quality).toBe('fair')
@@ -709,47 +709,47 @@ describe('MQTTClient - Protocol Tests', () => {
     vi.clearAllMocks()
     mockWebSockets = []
   })
-  
+
   afterEach(() => {
     vi.runOnlyPendingTimers()
     vi.useRealTimers()
   })
-  
+
   it('should connect with username and password', async () => {
     const client = new MQTTClient('wss://test/mqtt', 'testuser', 'testpass')
-    
+
     const connectPromise = client.connect()
     await vi.advanceTimersByTimeAsync(100)
     await connectPromise
-    
+
     expect(client.isConnected()).toBe(true)
-    
+
     // Verify CONNECT packet was sent with credentials
     const ws = mockWebSockets[mockWebSockets.length - 1]
     expect(ws.send).toHaveBeenCalled()
-    
+
     client.disconnect()
   })
-  
+
   it('should report not connected before connect', () => {
     const client = new MQTTClient('wss://test/mqtt')
     expect(client.isConnected()).toBe(false)
   })
-  
+
   it('should return broker URL', () => {
     const client = new MQTTClient('wss://test/mqtt')
     expect(client.getBrokerUrl()).toBe('wss://test/mqtt')
   })
-  
+
   it('should report not connected initially', () => {
     const client = new MQTTClient('wss://test/mqtt')
     expect(client.isConnected()).toBe(false)
   })
-  
+
   it('should set disconnect callback', () => {
     const client = new MQTTClient('wss://test/mqtt')
     const callback = vi.fn()
-    
+
     // Should not throw
     expect(() => client.setOnDisconnect(callback)).not.toThrow()
   })
@@ -761,7 +761,7 @@ describe('MultiBrokerMQTT', () => {
     vi.clearAllMocks()
     mockWebSockets = []
     resetCredentialsCacheForTesting()
-    
+
     Object.defineProperty(window, 'electronAPI', {
       value: {
         getICEServers: vi.fn().mockResolvedValue([]),
@@ -774,14 +774,14 @@ describe('MultiBrokerMQTT', () => {
       configurable: true
     })
   })
-  
+
   afterEach(() => {
     vi.runOnlyPendingTimers()
     vi.useRealTimers()
     // @ts-ignore
     delete window.electronAPI
   })
-  
+
   it('should create instance', () => {
     const multi = new MultiBrokerMQTT()
     expect(multi).toBeDefined()
@@ -790,26 +790,26 @@ describe('MultiBrokerMQTT', () => {
     expect(typeof multi.publish).toBe('function')
     multi.disconnect()
   })
-  
+
   it('should report not connected initially', () => {
     const multi = new MultiBrokerMQTT()
     expect(multi.isConnected()).toBe(false)
     multi.disconnect()
   })
-  
+
   it('should return empty status before connecting', () => {
     const multi = new MultiBrokerMQTT()
     const status = multi.getConnectionStatus()
     expect(Array.isArray(status)).toBe(true)
     multi.disconnect()
   })
-  
+
   it('should return zero deduplicator size initially', () => {
     const multi = new MultiBrokerMQTT()
     expect(multi.getDeduplicatorSize()).toBe(0)
     multi.disconnect()
   })
-  
+
   it('should have subscribe and publish methods', () => {
     const multi = new MultiBrokerMQTT()
     expect(typeof multi.subscribeAll).toBe('function')
@@ -825,13 +825,13 @@ describe('generatePeerId', () => {
       expect(/^[A-Za-z0-9]+$/.test(id)).toBe(true)
     }
   })
-  
+
   it('should generate exactly 16 characters', () => {
     for (let i = 0; i < 50; i++) {
       expect(generatePeerId()).toHaveLength(16)
     }
   })
-  
+
   it('should have high uniqueness', () => {
     const ids = new Set<string>()
     for (let i = 0; i < 1000; i++) {
