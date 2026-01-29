@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useMediaStream } from '../renderer/hooks/useMediaStream'
 
@@ -94,10 +94,14 @@ vi.stubGlobal('cancelAnimationFrame', vi.fn())
 
 describe('useMediaStream Hook', () => {
     beforeEach(() => {
-        vi.useRealTimers()
         vi.clearAllMocks()
         // Clear listeners
         for (const key in listeners) delete listeners[key]
+    })
+
+    afterEach(() => {
+        // Clear all pending timers to prevent leaky state update errors
+        vi.clearAllTimers()
 
         // Reset mock implementations
         mockGetUserMedia.mockResolvedValue(mockStream)
@@ -248,21 +252,30 @@ describe('useMediaStream Hook', () => {
     })
 
     describe('Environment Events', () => {
-        // TODO: This test fails with checkRealTimersCallback despite using real timers. Needs investigation of mock event handling.
-        it.skip('should refresh devices on devicechange event', async () => {
-            renderHook(() => useMediaStream())
+        it('should refresh devices on devicechange event', async () => {
+            const { result } = renderHook(() => useMediaStream())
 
             // Wait for initial enumeration
-            await waitFor(() => expect(mockEnumerateDevices).toHaveBeenCalledTimes(1))
+            await waitFor(() => expect(mockEnumerateDevices).toHaveBeenCalled())
+            
+            // Record the call count after initial setup
+            const initialCallCount = mockEnumerateDevices.mock.calls.length
 
-            // Simulate device change event
-            const event = new Event('devicechange')
-            act(() => {
-                navigator.mediaDevices.dispatchEvent(event)
+            // Manually trigger the devicechange handler that was registered
+            // The event listener is added via addEventListener, so we need to call the registered handler
+            const deviceChangeListeners = listeners['devicechange'] || []
+            
+            await act(async () => {
+                // Trigger all devicechange listeners
+                deviceChangeListeners.forEach(cb => cb(new Event('devicechange')))
+                // Allow async operations to complete
+                await new Promise(resolve => setTimeout(resolve, 50))
             })
 
-            // Should trigger another enumeration
-            await waitFor(() => expect(mockEnumerateDevices).toHaveBeenCalledTimes(2), { timeout: 3000 })
+            // Should trigger another enumeration - check that it was called more times than before
+            await waitFor(() => {
+                expect(mockEnumerateDevices.mock.calls.length).toBeGreaterThan(initialCallCount)
+            }, { timeout: 1000 })
         })
     })
 

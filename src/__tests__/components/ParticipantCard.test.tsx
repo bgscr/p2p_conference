@@ -30,23 +30,34 @@ vi.mock('../../renderer/utils/Logger', () => ({
 describe('ParticipantCard', () => {
     beforeEach(() => {
         vi.clearAllMocks()
-        // Mock AudioContext
-        global.AudioContext = vi.fn().mockImplementation(() => ({
-            createAnalyser: () => ({
-                connect: vi.fn(),
-                frequencyBinCount: 128,
-                getByteFrequencyData: vi.fn(),
-                disconnect: vi.fn()
-            }),
-            createMediaStreamSource: () => ({
-                connect: vi.fn()
-            }),
-            createGain: () => ({
-                gain: { value: 1 },
-                connect: vi.fn(),
-                disconnect: vi.fn()
-            })
-        })) as any
+        // Mock AudioContext with proper class-like constructor
+        class MockAudioContext {
+            createAnalyser() {
+                return {
+                    fftSize: 256,
+                    frequencyBinCount: 128,
+                    connect: vi.fn(),
+                    disconnect: vi.fn(),
+                    getByteFrequencyData: vi.fn((arr: Uint8Array) => {
+                        // Fill with some data to simulate audio
+                        arr.fill(50)
+                    })
+                }
+            }
+            createMediaStreamSource() {
+                return {
+                    connect: vi.fn()
+                }
+            }
+            createGain() {
+                return {
+                    gain: { value: 1 },
+                    connect: vi.fn(),
+                    disconnect: vi.fn()
+                }
+            }
+        }
+        global.AudioContext = MockAudioContext as any
 
         // Mock HTMLMediaElement.prototype.play
         HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined)
@@ -111,15 +122,22 @@ describe('ParticipantCard', () => {
         expect(screen.getByTitle('room.speakerMuted')).toBeInTheDocument()
     })
 
-    it.skip('sets audio element source for remote participant', () => {
+    it('sets audio element source for remote participant', () => {
+        const mockTrack = { id: 't1', enabled: true, kind: 'audio', muted: false, readyState: 'live' }
         const mockStream = {
             id: 'stream1',
-            getTracks: vi.fn().mockReturnValue([]),
-            getAudioTracks: vi.fn().mockReturnValue([{ id: 't1', enabled: true, kind: 'audio' }])
+            getTracks: vi.fn().mockReturnValue([mockTrack]),
+            getAudioTracks: vi.fn().mockReturnValue([mockTrack])
         } as any
 
-        // We need to spy on Audio element creation or property access
-        // Since React creates the element, we can query it
+        // Track srcObject assignments
+        let capturedSrcObject: any = null
+        Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+            get: vi.fn(() => capturedSrcObject),
+            set: vi.fn((val) => { capturedSrcObject = val }),
+            configurable: true
+        })
+
         render(
             <ParticipantCard
                 name="Bob"
@@ -134,9 +152,13 @@ describe('ParticipantCard', () => {
         )
 
         // Check if audio element exists
-        // Note: srcObject is not a standard HTML attribute, so difficult to test via DOM
-        // But we can check if it rendered the hidden audio element
         const audio = document.querySelector('audio')
         expect(audio).toBeInTheDocument()
+        
+        // Verify srcObject was set to our mock stream
+        expect(capturedSrcObject).toBe(mockStream)
+        
+        // Verify play was called
+        expect(HTMLMediaElement.prototype.play).toHaveBeenCalled()
     })
 })
