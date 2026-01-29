@@ -1,3 +1,6 @@
+﻿/**
+ * @vitest-environment jsdom
+ */
 /**
  * Unit tests for RingBuffer class
  * Tests circular buffer functionality for audio frame adaptation
@@ -287,3 +290,4 @@ describe('RingBuffer', () => {
         })
     })
 })
+

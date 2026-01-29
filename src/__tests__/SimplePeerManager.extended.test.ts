@@ -11,7 +11,7 @@
  * - Connection statistics
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { SimplePeerManager, generatePeerId, selfId, loadCredentials } from '../renderer/signaling/SimplePeerManager'
+import { SimplePeerManager, generatePeerId, loadCredentials, resetCredentialsCacheForTesting, MessageDeduplicator, MQTTClient } from '../renderer/signaling/SimplePeerManager'
 
 // Mock Logger
 vi.mock('../renderer/utils/Logger', () => ({
@@ -50,7 +50,7 @@ class MockWebSocket {
   constructor(url: string) {
     this.url = url
     mockWebSocketInstances.push(this)
-    
+
     setTimeout(() => {
       this.readyState = MockWebSocket.OPEN
       if (this.onopen) this.onopen()
@@ -88,7 +88,7 @@ class MockWebSocket {
     const topicBytes = new TextEncoder().encode('p2p-conf/test-room')
     const messageBytes = new TextEncoder().encode(payload)
     const remainingLength = 2 + topicBytes.length + messageBytes.length
-    
+
     const packet = new Uint8Array(2 + remainingLength)
     let i = 0
     packet[i++] = 0x30  // PUBLISH packet type
@@ -98,7 +98,7 @@ class MockWebSocket {
     packet.set(topicBytes, i)
     i += topicBytes.length
     packet.set(messageBytes, i)
-    
+
     this.triggerMessage(packet)
   }
 }
@@ -109,43 +109,43 @@ class MockRTCPeerConnection {
   oniceconnectionstatechange: (() => void) | null = null
   onconnectionstatechange: (() => void) | null = null
   ontrack: ((event: any) => void) | null = null
-  
+
   connectionState = 'new'
   iceConnectionState = 'new'
   signalingState = 'stable'
   localDescription: RTCSessionDescription | null = null
   remoteDescription: RTCSessionDescription | null = null
-  
+
   private senders: MockRTCSender[] = []
 
   constructor() {
     mockRTCPeerConnectionInstances.push(this)
   }
 
-  createOffer = vi.fn().mockImplementation(async (options?: RTCOfferOptions) => {
+  createOffer = vi.fn().mockImplementation(async (_options?: RTCOfferOptions) => {
     return { type: 'offer', sdp: 'mock-sdp-offer' }
   })
-  
+
   createAnswer = vi.fn().mockResolvedValue({ type: 'answer', sdp: 'mock-sdp-answer' })
-  
+
   setLocalDescription = vi.fn().mockImplementation(async (desc: RTCSessionDescriptionInit) => {
     this.localDescription = desc as RTCSessionDescription
   })
-  
+
   setRemoteDescription = vi.fn().mockImplementation(async (desc: RTCSessionDescriptionInit) => {
     this.remoteDescription = desc as RTCSessionDescription
   })
-  
+
   addIceCandidate = vi.fn().mockResolvedValue(undefined)
-  
-  addTrack = vi.fn().mockImplementation((track: MediaStreamTrack, stream: MediaStream) => {
+
+  addTrack = vi.fn().mockImplementation((track: MediaStreamTrack, _stream: MediaStream) => {
     const sender = new MockRTCSender(track)
     this.senders.push(sender)
     return sender
   })
-  
+
   getSenders = vi.fn().mockImplementation(() => this.senders)
-  
+
   getStats = vi.fn().mockImplementation(async () => {
     return new Map([
       ['candidate-pair-1', {
@@ -169,7 +169,7 @@ class MockRTCPeerConnection {
       }]
     ])
   })
-  
+
   close = vi.fn().mockImplementation(() => {
     this.connectionState = 'closed'
     this.iceConnectionState = 'closed'
@@ -196,13 +196,13 @@ class MockRTCPeerConnection {
 
 class MockRTCSender {
   track: MediaStreamTrack | null
-  
+
   constructor(track: MediaStreamTrack | null) {
     this.track = track
   }
-  
+
   replaceTrack = vi.fn().mockResolvedValue(undefined)
-  
+
   getParameters = vi.fn().mockReturnValue({
     codecs: [{ mimeType: 'audio/opus' }]
   })
@@ -212,7 +212,7 @@ class MockRTCSender {
 class MockRTCSessionDescription {
   type: string
   sdp: string
-  
+
   constructor(init: RTCSessionDescriptionInit) {
     this.type = init.type || ''
     this.sdp = init.sdp || ''
@@ -224,13 +224,13 @@ class MockRTCIceCandidate {
   candidate: string
   sdpMid: string | null
   sdpMLineIndex: number | null
-  
+
   constructor(init: RTCIceCandidateInit) {
     this.candidate = init.candidate || ''
     this.sdpMid = init.sdpMid || null
     this.sdpMLineIndex = init.sdpMLineIndex || null
   }
-  
+
   toJSON() {
     return {
       candidate: this.candidate,
@@ -244,11 +244,11 @@ class MockRTCIceCandidate {
 class MockBroadcastChannel {
   name: string
   onmessage: ((event: MessageEvent) => void) | null = null
-  
+
   constructor(name: string) {
     this.name = name
   }
-  
+
   postMessage = vi.fn()
   close = vi.fn()
 }
@@ -257,26 +257,26 @@ class MockBroadcastChannel {
 class MockMediaStream {
   id: string
   private tracks: MockMediaStreamTrack[] = []
-  
+
   constructor(tracks?: MockMediaStreamTrack[]) {
     this.id = `stream-${Math.random().toString(36).substr(2, 9)}`
     if (tracks) {
       this.tracks = tracks
     }
   }
-  
+
   getTracks() {
     return this.tracks
   }
-  
+
   getAudioTracks() {
     return this.tracks.filter(t => t.kind === 'audio')
   }
-  
+
   getVideoTracks() {
     return this.tracks.filter(t => t.kind === 'video')
   }
-  
+
   addTrack(track: MockMediaStreamTrack) {
     this.tracks.push(track)
   }
@@ -288,13 +288,13 @@ class MockMediaStreamTrack {
   label: string
   enabled: boolean = true
   readyState: string = 'live'
-  
+
   constructor(kind: string, label: string = '') {
     this.id = `track-${Math.random().toString(36).substr(2, 9)}`
     this.kind = kind
     this.label = label || `${kind} device`
   }
-  
+
   stop = vi.fn()
   clone = vi.fn().mockReturnThis()
 }
@@ -313,6 +313,7 @@ describe('SimplePeerManager Extended Tests', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    resetCredentialsCacheForTesting()
     mockWebSocketInstances = []
     mockRTCPeerConnectionInstances = []
 
@@ -369,7 +370,7 @@ describe('SimplePeerManager Extended Tests', () => {
   describe('loadCredentials', () => {
     it('should load ICE servers from electron API', async () => {
       await loadCredentials()
-      
+
       expect((window as any).electronAPI.getICEServers).toHaveBeenCalled()
       expect((window as any).electronAPI.getMQTTBrokers).toHaveBeenCalled()
     })
@@ -377,7 +378,7 @@ describe('SimplePeerManager Extended Tests', () => {
     it('should handle missing electron API', async () => {
       // @ts-ignore
       delete window.electronAPI
-      
+
       // Should not throw
       await loadCredentials()
     })
@@ -385,9 +386,9 @@ describe('SimplePeerManager Extended Tests', () => {
     it('should only load once when called multiple times', async () => {
       const promise1 = loadCredentials()
       const promise2 = loadCredentials()
-      
+
       await Promise.all([promise1, promise2])
-      
+
       // API should only be called once per credential type
       expect((window as any).electronAPI.getICEServers).toHaveBeenCalledTimes(1)
     })
@@ -487,7 +488,7 @@ describe('SimplePeerManager Extended Tests', () => {
       // Now set local stream
       const track = new MockMediaStreamTrack('audio', 'Test Mic')
       const stream = new MockMediaStream([track])
-      
+
       manager.setLocalStream(stream as unknown as MediaStream)
     })
   })
@@ -603,7 +604,39 @@ describe('SimplePeerManager Extended Tests', () => {
     })
   })
 
-  describe('Room Joining Edge Cases', () => {
+  describe('Multi-Broker Strategy', () => {
+    it('should connect to multiple brokers when configured', async () => {
+      // Override mock to return multiple brokers
+      const brokers = [
+        { url: 'wss://broker1.test' },
+        { url: 'wss://broker2.test' }
+      ]
+
+      const api = (window as any).electronAPI
+      api.getMQTTBrokers.mockResolvedValue(brokers)
+
+      // Need to reload credentials since they might be cached or loaded by default
+      // But loadCredentials handles caching. We need to reset it.
+      resetCredentialsCacheForTesting()
+
+      await loadCredentials()
+
+      const joinPromise = manager.joinRoom('test-room', 'Alice')
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(2000)
+      await joinPromise
+
+      const mqtt = (manager as any).mqtt
+      const clientsMap = mqtt.clients as Map<string, MQTTClient>
+      const clients = Array.from(clientsMap.values())
+
+      expect(clients.length).toBe(2)
+      // Order is not guaranteed in map, but we can check if both exist
+      const urls = clients.map(c => c.getBrokerUrl())
+      expect(urls).toContain('wss://broker1.test')
+      expect(urls).toContain('wss://broker2.test')
+    })
+
     it('should prevent concurrent join operations', async () => {
       const join1 = manager.joinRoom('room-1', 'Alice')
       const join2 = manager.joinRoom('room-2', 'Bob')
@@ -709,41 +742,15 @@ describe('SimplePeerManager Extended Tests', () => {
 
 describe('Message Deduplication', () => {
   // Test deduplication logic separately
-  
-  class TestableMessageDeduplicator {
-    private seen: Map<string, number> = new Map()
-    private readonly windowSize = 500
-    private readonly ttlMs = 30000
 
-    isDuplicate(msgId: string): boolean {
-      if (!msgId) return false
-      if (this.seen.has(msgId)) return true
-      
-      this.seen.set(msgId, Date.now())
-      
-      if (this.seen.size > this.windowSize) {
-        const entries = Array.from(this.seen.entries())
-        entries.sort((a, b) => a[1] - b[1])
-        const toRemove = entries.slice(0, entries.length - this.windowSize)
-        toRemove.forEach(([key]) => this.seen.delete(key))
-      }
-      
-      return false
-    }
-
-    size(): number {
-      return this.seen.size
-    }
-
-    clear() {
-      this.seen.clear()
-    }
-  }
-
-  let dedup: TestableMessageDeduplicator
+  let dedup: MessageDeduplicator
 
   beforeEach(() => {
-    dedup = new TestableMessageDeduplicator()
+    dedup = new MessageDeduplicator()
+  })
+
+  afterEach(() => {
+    dedup.destroy()
   })
 
   it('should return false for new messages', () => {
@@ -765,7 +772,7 @@ describe('Message Deduplication', () => {
     dedup.isDuplicate('msg-1')
     dedup.isDuplicate('msg-2')
     dedup.isDuplicate('msg-3')
-    
+
     expect(dedup.size()).toBe(3)
   })
 
@@ -774,7 +781,7 @@ describe('Message Deduplication', () => {
     for (let i = 0; i < 600; i++) {
       dedup.isDuplicate(`msg-${i}`)
     }
-    
+
     // Should be limited to window size
     expect(dedup.size()).toBeLessThanOrEqual(500)
   })

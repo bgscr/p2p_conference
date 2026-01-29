@@ -18,21 +18,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // ============================================
 
 describe('Logger Extended', () => {
-  let originalWindow: typeof window
-  let originalDocument: typeof document
-  let originalNavigator: typeof navigator
+
 
   beforeEach(() => {
-    // Store originals
-    originalWindow = global.window
-    originalDocument = global.document
-    originalNavigator = global.navigator
-
     // Mock console methods
-    vi.spyOn(console, 'debug').mockImplementation(() => {})
-    vi.spyOn(console, 'info').mockImplementation(() => {})
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'debug').mockImplementation(() => { })
+    vi.spyOn(console, 'info').mockImplementation(() => { })
+    vi.spyOn(console, 'warn').mockImplementation(() => { })
+    vi.spyOn(console, 'error').mockImplementation(() => { })
   })
 
   afterEach(() => {
@@ -41,7 +34,7 @@ describe('Logger Extended', () => {
 
   describe('Log Level Configuration', () => {
     // Testable Logger class
-    class TestableLogger {
+    class TestableLoggerConfig {
       private logs: any[] = []
       private maxLogs = 5000
       private logLevel: 'debug' | 'info' | 'warn' | 'error' = 'debug'
@@ -87,7 +80,7 @@ describe('Logger Extended', () => {
 
         for (const entry of this.logs) {
           let line = `[${entry.timestamp}] [${entry.level.toUpperCase().padEnd(5)}] [${entry.module}] ${entry.message}`
-          
+
           if (entry.data !== undefined) {
             try {
               const dataStr = JSON.stringify(entry.data, null, 2)
@@ -100,7 +93,7 @@ describe('Logger Extended', () => {
               line += `\n    Data: [non-serializable]`
             }
           }
-          
+
           lines.push(line)
         }
 
@@ -143,9 +136,9 @@ describe('Logger Extended', () => {
           }
 
           // Handle error-like objects (DOMException, etc.)
-          if (data && typeof data === 'object' && 
-              (data.name || data.message) && 
-              (typeof data.name === 'string' || typeof data.message === 'string')) {
+          if (data && typeof data === 'object' &&
+            (data.name || data.message) &&
+            (typeof data.name === 'string' || typeof data.message === 'string')) {
             return {
               _type: data.constructor?.name || 'ErrorLike',
               name: data.name || 'Unknown',
@@ -189,6 +182,10 @@ describe('Logger Extended', () => {
             return data
           }
 
+          if (typeof data === 'symbol') {
+            return data.toString()
+          }
+
           JSON.stringify(data)
           return data
         } catch {
@@ -197,27 +194,27 @@ describe('Logger Extended', () => {
       }
     }
 
-    let logger: TestableLogger
+    let logger: TestableLoggerConfig
 
     beforeEach(() => {
-      logger = new TestableLogger()
+      logger = new TestableLoggerConfig()
     })
 
     it('should get and set log level', () => {
       expect(logger.getLogLevel()).toBe('debug')
-      
+
       logger.setLogLevel('warn')
       expect(logger.getLogLevel()).toBe('warn')
     })
 
     it('should filter messages below log level', () => {
       logger.setLogLevel('warn')
-      
+
       logger.log('debug', 'Test', 'Debug message')
       logger.log('info', 'Test', 'Info message')
       logger.log('warn', 'Test', 'Warn message')
       logger.log('error', 'Test', 'Error message')
-      
+
       const logs = logger.getLogs()
       expect(logs).toHaveLength(2)
       expect(logs[0].level).toBe('warn')
@@ -226,9 +223,9 @@ describe('Logger Extended', () => {
 
     it('should generate text output with data', () => {
       logger.log('info', 'Test', 'Message with data', { key: 'value' })
-      
+
       const text = logger.getLogsAsText()
-      
+
       expect(text).toContain('P2P Conference Debug Log')
       expect(text).toContain('Message with data')
       expect(text).toContain('Data:')
@@ -239,27 +236,27 @@ describe('Logger Extended', () => {
     it('should truncate large data in text output', () => {
       const largeData = { content: 'x'.repeat(1000) }
       logger.log('info', 'Test', 'Large data', largeData)
-      
+
       const text = logger.getLogsAsText()
-      
+
       expect(text).toContain('(truncated)')
     })
 
     it('should handle non-serializable data in text output', () => {
       const circular: any = { self: null }
       circular.self = circular
-      
+
       // The sanitizeData should handle this first
       const sanitized = logger.sanitizeData(circular)
       logger.log('info', 'Test', 'Circular data', sanitized)
-      
+
       const text = logger.getLogsAsText()
       expect(text).toContain('Circular data')
     })
 
     it('should get system info', () => {
       const info = logger.getSystemInfo()
-      
+
       expect(info).toHaveProperty('userAgent')
       expect(info).toHaveProperty('platform')
       expect(info).toHaveProperty('language')
@@ -274,9 +271,9 @@ describe('Logger Extended', () => {
           message: 'Permission denied',
           code: 0
         }
-        
+
         const sanitized = logger.sanitizeData(errorLike)
-        
+
         expect(sanitized._type).toBe('Object') // No constructor on plain object
         expect(sanitized.name).toBeDefined()
         expect(sanitized.message).toBeDefined()
@@ -285,9 +282,9 @@ describe('Logger Extended', () => {
       it('should handle DOM elements', () => {
         const div = document.createElement('div')
         div.id = 'test-div'
-        
+
         const sanitized = logger.sanitizeData(div)
-        
+
         expect(sanitized._type).toBe('DOMNode')
         expect(sanitized.nodeName).toBe('DIV')
         expect(sanitized.id).toBe('test-div')
@@ -299,28 +296,17 @@ describe('Logger Extended', () => {
           get() { throw new Error('Cannot access') },
           enumerable: true
         })
-        
+
         const sanitized = logger.sanitizeData(problematic)
-        
+
         expect(sanitized.badProp).toBe('[error accessing property]')
       })
 
       it('should handle nested arrays with depth limit', () => {
-        const deepArray = [[[[[[[[[[['deep']]]]]]]]]]
-        
+        let deepArray: any = ['deep']
+        for (let i = 0; i < 12; i++) { deepArray = [deepArray] }
         const sanitized = logger.sanitizeData(deepArray)
-        
-        // Should hit max depth at some point
-        let current = sanitized
-        let foundMaxDepth = false
-        while (Array.isArray(current) && current.length > 0) {
-          if (current[0] === '[max depth exceeded]') {
-            foundMaxDepth = true
-            break
-          }
-          current = current[0]
-        }
-        expect(foundMaxDepth).toBe(true)
+        expect(JSON.stringify(sanitized)).toContain('max depth exceeded')
       })
 
       it('should handle objects that fail JSON.stringify', () => {
@@ -329,7 +315,7 @@ describe('Logger Extended', () => {
             throw new Error('Cannot serialize')
           }
         }
-        
+
         // The sanitizeData processes the object property by property
         // so it won't fail on toJSON
         const sanitized = logger.sanitizeData(problematic)
@@ -338,18 +324,18 @@ describe('Logger Extended', () => {
 
       it('should handle symbol values by converting to string', () => {
         const sym = Symbol('test')
-        
+
         const sanitized = logger.sanitizeData(sym)
-        
+
         expect(typeof sanitized).toBe('string')
         expect(sanitized).toContain('Symbol')
       })
 
       it('should handle BigInt by converting to string', () => {
         const big = BigInt(12345678901234567890n)
-        
+
         const sanitized = logger.sanitizeData(big)
-        
+
         // BigInt gets converted to string by String()
         expect(sanitized).toBeDefined()
       })
@@ -357,7 +343,7 @@ describe('Logger Extended', () => {
   })
 
   describe('Module Logger Factory', () => {
-    class TestableLogger {
+    class TestableLoggerModule {
       log = vi.fn()
 
       createModuleLogger(module: string) {
@@ -371,7 +357,7 @@ describe('Logger Extended', () => {
     }
 
     it('should create module logger with correct module name', () => {
-      const logger = new TestableLogger()
+      const logger = new TestableLoggerModule()
       const audioLog = logger.createModuleLogger('Audio')
 
       audioLog.info('Test message')
@@ -380,7 +366,7 @@ describe('Logger Extended', () => {
     })
 
     it('should pass data through module logger', () => {
-      const logger = new TestableLogger()
+      const logger = new TestableLoggerModule()
       const peerLog = logger.createModuleLogger('Peer')
       const testData = { peerId: '123', action: 'connect' }
 
@@ -390,7 +376,7 @@ describe('Logger Extended', () => {
     })
 
     it('should support all log levels', () => {
-      const logger = new TestableLogger()
+      const logger = new TestableLoggerModule()
       const moduleLog = logger.createModuleLogger('Test')
 
       moduleLog.debug('Debug')
@@ -408,7 +394,7 @@ describe('Logger Extended', () => {
       const mockObjectURL = 'blob:mock-url'
       const createObjectURL = vi.fn().mockReturnValue(mockObjectURL)
       const revokeObjectURL = vi.fn()
-      
+
       vi.stubGlobal('URL', {
         createObjectURL,
         revokeObjectURL
@@ -419,15 +405,15 @@ describe('Logger Extended', () => {
         download: '',
         click: vi.fn()
       }
-      
+
       const createElement = vi.spyOn(document, 'createElement').mockReturnValue(mockAnchor as any)
       const appendChild = vi.spyOn(document.body, 'appendChild').mockImplementation(() => mockAnchor as any)
       const removeChild = vi.spyOn(document.body, 'removeChild').mockImplementation(() => mockAnchor as any)
 
       // Simulate download
-      class TestableLogger {
-        private logs: any[] = [{ timestamp: '2024-01-01', level: 'info', module: 'Test', message: 'Test log' }]
-        
+      class TestableLoggerDownload {
+        // logs property removed
+
         getLogsAsText() {
           return 'Test log content'
         }
@@ -436,10 +422,10 @@ describe('Logger Extended', () => {
           const text = this.getLogsAsText()
           const blob = new Blob([text], { type: 'text/plain' })
           const url = URL.createObjectURL(blob)
-          
+
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
           const filename = `p2p-conference-log-${timestamp}.txt`
-          
+
           const a = document.createElement('a')
           a.href = url
           a.download = filename
@@ -450,11 +436,13 @@ describe('Logger Extended', () => {
         }
       }
 
-      const logger = new TestableLogger()
+      const logger = new TestableLoggerDownload()
       logger.downloadLogs()
 
       expect(createElement).toHaveBeenCalledWith('a')
+      expect(appendChild).toHaveBeenCalled()
       expect(mockAnchor.click).toHaveBeenCalled()
+      expect(removeChild).toHaveBeenCalled()
       expect(revokeObjectURL).toHaveBeenCalled()
 
       // Cleanup
@@ -465,11 +453,11 @@ describe('Logger Extended', () => {
   describe('Electron API Integration', () => {
     it('should log to main process when electronAPI available', () => {
       const mockLog = vi.fn()
-      
+
       // Simulate logger with electron API
-      class TestableLogger {
+      class TestableLoggerElectron {
         private hasElectronAPI = true
-        
+
         setHasElectronAPI(has: boolean) {
           this.hasElectronAPI = has
         }
@@ -481,7 +469,7 @@ describe('Logger Extended', () => {
         }
       }
 
-      const logger = new TestableLogger()
+      const logger = new TestableLoggerElectron()
       logger.log('info', 'Test', 'Test message', { key: 'value' })
 
       expect(mockLog).toHaveBeenCalledWith('info', 'Test', 'Test message', { key: 'value' })
@@ -492,7 +480,7 @@ describe('Logger Extended', () => {
         throw new Error('IPC error')
       })
 
-      class TestableLogger {
+      class TestableLoggerElectronError {
         log(level: string, module: string, message: string, data?: any) {
           try {
             mockLog(level, module, message, data)
@@ -502,8 +490,8 @@ describe('Logger Extended', () => {
         }
       }
 
-      const logger = new TestableLogger()
-      
+      const logger = new TestableLoggerElectronError()
+
       // Should not throw
       expect(() => {
         logger.log('info', 'Test', 'Test message')
@@ -514,7 +502,7 @@ describe('Logger Extended', () => {
   describe('Open Logs Folder', () => {
     it('should call electron API to open logs folder', async () => {
       const mockOpenLogsFolder = vi.fn().mockResolvedValue(true)
-      
+
       class TestableLogger {
         private hasElectronAPI = true
         private electronAPI = { openLogsFolder: mockOpenLogsFolder }
@@ -560,7 +548,7 @@ describe('Logger Extended', () => {
   describe('Get Logs Directory', () => {
     it('should return logs directory path', async () => {
       const mockGetLogsDir = vi.fn().mockResolvedValue('/path/to/logs')
-      
+
       class TestableLogger {
         private hasElectronAPI = true
         private electronAPI = { getLogsDir: mockGetLogsDir }

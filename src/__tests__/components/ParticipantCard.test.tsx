@@ -2,8 +2,8 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom'
-import React from 'react'
-import { render, screen, fireEvent } from '@testing-library/react'
+
+import { render, screen } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ParticipantCard } from '../../renderer/components/ParticipantCard'
 
@@ -154,10 +154,10 @@ describe('ParticipantCard', () => {
         // Check if audio element exists
         const audio = document.querySelector('audio')
         expect(audio).toBeInTheDocument()
-        
+
         // Verify srcObject was set to our mock stream
         expect(capturedSrcObject).toBe(mockStream)
-        
+
         // Verify play was called
         expect(HTMLMediaElement.prototype.play).toHaveBeenCalled()
     })

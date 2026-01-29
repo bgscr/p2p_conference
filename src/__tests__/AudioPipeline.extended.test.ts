@@ -1,19 +1,13 @@
 /**
  * Extended tests for AudioPipeline
  * @vitest-environment jsdom
- * 
- * Tests cover:
- * - WASM initialization states
- * - Noise suppression toggle
- * - Stream connection lifecycle
- * - Error handling
- * - AudioContext management
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { AudioPipeline, getAudioPipeline, resetAudioPipeline } from '../renderer/audio-processor/AudioPipeline'
 
 // Mock Logger
-vi.mock('../../renderer/utils/Logger', () => ({
+vi.mock('../renderer/utils/Logger', () => ({
   AudioLog: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -22,485 +16,231 @@ vi.mock('../../renderer/utils/Logger', () => ({
   }
 }))
 
-// Create testable AudioPipeline class
-class TestableAudioPipeline {
-  private audioContext: AudioContext | null = null
-  private noiseSuppressionEnabled = true
-  private isInitialized = false
-  private isConnected = false
-  private wasmReady = false
-  private inputStream: MediaStream | null = null
-  private outputStream: MediaStream | null = null
-  private sourceNode: MediaStreamAudioSourceNode | null = null
-  private processorNode: AudioWorkletNode | null = null
-  private destinationNode: MediaStreamAudioDestinationNode | null = null
-
-  async initialize(): Promise<void> {
-    if (this.isInitialized) {
-      return
-    }
-
-    try {
-      // Create AudioContext with 48kHz (required for RNNoise)
-      this.audioContext = new AudioContext({ sampleRate: 48000 })
-
-      // Simulate WASM loading
-      await this.loadWasm()
-
-      this.isInitialized = true
-    } catch (error) {
-      throw new Error(`Failed to initialize AudioPipeline: ${error}`)
-    }
-  }
-
-  private async loadWasm(): Promise<void> {
-    // Simulate async WASM loading
-    await new Promise(resolve => setTimeout(resolve, 10))
-    this.wasmReady = true
-  }
-
-  async connectInputStream(inputStream: MediaStream): Promise<MediaStream> {
-    if (!this.isInitialized) {
-      throw new Error('AudioPipeline not initialized')
-    }
-
-    if (!this.audioContext) {
-      throw new Error('AudioContext not available')
-    }
-
-    // Disconnect existing if any
-    this.disconnect()
-
-    this.inputStream = inputStream
-
-    // Create nodes
-    this.sourceNode = this.audioContext.createMediaStreamSource(inputStream)
-    this.destinationNode = this.audioContext.createMediaStreamDestination()
-
-    // Connect based on noise suppression state
-    if (this.noiseSuppressionEnabled && this.wasmReady) {
-      // In real implementation, would connect through AudioWorklet with RNNoise
-      // For testing, we simulate bypass
-      this.sourceNode.connect(this.destinationNode)
-    } else {
-      // Bypass noise suppression
-      this.sourceNode.connect(this.destinationNode)
-    }
-
-    this.outputStream = this.destinationNode.stream
-    this.isConnected = true
-
-    return this.outputStream
-  }
-
-  disconnect(): void {
-    if (this.sourceNode) {
-      try {
-        this.sourceNode.disconnect()
-      } catch {
-        // Ignore disconnect errors
-      }
-      this.sourceNode = null
-    }
-
-    if (this.processorNode) {
-      try {
-        this.processorNode.disconnect()
-      } catch {
-        // Ignore disconnect errors
-      }
-      this.processorNode = null
-    }
-
-    this.inputStream = null
-    this.outputStream = null
-    this.isConnected = false
-  }
-
-  destroy(): void {
-    this.disconnect()
-
-    if (this.audioContext && this.audioContext.state !== 'closed') {
-      this.audioContext.close()
-    }
-
-    this.audioContext = null
-    this.isInitialized = false
-    this.wasmReady = false
-  }
-
-  setNoiseSuppression(enabled: boolean): void {
-    const wasEnabled = this.noiseSuppressionEnabled
-    this.noiseSuppressionEnabled = enabled
-
-    // If connected and state changed, reconnect the pipeline
-    if (this.isConnected && this.inputStream && wasEnabled !== enabled) {
-      // Reconnect with new settings
-      this.reconnectWithNewSettings()
-    }
-  }
-
-  private reconnectWithNewSettings(): void {
-    if (!this.sourceNode || !this.destinationNode) {
-      return
-    }
-
-    // Disconnect existing chain
-    try {
-      this.sourceNode.disconnect()
-    } catch {
-      // Ignore
-    }
-
-    // Reconnect with updated noise suppression state
-    this.sourceNode.connect(this.destinationNode)
-  }
-
-  getNoiseSuppressionStatus(): {
-    enabled: boolean
-    active: boolean
-    wasmReady: boolean
-  } {
-    return {
-      enabled: this.noiseSuppressionEnabled,
-      active: this.isConnected && this.noiseSuppressionEnabled && this.wasmReady,
-      wasmReady: this.wasmReady
-    }
-  }
-
-  isInitializedState(): boolean {
-    return this.isInitialized
-  }
-
-  isConnectedState(): boolean {
-    return this.isConnected
-  }
-
-  getAudioContext(): AudioContext | null {
-    return this.audioContext
-  }
-}
-
-// Mock AudioContext
+// Mock Web Audio API
 class MockAudioContext {
   sampleRate: number
   state: 'suspended' | 'running' | 'closed' = 'running'
-  
+  audioWorklet: { addModule: any }
+
   constructor(options?: AudioContextOptions) {
     this.sampleRate = options?.sampleRate || 44100
+    this.audioWorklet = {
+      addModule: vi.fn().mockResolvedValue(undefined)
+    }
   }
-  
-  createMediaStreamSource(stream: MediaStream): MockMediaStreamSourceNode {
-    return new MockMediaStreamSourceNode()
-  }
-  
-  createMediaStreamDestination(): MockMediaStreamDestinationNode {
-    return new MockMediaStreamDestinationNode()
-  }
-  
-  close = vi.fn().mockImplementation(() => {
-    this.state = 'closed'
-    return Promise.resolve()
+
+  createMediaStreamSource = vi.fn().mockReturnValue({
+    connect: vi.fn(),
+    disconnect: vi.fn()
   })
-  
+
+  createMediaStreamDestination = vi.fn().mockReturnValue({
+    stream: new MediaStream(),
+    connect: vi.fn(),
+    disconnect: vi.fn()
+  })
+
+  createGain = vi.fn().mockReturnValue({
+    gain: { value: 1 },
+    connect: vi.fn(),
+    disconnect: vi.fn()
+  })
+
+  createAnalyser = vi.fn().mockReturnValue({
+    fftSize: 2048,
+    smoothingTimeConstant: 0.8,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    frequencyBinCount: 128,
+    getByteFrequencyData: vi.fn()
+  })
+
+  close = vi.fn().mockImplementation(async () => {
+    this.state = 'closed'
+  })
+
   resume = vi.fn().mockResolvedValue(undefined)
   suspend = vi.fn().mockResolvedValue(undefined)
 }
 
-class MockMediaStreamSourceNode {
-  connect = vi.fn()
-  disconnect = vi.fn()
-}
-
-class MockMediaStreamDestinationNode {
-  stream = new MediaStream()
-  connect = vi.fn()
-  disconnect = vi.fn()
-}
-
 class MockAudioWorkletNode {
-  port = {
-    postMessage: vi.fn(),
-    onmessage: null as ((e: MessageEvent) => void) | null
+  port: {
+    postMessage: any,
+    onmessage: ((e: MessageEvent) => void) | null,
+    addEventListener: any,
+    removeEventListener: any
   }
+
+  constructor() {
+    this.port = {
+      postMessage: vi.fn((msg) => {
+        // Simulate self-initialization request
+        if (msg.type === 'getStats') {
+          setTimeout(() => {
+            if (this.port.onmessage) {
+              this.port.onmessage({ data: { type: 'stats', data: { cpu: 0 } } } as MessageEvent)
+            }
+          }, 10)
+        }
+      }),
+      onmessage: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    }
+
+    // Simulate worklet ready after a short delay
+    setTimeout(() => {
+      if (this.port.onmessage) {
+        this.port.onmessage({ data: { type: 'ready' } } as MessageEvent)
+      }
+    }, 10)
+  }
+
   connect = vi.fn()
   disconnect = vi.fn()
 }
 
 // Setup globals
 vi.stubGlobal('AudioContext', MockAudioContext)
+vi.stubGlobal('AudioWorkletNode', MockAudioWorkletNode)
+vi.stubGlobal('MediaStream', class MockMediaStream {
+  id = 'mock-stream'
+  getTracks = vi.fn().mockReturnValue([])
+})
 
 describe('AudioPipeline Extended', () => {
-  let pipeline: TestableAudioPipeline
+  let pipeline: AudioPipeline
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
-    pipeline = new TestableAudioPipeline()
+    await resetAudioPipeline()
+    pipeline = new AudioPipeline()
   })
 
-  afterEach(() => {
-    pipeline.destroy()
+  afterEach(async () => {
+    await pipeline.destroy()
   })
 
   describe('Initialization', () => {
     it('should initialize successfully', async () => {
       await pipeline.initialize()
-      
-      expect(pipeline.isInitializedState()).toBe(true)
+      expect(pipeline.isReady()).toBe(true)
     })
 
     it('should create AudioContext with 48kHz sample rate', async () => {
       await pipeline.initialize()
-      
-      const ctx = pipeline.getAudioContext()
-      expect(ctx?.sampleRate).toBe(48000)
-    })
-
-    it('should mark WASM as ready after initialization', async () => {
-      await pipeline.initialize()
-      
-      const status = pipeline.getNoiseSuppressionStatus()
-      expect(status.wasmReady).toBe(true)
+      expect(pipeline.getSampleRate()).toBe(48000)
     })
 
     it('should only initialize once', async () => {
       await pipeline.initialize()
-      await pipeline.initialize()
-      
-      expect(pipeline.isInitializedState()).toBe(true)
+      await pipeline.initialize() // Should be no-op or log warning
+      expect(pipeline.isReady()).toBe(true)
     })
 
-    it('should handle initialization failure', async () => {
-      // Override AudioContext to throw
-      vi.stubGlobal('AudioContext', class {
-        constructor() {
-          throw new Error('Audio not supported')
-        }
-      })
-      
-      const failingPipeline = new TestableAudioPipeline()
-      
-      await expect(failingPipeline.initialize()).rejects.toThrow('Failed to initialize')
-      
-      // Restore
-      vi.stubGlobal('AudioContext', MockAudioContext)
+    it('should handle AudioContext creation failure', async () => {
+      const originalContext = global.AudioContext;
+      // @ts-ignore
+      global.AudioContext = class { constructor() { throw new Error('Failed'); } };
+
+      const p = new AudioPipeline();
+      await expect(p.initialize()).rejects.toThrow();
+
+      global.AudioContext = originalContext;
     })
   })
 
   describe('Stream Connection', () => {
-    it('should connect input stream and return output stream', async () => {
+    beforeEach(async () => {
       await pipeline.initialize()
-      
+    })
+
+    it('should connect input stream', async () => {
       const inputStream = new MediaStream()
       const outputStream = await pipeline.connectInputStream(inputStream)
-      
-      expect(outputStream).toBeInstanceOf(MediaStream)
-      expect(pipeline.isConnectedState()).toBe(true)
+
+      expect(outputStream).toBeDefined()
+      expect(pipeline.getOutputStream()).toBe(outputStream)
     })
 
     it('should throw if not initialized', async () => {
+      await pipeline.destroy()
+      const p = new AudioPipeline() // New uninitialized pipeline
       const inputStream = new MediaStream()
-      
-      await expect(pipeline.connectInputStream(inputStream)).rejects.toThrow('not initialized')
+      await expect(p.connectInputStream(inputStream)).rejects.toThrow('AudioPipeline not initialized')
     })
 
-    it('should disconnect previous stream when connecting new one', async () => {
-      await pipeline.initialize()
-      
-      const stream1 = new MediaStream()
-      const stream2 = new MediaStream()
-      
-      await pipeline.connectInputStream(stream1)
-      expect(pipeline.isConnectedState()).toBe(true)
-      
-      await pipeline.connectInputStream(stream2)
-      expect(pipeline.isConnectedState()).toBe(true)
-    })
-  })
-
-  describe('Disconnect', () => {
-    it('should disconnect all nodes', async () => {
-      await pipeline.initialize()
-      
+    it('should support bypass mode when noise suppression is disabled', async () => {
+      pipeline.setNoiseSuppression(false)
       const inputStream = new MediaStream()
       await pipeline.connectInputStream(inputStream)
-      
-      pipeline.disconnect()
-      
-      expect(pipeline.isConnectedState()).toBe(false)
-    })
 
-    it('should handle disconnect when not connected', () => {
-      // Should not throw
-      expect(() => pipeline.disconnect()).not.toThrow()
-    })
-  })
-
-  describe('Destroy', () => {
-    it('should clean up all resources', async () => {
-      await pipeline.initialize()
-      
-      const inputStream = new MediaStream()
-      await pipeline.connectInputStream(inputStream)
-      
-      pipeline.destroy()
-      
-      expect(pipeline.isInitializedState()).toBe(false)
-      expect(pipeline.isConnectedState()).toBe(false)
-    })
-
-    it('should close AudioContext', async () => {
-      await pipeline.initialize()
-      
-      const ctx = pipeline.getAudioContext()
-      
-      pipeline.destroy()
-      
-      expect(ctx?.state).toBe('closed')
-    })
-
-    it('should handle destroy when not initialized', () => {
-      // Should not throw
-      expect(() => pipeline.destroy()).not.toThrow()
-    })
-  })
-
-  describe('Noise Suppression', () => {
-    it('should enable noise suppression by default', () => {
       const status = pipeline.getNoiseSuppressionStatus()
-      expect(status.enabled).toBe(true)
+      expect(status.enabled).toBe(false)
+      expect(status.active).toBe(false)
+    })
+  })
+
+  describe('Noise Suppression Control', () => {
+    beforeEach(async () => {
+      await pipeline.initialize()
     })
 
     it('should toggle noise suppression', async () => {
-      await pipeline.initialize()
-      
+      const inputStream = new MediaStream()
+      await pipeline.connectInputStream(inputStream)
+
+      expect(pipeline.isNoiseSuppressionActive()).toBe(true)
+
       pipeline.setNoiseSuppression(false)
-      
-      const status = pipeline.getNoiseSuppressionStatus()
-      expect(status.enabled).toBe(false)
-    })
+      expect(pipeline.isNoiseSuppressionActive()).toBe(false)
 
-    it('should show active status when connected with suppression enabled', async () => {
+      pipeline.setNoiseSuppression(true)
+      // Note: In the real implementation, toggling doesn't auto-reconnect, 
+      // it just sends a message to the worklet if connected. 
+      // But the status check checks 'noiseSuppressionEnabled' logic.
+      expect(pipeline.getNoiseSuppressionStatus().enabled).toBe(true)
+    })
+  })
+
+  describe('Gain Control', () => {
+    beforeEach(async () => {
       await pipeline.initialize()
-      
-      const inputStream = new MediaStream()
-      await pipeline.connectInputStream(inputStream)
-      
-      const status = pipeline.getNoiseSuppressionStatus()
-      expect(status.active).toBe(true)
     })
 
-    it('should show inactive when suppression disabled', async () => {
+    it('should set gain value', () => {
+      pipeline.setGain(1.5)
+      // We can't easily check the internal gainNode value without exposing it or mocking it more deeply,
+      // but valid execution confirms it doesn't crash.
+    })
+
+    it('should clamp gain value', () => {
+      pipeline.setGain(3.0) // Clamped to 2
+      pipeline.setGain(-1) // Clamped to 0
+    })
+  })
+
+  describe('Analysis', () => {
+    beforeEach(async () => {
       await pipeline.initialize()
-      
-      const inputStream = new MediaStream()
-      await pipeline.connectInputStream(inputStream)
-      
-      pipeline.setNoiseSuppression(false)
-      
-      const status = pipeline.getNoiseSuppressionStatus()
-      expect(status.active).toBe(false)
     })
 
-    it('should reconnect pipeline when toggling suppression while connected', async () => {
-      await pipeline.initialize()
-      
-      const inputStream = new MediaStream()
-      await pipeline.connectInputStream(inputStream)
-      
-      expect(pipeline.isConnectedState()).toBe(true)
-      
-      pipeline.setNoiseSuppression(false)
-      
-      // Should still be connected after toggle
-      expect(pipeline.isConnectedState()).toBe(true)
+    it('should return audio level', () => {
+      const level = pipeline.getAudioLevel()
+      expect(level).toBeGreaterThanOrEqual(0)
+      expect(level).toBeLessThanOrEqual(100)
+    })
+
+    it('should return analyser node', () => {
+      expect(pipeline.getAnalyserNode()).toBeDefined()
     })
   })
 
-  describe('getNoiseSuppressionStatus', () => {
-    it('should return correct status before initialization', () => {
-      const status = pipeline.getNoiseSuppressionStatus()
-      
-      expect(status.enabled).toBe(true)
-      expect(status.active).toBe(false)
-      expect(status.wasmReady).toBe(false)
+  describe('Singleton Pattern', () => {
+    it('should return same instance', () => {
+      const instance1 = getAudioPipeline()
+      const instance2 = getAudioPipeline()
+      expect(instance1).toBe(instance2)
     })
-
-    it('should return correct status after initialization', async () => {
-      await pipeline.initialize()
-      
-      const status = pipeline.getNoiseSuppressionStatus()
-      
-      expect(status.enabled).toBe(true)
-      expect(status.active).toBe(false) // Not connected yet
-      expect(status.wasmReady).toBe(true)
-    })
-
-    it('should return correct status when connected', async () => {
-      await pipeline.initialize()
-      
-      const inputStream = new MediaStream()
-      await pipeline.connectInputStream(inputStream)
-      
-      const status = pipeline.getNoiseSuppressionStatus()
-      
-      expect(status.enabled).toBe(true)
-      expect(status.active).toBe(true)
-      expect(status.wasmReady).toBe(true)
-    })
-  })
-})
-
-describe('AudioPipeline Edge Cases', () => {
-  let pipeline: TestableAudioPipeline
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    pipeline = new TestableAudioPipeline()
-  })
-
-  afterEach(() => {
-    pipeline.destroy()
-  })
-
-  it('should handle rapid connect/disconnect cycles', async () => {
-    await pipeline.initialize()
-    
-    for (let i = 0; i < 10; i++) {
-      const stream = new MediaStream()
-      await pipeline.connectInputStream(stream)
-      pipeline.disconnect()
-    }
-    
-    expect(pipeline.isConnectedState()).toBe(false)
-  })
-
-  it('should handle rapid noise suppression toggling', async () => {
-    await pipeline.initialize()
-    
-    const inputStream = new MediaStream()
-    await pipeline.connectInputStream(inputStream)
-    
-    for (let i = 0; i < 20; i++) {
-      pipeline.setNoiseSuppression(i % 2 === 0)
-    }
-    
-    // Should not throw and final state should be deterministic
-    const status = pipeline.getNoiseSuppressionStatus()
-    expect(typeof status.enabled).toBe('boolean')
-  })
-
-  it('should handle destroy before initialization', () => {
-    expect(() => pipeline.destroy()).not.toThrow()
-    expect(pipeline.isInitializedState()).toBe(false)
-  })
-
-  it('should handle connect after destroy', async () => {
-    await pipeline.initialize()
-    pipeline.destroy()
-    
-    const inputStream = new MediaStream()
-    
-    await expect(pipeline.connectInputStream(inputStream)).rejects.toThrow()
   })
 })

@@ -12,14 +12,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import React from 'react'
+import { render, screen, waitFor } from '@testing-library/react'
+
+import * as React from 'react'
 
 // Mock i18n
 vi.mock('../../renderer/hooks/useI18n', () => ({
   useI18n: vi.fn().mockReturnValue({
-    t: (key: string, params?: Record<string, any>) => {
+    t: (key: string, _params?: Record<string, any>) => {
       const translations: Record<string, string> = {
         'room.you': 'You',
         'room.muted': 'Muted',
@@ -69,7 +69,7 @@ function TestParticipantCard({
   // Set output device
   React.useEffect(() => {
     if (audioRef.current && selectedOutputDevice && 'setSinkId' in audioRef.current) {
-      (audioRef.current as any).setSinkId(selectedOutputDevice).catch(() => {})
+      (audioRef.current as any).setSinkId(selectedOutputDevice).catch(() => { })
     }
   }, [selectedOutputDevice])
 
@@ -96,7 +96,7 @@ function TestParticipantCard({
   }
 
   return (
-    <div 
+    <div
       data-testid={`participant-card-${peerId}`}
       className={`rounded-lg p-4 ${isLocal ? 'border-2 border-blue-500' : 'border border-gray-200'}`}
     >
@@ -131,7 +131,7 @@ function TestParticipantCard({
       {/* Audio level meter */}
       <div data-testid="audio-level-container" className="mt-2">
         <div className="h-2 bg-gray-200 rounded overflow-hidden">
-          <div 
+          <div
             data-testid="audio-level-bar"
             className="h-full bg-green-500 transition-all"
             style={{ width: `${Math.min(audioLevel * 100, 100)}%` }}
@@ -161,7 +161,7 @@ function TestParticipantCard({
       {/* Connection quality */}
       {connectionQuality && connectionState === 'connected' && (
         <div data-testid="connection-quality" className="mt-2 text-sm">
-          <span 
+          <span
             data-testid="quality-indicator"
             className={`inline-block w-2 h-2 rounded-full bg-${getQualityColor()}-500`}
             style={{ backgroundColor: getQualityColor() }}
@@ -175,14 +175,14 @@ function TestParticipantCard({
       {/* Audio element for remote streams */}
       {!isLocal && stream && (
         <>
-          <audio 
-            ref={audioRef} 
+          <audio
+            ref={audioRef}
             data-testid="remote-audio"
-            autoPlay 
+            autoPlay
             playsInline
           />
-          <span 
-            data-testid="playback-status" 
+          <span
+            data-testid="playback-status"
             className="text-xs"
           >
             {isPlaying ? 'Audio playing' : 'Audio loading'}
@@ -194,11 +194,8 @@ function TestParticipantCard({
 }
 
 describe('ParticipantCard Extended', () => {
-  let user: ReturnType<typeof userEvent.setup>
-
   beforeEach(() => {
     vi.clearAllMocks()
-    user = userEvent.setup({ delay: null })
 
     // Mock HTMLMediaElement
     Object.defineProperty(HTMLMediaElement.prototype, 'play', {
@@ -276,27 +273,27 @@ describe('ParticipantCard Extended', () => {
   describe('Audio Level Display', () => {
     it('should display audio level bar', () => {
       render(<TestParticipantCard audioLevel={0.5} />)
-      
+
       const levelBar = screen.getByTestId('audio-level-bar')
       expect(levelBar).toHaveStyle({ width: '50%' })
     })
 
     it('should display audio level value', () => {
       render(<TestParticipantCard audioLevel={0.75} />)
-      
+
       expect(screen.getByTestId('audio-level-value')).toHaveTextContent('75%')
     })
 
     it('should cap audio level at 100%', () => {
       render(<TestParticipantCard audioLevel={1.5} />)
-      
+
       const levelBar = screen.getByTestId('audio-level-bar')
       expect(levelBar).toHaveStyle({ width: '100%' })
     })
 
     it('should handle zero audio level', () => {
       render(<TestParticipantCard audioLevel={0} />)
-      
+
       const levelBar = screen.getByTestId('audio-level-bar')
       expect(levelBar).toHaveStyle({ width: '0%' })
     })
@@ -327,12 +324,12 @@ describe('ParticipantCard Extended', () => {
   describe('Connection Quality', () => {
     it('should display connection quality when connected', () => {
       render(
-        <TestParticipantCard 
+        <TestParticipantCard
           connectionState="connected"
           connectionQuality={{ rtt: 50, packetLoss: 0.5, quality: 'excellent' }}
         />
       )
-      
+
       expect(screen.getByTestId('connection-quality')).toBeInTheDocument()
       expect(screen.getByTestId('quality-stats')).toHaveTextContent('RTT: 50ms')
       expect(screen.getByTestId('quality-stats')).toHaveTextContent('Loss: 0.5%')
@@ -340,86 +337,86 @@ describe('ParticipantCard Extended', () => {
 
     it('should not display quality when not connected', () => {
       render(
-        <TestParticipantCard 
+        <TestParticipantCard
           connectionState="connecting"
           connectionQuality={{ rtt: 50, packetLoss: 0.5, quality: 'excellent' }}
         />
       )
-      
+
       expect(screen.queryByTestId('connection-quality')).not.toBeInTheDocument()
     })
 
     it('should not display quality when no quality data', () => {
       render(
-        <TestParticipantCard 
+        <TestParticipantCard
           connectionState="connected"
           connectionQuality={null}
         />
       )
-      
+
       expect(screen.queryByTestId('connection-quality')).not.toBeInTheDocument()
     })
 
     it('should show different colors for quality levels', () => {
       const { rerender } = render(
-        <TestParticipantCard 
+        <TestParticipantCard
           connectionState="connected"
           connectionQuality={{ rtt: 50, packetLoss: 0, quality: 'excellent' }}
         />
       )
-      
-      expect(screen.getByTestId('quality-indicator')).toHaveStyle({ backgroundColor: 'green' })
+
+      expect(screen.getByTestId('quality-indicator')).toHaveAttribute('style', expect.stringContaining('background-color: green'))
 
       rerender(
-        <TestParticipantCard 
+        <TestParticipantCard
           connectionState="connected"
           connectionQuality={{ rtt: 200, packetLoss: 3, quality: 'fair' }}
         />
       )
-      
-      expect(screen.getByTestId('quality-indicator')).toHaveStyle({ backgroundColor: 'yellow' })
+
+      expect(screen.getByTestId('quality-indicator')).toHaveAttribute('style', expect.stringContaining('background-color: yellow'))
 
       rerender(
-        <TestParticipantCard 
+        <TestParticipantCard
           connectionState="connected"
           connectionQuality={{ rtt: 400, packetLoss: 10, quality: 'poor' }}
         />
       )
-      
-      expect(screen.getByTestId('quality-indicator')).toHaveStyle({ backgroundColor: 'red' })
+
+      expect(screen.getByTestId('quality-indicator')).toHaveAttribute('style', expect.stringContaining('background-color: red'))
     })
   })
 
   describe('Remote Audio Playback', () => {
     it('should render audio element for remote participant with stream', () => {
       const mockStream = new MediaStream()
-      
+
       render(<TestParticipantCard isLocal={false} stream={mockStream} />)
-      
+
       expect(screen.getByTestId('remote-audio')).toBeInTheDocument()
     })
 
     it('should not render audio element for local participant', () => {
       const mockStream = new MediaStream()
-      
+
       render(<TestParticipantCard isLocal={true} stream={mockStream} />)
-      
+
       expect(screen.queryByTestId('remote-audio')).not.toBeInTheDocument()
     })
 
     it('should not render audio element when no stream', () => {
       render(<TestParticipantCard isLocal={false} stream={null} />)
-      
+
       expect(screen.queryByTestId('remote-audio')).not.toBeInTheDocument()
     })
 
     it('should set stream on audio element', async () => {
       const mockStream = new MediaStream()
-      
+
       render(<TestParticipantCard isLocal={false} stream={mockStream} />)
-      
+
       const audio = screen.getByTestId('remote-audio') as HTMLAudioElement
-      
+
       await waitFor(() => {
         expect(audio.srcObject).toBe(mockStream)
       })
@@ -428,9 +425,9 @@ describe('ParticipantCard Extended', () => {
     it('should call play on audio element', async () => {
       const mockStream = new MediaStream()
       const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play')
-      
+
       render(<TestParticipantCard isLocal={false} stream={mockStream} />)
-      
+
       await waitFor(() => {
         expect(playSpy).toHaveBeenCalled()
       })
@@ -441,23 +438,23 @@ describe('ParticipantCard Extended', () => {
     it('should set sink ID when output device changes', async () => {
       const mockStream = new MediaStream()
       const setSinkIdSpy = vi.spyOn(HTMLMediaElement.prototype, 'setSinkId' as any)
-      
+
       const { rerender } = render(
-        <TestParticipantCard 
-          isLocal={false} 
-          stream={mockStream} 
+        <TestParticipantCard
+          isLocal={false}
+          stream={mockStream}
           selectedOutputDevice="default"
         />
       )
-      
+
       rerender(
-        <TestParticipantCard 
-          isLocal={false} 
-          stream={mockStream} 
+        <TestParticipantCard
+          isLocal={false}
+          stream={mockStream}
           selectedOutputDevice="headphones"
         />
       )
-      
+
       await waitFor(() => {
         expect(setSinkIdSpy).toHaveBeenCalled()
       })
@@ -467,14 +464,14 @@ describe('ParticipantCard Extended', () => {
   describe('Card Styling', () => {
     it('should have border highlight for local participant', () => {
       render(<TestParticipantCard isLocal={true} peerId="local" />)
-      
+
       const card = screen.getByTestId('participant-card-local')
       expect(card).toHaveClass('border-2', 'border-blue-500')
     })
 
     it('should have normal border for remote participant', () => {
       render(<TestParticipantCard isLocal={false} peerId="remote" />)
-      
+
       const card = screen.getByTestId('participant-card-remote')
       expect(card).toHaveClass('border', 'border-gray-200')
     })
@@ -485,27 +482,27 @@ describe('ParticipantCard Edge Cases', () => {
   it('should handle rapid stream changes', async () => {
     const stream1 = new MediaStream()
     const stream2 = new MediaStream()
-    
+
     const { rerender } = render(
       <TestParticipantCard isLocal={false} stream={stream1} />
     )
-    
+
     rerender(<TestParticipantCard isLocal={false} stream={stream2} />)
     rerender(<TestParticipantCard isLocal={false} stream={null} />)
     rerender(<TestParticipantCard isLocal={false} stream={stream1} />)
-    
+
     // Should not throw and should handle transitions gracefully
     expect(screen.getByTestId('remote-audio')).toBeInTheDocument()
   })
 
   it('should handle play failure gracefully', async () => {
     const mockStream = new MediaStream()
-    
+
     // Make play fail
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockRejectedValueOnce(new Error('Autoplay blocked'))
-    
+
     render(<TestParticipantCard isLocal={false} stream={mockStream} />)
-    
+
     // Should show loading state, not crash
     await waitFor(() => {
       expect(screen.getByTestId('playback-status')).toHaveTextContent('Audio loading')

@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom'
-import React from 'react'
+
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SettingsPanel } from '../../renderer/components/SettingsPanel'
@@ -65,8 +65,8 @@ vi.mock('../../renderer/utils/Logger', () => ({
 vi.mock('../../renderer/components/DeviceSelector', () => ({
     DeviceSelector: ({ label, devices, selectedDeviceId, onSelect }: any) => (
         <div data-testid={`device-selector-${label || 'unnamed'}`}>
-            <select 
-                value={selectedDeviceId || ''} 
+            <select
+                value={selectedDeviceId || ''}
                 onChange={(e) => onSelect(e.target.value)}
             >
                 {devices.map((d: any) => (
@@ -89,7 +89,9 @@ describe('SettingsPanel', () => {
         settings: {
             noiseSuppressionEnabled: true,
             echoCancellationEnabled: true,
-            autoGainControlEnabled: true
+            autoGainControlEnabled: true,
+            selectedInputDevice: 'default',
+            selectedOutputDevice: 'default'
         },
         inputDevices: mockInputDevices,
         outputDevices: mockOutputDevices,
@@ -108,13 +110,13 @@ describe('SettingsPanel', () => {
 
     it('renders settings title', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         expect(screen.getByText('Settings')).toBeInTheDocument()
     })
 
     it('renders language selection', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         expect(screen.getByText('Language')).toBeInTheDocument()
         expect(screen.getByText('English')).toBeInTheDocument()
         expect(screen.getByText('中文')).toBeInTheDocument()
@@ -122,16 +124,16 @@ describe('SettingsPanel', () => {
 
     it('calls setLanguage when language button is clicked', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         const chineseBtn = screen.getByText('中文')
         fireEvent.click(chineseBtn)
-        
+
         expect(mockSetLanguage).toHaveBeenCalledWith('zh')
     })
 
     it('renders audio device selectors', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         expect(screen.getByText('Audio Devices')).toBeInTheDocument()
         expect(screen.getByText('Input Device')).toBeInTheDocument()
         expect(screen.getByText('Output Device')).toBeInTheDocument()
@@ -139,7 +141,7 @@ describe('SettingsPanel', () => {
 
     it('renders audio processing toggles', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         expect(screen.getByText('Audio Processing')).toBeInTheDocument()
         expect(screen.getByText('Noise Suppression')).toBeInTheDocument()
         expect(screen.getByText('Echo Cancellation')).toBeInTheDocument()
@@ -149,37 +151,37 @@ describe('SettingsPanel', () => {
     it('calls onSettingsChange when noise suppression is toggled', () => {
         const onSettingsChange = vi.fn()
         render(<SettingsPanel {...defaultProps} onSettingsChange={onSettingsChange} />)
-        
+
         // Find the checkbox for noise suppression (first checkbox)
         const checkboxes = screen.getAllByRole('checkbox')
         fireEvent.click(checkboxes[0])
-        
+
         expect(onSettingsChange).toHaveBeenCalledWith({ noiseSuppressionEnabled: false })
     })
 
     it('calls onSettingsChange when echo cancellation is toggled', () => {
         const onSettingsChange = vi.fn()
         render(<SettingsPanel {...defaultProps} onSettingsChange={onSettingsChange} />)
-        
+
         const checkboxes = screen.getAllByRole('checkbox')
         fireEvent.click(checkboxes[1])
-        
+
         expect(onSettingsChange).toHaveBeenCalledWith({ echoCancellationEnabled: false })
     })
 
     it('calls onSettingsChange when AGC is toggled', () => {
         const onSettingsChange = vi.fn()
         render(<SettingsPanel {...defaultProps} onSettingsChange={onSettingsChange} />)
-        
+
         const checkboxes = screen.getAllByRole('checkbox')
         fireEvent.click(checkboxes[2])
-        
+
         expect(onSettingsChange).toHaveBeenCalledWith({ autoGainControlEnabled: false })
     })
 
     it('renders debug section', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         expect(screen.getByText('Debug & Troubleshooting')).toBeInTheDocument()
         expect(screen.getByText('Download Logs')).toBeInTheDocument()
         expect(screen.getByText('Clear Logs')).toBeInTheDocument()
@@ -187,21 +189,21 @@ describe('SettingsPanel', () => {
 
     it('calls downloadLogs when download button is clicked', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         const downloadBtn = screen.getByText('Download Logs')
         fireEvent.click(downloadBtn)
-        
+
         expect(mockDownloadLogs).toHaveBeenCalledTimes(1)
     })
 
     it('calls clearLogs and shows toast when clear button is clicked', () => {
         const onShowToast = vi.fn()
-        
+
         render(<SettingsPanel {...defaultProps} onShowToast={onShowToast} />)
-        
+
         const clearBtn = screen.getByText('Clear Logs')
         fireEvent.click(clearBtn)
-        
+
         expect(mockClearLogs).toHaveBeenCalledTimes(1)
         expect(onShowToast).toHaveBeenCalledWith('3 logs cleared', 'success')
     })
@@ -209,28 +211,28 @@ describe('SettingsPanel', () => {
     it('calls onClose when close button in header is clicked', () => {
         const onClose = vi.fn()
         render(<SettingsPanel {...defaultProps} onClose={onClose} />)
-        
+
         // Find close button by title
         const closeBtn = screen.getByTitle('Close')
         fireEvent.click(closeBtn)
-        
+
         expect(onClose).toHaveBeenCalledTimes(1)
     })
 
     it('calls onClose when footer close button is clicked', () => {
         const onClose = vi.fn()
         render(<SettingsPanel {...defaultProps} onClose={onClose} />)
-        
+
         // There are two close buttons - one in header and one in footer
         const closeButtons = screen.getAllByText('Close')
         fireEvent.click(closeButtons[closeButtons.length - 1]) // Click the footer one
-        
+
         expect(onClose).toHaveBeenCalled()
     })
 
     it('renders NAT warning notice', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         // Use getAllByText since there might be multiple elements
         const natWarnings = screen.getAllByText(/NAT warning/)
         expect(natWarnings.length).toBeGreaterThan(0)
@@ -238,7 +240,7 @@ describe('SettingsPanel', () => {
 
     it('renders about section', () => {
         render(<SettingsPanel {...defaultProps} />)
-        
+
         expect(screen.getByText('About')).toBeInTheDocument()
         expect(screen.getByText('Peer-to-peer WebRTC connections')).toBeInTheDocument()
     })
@@ -247,11 +249,13 @@ describe('SettingsPanel', () => {
         render(<SettingsPanel {...defaultProps} settings={{
             noiseSuppressionEnabled: false,
             echoCancellationEnabled: true,
-            autoGainControlEnabled: false
+            autoGainControlEnabled: false,
+            selectedInputDevice: 'default',
+            selectedOutputDevice: 'default'
         }} />)
-        
+
         const checkboxes = screen.getAllByRole('checkbox')
-        
+
         expect(checkboxes[0]).not.toBeChecked()
         expect(checkboxes[1]).toBeChecked()
         expect(checkboxes[2]).not.toBeChecked()
@@ -259,19 +263,19 @@ describe('SettingsPanel', () => {
 
     it('handles empty device lists gracefully', () => {
         render(<SettingsPanel {...defaultProps} inputDevices={[]} outputDevices={[]} />)
-        
+
         // Should still render device selectors
         const deviceSelectors = screen.getAllByTestId('device-selector-unnamed')
         expect(deviceSelectors).toHaveLength(2)
     })
 
     it('handles null selected devices gracefully', () => {
-        render(<SettingsPanel 
-            {...defaultProps} 
-            selectedInputDevice={null} 
-            selectedOutputDevice={null} 
+        render(<SettingsPanel
+            {...defaultProps}
+            selectedInputDevice={null}
+            selectedOutputDevice={null}
         />)
-        
+
         // Should render without errors
         expect(screen.getByText('Settings')).toBeInTheDocument()
     })
@@ -281,9 +285,9 @@ describe('SettingsPanel', () => {
             { deviceId: 'mic1', label: 'My Microphone', kind: 'audioinput' as const, groupId: '1' },
             { deviceId: 'mic2', label: 'External Mic', kind: 'audioinput' as const, groupId: '2' }
         ]
-        
+
         render(<SettingsPanel {...defaultProps} inputDevices={devicesWithLabels} />)
-        
+
         expect(screen.getByText('My Microphone')).toBeInTheDocument()
         expect(screen.getByText('External Mic')).toBeInTheDocument()
     })

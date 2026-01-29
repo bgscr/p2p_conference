@@ -51,6 +51,11 @@ let ICE_SERVERS: RTCIceServer[] = [
 let credentialsLoaded = false
 let credentialsLoadPromise: Promise<void> | null = null
 
+export function resetCredentialsCacheForTesting() {
+  credentialsLoaded = false
+  credentialsLoadPromise = null
+}
+
 /**
  * Load credentials from main process
  * This should be called before joining a room
@@ -190,7 +195,7 @@ function generateMessageId(): string {
  * Message deduplication cache using a sliding window with TTL
  * Prevents processing the same message received from multiple brokers
  */
-class MessageDeduplicator {
+export class MessageDeduplicator {
   private seen: Map<string, number> = new Map()  // msgId -> timestamp
   private cleanupInterval: NodeJS.Timeout | null = null
 
@@ -266,7 +271,7 @@ class MessageDeduplicator {
 /**
  * Single MQTT broker connection with keepalive and proper buffer handling
  */
-class MQTTClient {
+export class MQTTClient {
   private ws: WebSocket | null = null
   private connected = false
   private subscribed = false
@@ -718,7 +723,7 @@ class MQTTClient {
  * Multi-broker MQTT manager that connects to ALL brokers simultaneously
  * and handles message deduplication across brokers
  */
-class MultiBrokerMQTT {
+export class MultiBrokerMQTT {
   private clients: Map<string, MQTTClient> = new Map()  // brokerUrl -> client
   private topic: string = ''
   private onMessage: ((payload: string) => void) | null = null
@@ -2393,15 +2398,15 @@ export class SimplePeerManager {
           // Get round-trip time from the selected/nominated candidate-pair
           if (stat.type === 'candidate-pair') {
             // Check if this is the nominated/selected pair
-            const isSelected = selectedCandidatePairId 
+            const isSelected = selectedCandidatePairId
               ? stat.id === selectedCandidatePairId
               : (stat.nominated === true || stat.state === 'succeeded')
-            
+
             if (isSelected) {
               // Prefer currentRoundTripTime (instant measurement)
               if (stat.currentRoundTripTime !== undefined && stat.currentRoundTripTime > 0) {
                 rtt = stat.currentRoundTripTime * 1000
-              } 
+              }
               // Fallback to average RTT from totalRoundTripTime / responsesReceived
               else if (stat.totalRoundTripTime !== undefined && stat.responsesReceived > 0) {
                 rtt = (stat.totalRoundTripTime / stat.responsesReceived) * 1000
@@ -2426,12 +2431,12 @@ export class SimplePeerManager {
         // Calculate delta packet loss (recent packet loss, not cumulative)
         const prevStats = this.previousStats.get(peerId)
         const now = Date.now()
-        
+
         if (prevStats && (now - prevStats.timestamp) > 0) {
           const deltaReceived = currentPacketsReceived - prevStats.packetsReceived
           const deltaLost = currentPacketsLost - prevStats.packetsLost
           const deltaTotal = deltaReceived + deltaLost
-          
+
           if (deltaTotal > 0) {
             // Recent packet loss percentage
             packetLoss = (deltaLost / deltaTotal) * 100

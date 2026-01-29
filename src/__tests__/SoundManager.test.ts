@@ -1,3 +1,6 @@
+﻿/**
+ * @vitest-environment jsdom
+ */
 /**
  * Unit tests for SoundManager
  * Tests sound effects functionality for join/leave/error sounds
@@ -123,3 +126,4 @@ describe('SoundManager', () => {
         })
     })
 })
+

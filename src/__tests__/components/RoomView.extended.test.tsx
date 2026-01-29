@@ -11,9 +11,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import React from 'react'
+import * as React from 'react'
 
 // Mock i18n
 vi.mock('../../renderer/hooks/useI18n', () => ({
@@ -75,8 +75,8 @@ const MockParticipantCard = ({ userName, isLocal, isMuted, platform, stream, isS
 function TestRoomView({
   userName = 'Alice',
   roomId = 'test-room-123',
-  localPeerId = 'local-peer',
-  localPlatform = 'win' as const,
+  // localPeerId is unused
+  localPlatform = 'win' as 'win' | 'mac' | 'linux',
   peers = new Map<string, { userName: string; platform: 'win' | 'mac' | 'linux' }>(),
   remoteStreams = new Map<string, MediaStream>(),
   connectionState = 'connected' as const,
@@ -96,8 +96,8 @@ function TestRoomView({
   onCopyRoomId = vi.fn(),
   onToggleSound = vi.fn(),
   settings = { noiseSuppressionEnabled: true, echoCancellationEnabled: true, autoGainControlEnabled: true },
-  onSettingsChange = vi.fn(),
-  p2pManager = null as any
+  onSettingsChange = vi.fn()
+  // p2pManager unused
 }) {
   const [showSettings, setShowSettings] = React.useState(false)
 
@@ -110,8 +110,8 @@ function TestRoomView({
             <h1 data-testid="room-title" className="text-lg font-semibold">
               {userName}
             </h1>
-            <button 
-              data-testid="copy-room-id" 
+            <button
+              data-testid="copy-room-id"
               onClick={onCopyRoomId}
               className="text-sm text-gray-500"
             >
@@ -119,14 +119,14 @@ function TestRoomView({
             </button>
           </div>
           <div className="flex items-center gap-2">
-            <span 
+            <span
               data-testid="connection-status"
               className={connectionState === 'connected' ? 'text-green-500' : 'text-gray-500'}
             >
               {connectionState === 'connected' ? 'Connected' : connectionState}
             </span>
-            <button 
-              data-testid="settings-button" 
+            <button
+              data-testid="settings-button"
               onClick={() => setShowSettings(!showSettings)}
             >
               Settings
@@ -152,7 +152,7 @@ function TestRoomView({
             stream={null}
             isSpeakerMuted={isSpeakerMuted}
           />
-          
+
           {/* Remote participants */}
           {Array.from(peers.entries()).map(([peerId, peer]) => (
             <MockParticipantCard
@@ -185,15 +185,15 @@ function TestRoomView({
       {/* Controls */}
       <footer className="bg-white border-t p-4">
         <div className="flex items-center justify-center gap-4">
-          <button 
-            data-testid="mute-toggle" 
+          <button
+            data-testid="mute-toggle"
             onClick={onToggleMute}
             className={isMuted ? 'bg-red-500' : 'bg-gray-200'}
           >
             {isMuted ? 'Unmute' : 'Mute'}
           </button>
-          <button 
-            data-testid="speaker-mute-toggle" 
+          <button
+            data-testid="speaker-mute-toggle"
             onClick={onToggleSpeakerMute}
             className={isSpeakerMuted ? 'bg-red-500' : 'bg-gray-200'}
           >
@@ -211,7 +211,7 @@ function TestRoomView({
           <h3>Audio Settings</h3>
           <div>
             <label>Input Device</label>
-            <select 
+            <select
               data-testid="input-device-select"
               value={selectedInputDevice}
               onChange={(e) => onInputDeviceChange(e.target.value)}
@@ -225,7 +225,7 @@ function TestRoomView({
           </div>
           <div>
             <label>Output Device</label>
-            <select 
+            <select
               data-testid="output-device-select"
               value={selectedOutputDevice}
               onChange={(e) => onOutputDeviceChange(e.target.value)}
@@ -239,8 +239,8 @@ function TestRoomView({
           </div>
           <div>
             <label>
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 data-testid="noise-suppression-toggle"
                 checked={settings.noiseSuppressionEnabled}
                 onChange={(e) => onSettingsChange({ noiseSuppressionEnabled: e.target.checked })}
@@ -288,31 +288,31 @@ describe('RoomView Extended', () => {
   describe('Rendering', () => {
     it('should render room header with user name', () => {
       render(<TestRoomView userName="Alice" />)
-      
+
       expect(screen.getByTestId('room-title')).toHaveTextContent('Alice')
     })
 
     it('should render room ID with copy button', () => {
       render(<TestRoomView roomId="my-room-123" />)
-      
+
       expect(screen.getByTestId('copy-room-id')).toHaveTextContent('my-room-123')
     })
 
     it('should show connection status', () => {
       render(<TestRoomView connectionState="connected" />)
-      
+
       expect(screen.getByTestId('connection-status')).toHaveTextContent('Connected')
     })
 
     it('should show local participant', () => {
       render(<TestRoomView userName="Alice" />)
-      
+
       expect(screen.getByTestId('local-participant')).toBeInTheDocument()
     })
 
     it('should show waiting message when no peers', () => {
       render(<TestRoomView peers={new Map()} />)
-      
+
       expect(screen.getByTestId('waiting-message')).toBeInTheDocument()
     })
 
@@ -320,9 +320,9 @@ describe('RoomView Extended', () => {
       const peers = new Map([
         ['peer-1', { userName: 'Bob', platform: 'mac' as const }]
       ])
-      
+
       render(<TestRoomView peers={peers} />)
-      
+
       expect(screen.queryByTestId('waiting-message')).not.toBeInTheDocument()
     })
   })
@@ -333,9 +333,9 @@ describe('RoomView Extended', () => {
         ['peer-1', { userName: 'Bob', platform: 'mac' as const }],
         ['peer-2', { userName: 'Charlie', platform: 'linux' as const }]
       ])
-      
+
       render(<TestRoomView peers={peers} />)
-      
+
       expect(screen.getByTestId('participant-Bob')).toBeInTheDocument()
       expect(screen.getByTestId('participant-Charlie')).toBeInTheDocument()
     })
@@ -345,9 +345,9 @@ describe('RoomView Extended', () => {
       for (let i = 0; i < 10; i++) {
         peers.set(`peer-${i}`, { userName: `User ${i}`, platform: 'win' })
       }
-      
+
       render(<TestRoomView peers={peers} />)
-      
+
       expect(screen.getByTestId('performance-warning')).toBeInTheDocument()
     })
   })
@@ -355,27 +355,27 @@ describe('RoomView Extended', () => {
   describe('Mute Controls', () => {
     it('should call onToggleMute when mute button clicked', async () => {
       render(<TestRoomView onToggleMute={mockOnToggleMute} />)
-      
+
       await user.click(screen.getByTestId('mute-toggle'))
-      
+
       expect(mockOnToggleMute).toHaveBeenCalled()
     })
 
     it('should show correct mute button text', () => {
       const { rerender } = render(<TestRoomView isMuted={false} />)
-      
+
       expect(screen.getByTestId('mute-toggle')).toHaveTextContent('Mute')
-      
+
       rerender(<TestRoomView isMuted={true} />)
-      
+
       expect(screen.getByTestId('mute-toggle')).toHaveTextContent('Unmute')
     })
 
     it('should call onToggleSpeakerMute when speaker mute clicked', async () => {
       render(<TestRoomView onToggleSpeakerMute={mockOnToggleSpeakerMute} />)
-      
+
       await user.click(screen.getByTestId('speaker-mute-toggle'))
-      
+
       expect(mockOnToggleSpeakerMute).toHaveBeenCalled()
     })
   })
@@ -383,19 +383,19 @@ describe('RoomView Extended', () => {
   describe('Sound Toggle', () => {
     it('should call onToggleSound when clicked', async () => {
       render(<TestRoomView onToggleSound={mockOnToggleSound} />)
-      
+
       await user.click(screen.getByTestId('sound-toggle'))
-      
+
       expect(mockOnToggleSound).toHaveBeenCalled()
     })
 
     it('should show correct sound state', () => {
       const { rerender } = render(<TestRoomView soundEnabled={true} />)
-      
+
       expect(screen.getByTestId('sound-toggle')).toHaveTextContent('Sound On')
-      
+
       rerender(<TestRoomView soundEnabled={false} />)
-      
+
       expect(screen.getByTestId('sound-toggle')).toHaveTextContent('Sound Off')
     })
   })
@@ -403,9 +403,9 @@ describe('RoomView Extended', () => {
   describe('Leave Room', () => {
     it('should call onLeaveRoom when leave button clicked', async () => {
       render(<TestRoomView onLeaveRoom={mockOnLeaveRoom} />)
-      
+
       await user.click(screen.getByTestId('leave-button'))
-      
+
       expect(mockOnLeaveRoom).toHaveBeenCalled()
     })
   })
@@ -413,9 +413,9 @@ describe('RoomView Extended', () => {
   describe('Copy Room ID', () => {
     it('should call onCopyRoomId when copy button clicked', async () => {
       render(<TestRoomView onCopyRoomId={mockOnCopyRoomId} />)
-      
+
       await user.click(screen.getByTestId('copy-room-id'))
-      
+
       expect(mockOnCopyRoomId).toHaveBeenCalled()
     })
   })
@@ -423,61 +423,61 @@ describe('RoomView Extended', () => {
   describe('Settings Panel', () => {
     it('should toggle settings panel visibility', async () => {
       render(<TestRoomView />)
-      
+
       expect(screen.queryByTestId('settings-panel')).not.toBeInTheDocument()
-      
+
       await user.click(screen.getByTestId('settings-button'))
-      
+
       expect(screen.getByTestId('settings-panel')).toBeInTheDocument()
     })
 
     it('should change input device', async () => {
       render(
-        <TestRoomView 
+        <TestRoomView
           inputDevices={defaultInputDevices}
           selectedInputDevice="default"
           onInputDeviceChange={mockOnInputDeviceChange}
         />
       )
-      
+
       await user.click(screen.getByTestId('settings-button'))
-      
+
       const select = screen.getByTestId('input-device-select')
       await user.selectOptions(select, 'mic-1')
-      
+
       expect(mockOnInputDeviceChange).toHaveBeenCalledWith('mic-1')
     })
 
     it('should change output device', async () => {
       render(
-        <TestRoomView 
+        <TestRoomView
           outputDevices={defaultOutputDevices}
           selectedOutputDevice="default"
           onOutputDeviceChange={mockOnOutputDeviceChange}
         />
       )
-      
+
       await user.click(screen.getByTestId('settings-button'))
-      
+
       const select = screen.getByTestId('output-device-select')
       await user.selectOptions(select, 'headphones')
-      
+
       expect(mockOnOutputDeviceChange).toHaveBeenCalledWith('headphones')
     })
 
     it('should toggle noise suppression', async () => {
       render(
-        <TestRoomView 
+        <TestRoomView
           settings={{ noiseSuppressionEnabled: true, echoCancellationEnabled: true, autoGainControlEnabled: true }}
           onSettingsChange={mockOnSettingsChange}
         />
       )
-      
+
       await user.click(screen.getByTestId('settings-button'))
-      
+
       const checkbox = screen.getByTestId('noise-suppression-toggle')
       await user.click(checkbox)
-      
+
       expect(mockOnSettingsChange).toHaveBeenCalledWith({ noiseSuppressionEnabled: false })
     })
   })
@@ -490,9 +490,9 @@ describe('RoomView Extended', () => {
       const remoteStreams = new Map([
         ['peer-1', new MediaStream()]
       ])
-      
+
       render(<TestRoomView peers={peers} remoteStreams={remoteStreams} />)
-      
+
       expect(screen.getByTestId('participant-Bob').querySelector('[data-testid="has-stream"]')).toBeInTheDocument()
     })
   })
@@ -500,7 +500,7 @@ describe('RoomView Extended', () => {
   describe('Platform Display', () => {
     it('should show correct platform for local user', () => {
       render(<TestRoomView localPlatform="mac" />)
-      
+
       const localParticipant = screen.getByTestId('local-participant')
       expect(localParticipant.querySelector('[data-testid="platform"]')).toHaveTextContent('mac')
     })
@@ -509,9 +509,9 @@ describe('RoomView Extended', () => {
       const peers = new Map([
         ['peer-1', { userName: 'Bob', platform: 'linux' as const }]
       ])
-      
+
       render(<TestRoomView peers={peers} />)
-      
+
       const participant = screen.getByTestId('participant-Bob')
       expect(participant.querySelector('[data-testid="platform"]')).toHaveTextContent('linux')
     })

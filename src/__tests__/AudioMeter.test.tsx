@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import React from 'react'
+
 import { describe, it, expect } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { AudioMeter } from '../renderer/components/AudioMeter'

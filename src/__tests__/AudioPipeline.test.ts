@@ -1,4 +1,5 @@
 /**
+ * @vitest-environment jsdom
  * Unit tests for AudioPipeline
  * Tests audio processing pipeline logic with mocked AudioContext/Worklet
  */

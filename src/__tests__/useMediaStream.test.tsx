@@ -253,18 +253,18 @@ describe('useMediaStream Hook', () => {
 
     describe('Environment Events', () => {
         it('should refresh devices on devicechange event', async () => {
-            const { result } = renderHook(() => useMediaStream())
+            renderHook(() => useMediaStream())
 
             // Wait for initial enumeration
             await waitFor(() => expect(mockEnumerateDevices).toHaveBeenCalled())
-            
+
             // Record the call count after initial setup
             const initialCallCount = mockEnumerateDevices.mock.calls.length
 
             // Manually trigger the devicechange handler that was registered
             // The event listener is added via addEventListener, so we need to call the registered handler
             const deviceChangeListeners = listeners['devicechange'] || []
-            
+
             await act(async () => {
                 // Trigger all devicechange listeners
                 deviceChangeListeners.forEach(cb => cb(new Event('devicechange')))

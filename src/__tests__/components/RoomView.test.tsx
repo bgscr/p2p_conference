@@ -2,20 +2,20 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom'
-import React from 'react'
+
 import { render, screen, fireEvent } from '@testing-library/react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { RoomView } from '../../renderer/components/RoomView'
 
 // Mocks
 vi.mock('../../renderer/components/ParticipantCard', () => ({
-    ParticipantCard: ({ name }) => <div data-testid="participant-card">{name}</div>
+    ParticipantCard: ({ name }: { name: string }) => <div data-testid="participant-card">{name}</div>
 }))
 vi.mock('../../renderer/components/AudioMeter', () => ({
     AudioMeter: () => <div data-testid="audio-meter" />
 }))
 vi.mock('../../renderer/components/DeviceSelector', () => ({
-    DeviceSelector: ({ label }) => <div data-testid="device-selector">{label}</div>
+    DeviceSelector: ({ label }: { label: string }) => <div data-testid="device-selector">{label}</div>
 }))
 vi.mock('../../renderer/hooks/useI18n', () => ({
     useI18n: () => ({ t: (key: string) => key })

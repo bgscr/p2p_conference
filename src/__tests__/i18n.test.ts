@@ -1,9 +1,10 @@
 /**
+ * @vitest-environment jsdom
  * Unit tests for i18n (internationalization) system
  * Tests translation retrieval, language switching, and variable interpolation
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // ============================================
 // Extracted i18n logic for testing

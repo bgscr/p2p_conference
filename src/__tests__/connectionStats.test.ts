@@ -1,3 +1,6 @@
+﻿/**
+ * @vitest-environment jsdom
+ */
 /**
  * Unit tests for connection quality statistics functionality
  * Tests the getConnectionStats method in SimplePeerManager
@@ -647,7 +650,7 @@ describe('Connection Stats Calculator', () => {
       ]
       
       let result = calculateConnectionStats(peerId, 'connected', stats1, prevStats, 1000)
-      expect(result.quality.packetLoss).toBeCloseTo(4.76, 1) // 5/105 ≈ 4.76%
+      expect(result.quality.packetLoss).toBeCloseTo(4.76, 1) // 5/105 鈮?4.76%
       prevStats = result.newPreviousStats
 
       // Simulate second stats update (t=2s) - good network
@@ -767,7 +770,7 @@ describe('Connection Stats Calculator', () => {
 
       const result = calculateConnectionStats('peer-1', 'connected', stats, null, Date.now())
       
-      expect(result.quality.packetLoss).toBeCloseTo(0.99, 1) // 10/1010 ≈ 0.99%, Should use audio stats only
+      expect(result.quality.packetLoss).toBeCloseTo(0.99, 1) // 10/1010 鈮?0.99%, Should use audio stats only
     })
 
     it('should handle missing currentRoundTripTime and totalRoundTripTime', () => {
@@ -795,3 +798,4 @@ describe('Connection Stats Calculator', () => {
     })
   })
 })
+

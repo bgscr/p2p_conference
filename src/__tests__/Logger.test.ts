@@ -1,9 +1,12 @@
+﻿/**
+ * @vitest-environment jsdom
+ */
 /**
  * Unit tests for Logger utility
  * Tests logging functionality, log level filtering, and data sanitization
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 
 // ============================================
 // Extracted Logger logic for testing (avoids browser/Electron dependencies)
@@ -439,3 +442,4 @@ describe('Logger', () => {
         })
     })
 })
+

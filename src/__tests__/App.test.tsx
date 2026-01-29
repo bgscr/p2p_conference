@@ -12,9 +12,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import React from 'react'
+import * as React from 'react'
 
 // Mock all dependencies before importing App
 vi.mock('../renderer/hooks/useRoom', () => ({
@@ -40,9 +40,9 @@ vi.mock('../renderer/hooks/useMediaStream', () => ({
     audioLevel: 0,
     isLoading: false,
     error: null,
-    startCapture: vi.fn().mockResolvedValue(new MediaStream()),
+    startCapture: vi.fn().mockImplementation(async () => new MediaStream()),
     stopCapture: vi.fn(),
-    switchInputDevice: vi.fn().mockResolvedValue(new MediaStream()),
+    switchInputDevice: vi.fn().mockImplementation(async () => new MediaStream()),
     selectOutputDevice: vi.fn(),
     toggleMute: vi.fn(),
     refreshDevices: vi.fn()
@@ -84,7 +84,7 @@ vi.mock('../renderer/signaling/SimplePeerManager', () => ({
 vi.mock('../renderer/audio-processor/AudioPipeline', () => ({
   getAudioPipeline: vi.fn().mockReturnValue({
     initialize: vi.fn().mockResolvedValue(undefined),
-    connectInputStream: vi.fn().mockResolvedValue(new MediaStream()),
+    connectInputStream: vi.fn().mockImplementation(async () => new MediaStream()),
     disconnect: vi.fn(),
     destroy: vi.fn(),
     setNoiseSuppression: vi.fn(),
@@ -122,9 +122,7 @@ vi.mock('../renderer/utils/Logger', () => ({
 }))
 
 // Import mocked modules
-import { useRoom } from '../renderer/hooks/useRoom'
-import { useMediaStream } from '../renderer/hooks/useMediaStream'
-import { peerManager } from '../renderer/signaling/SimplePeerManager'
+// Import mocked modules
 import { getAudioPipeline } from '../renderer/audio-processor/AudioPipeline'
 import { soundManager } from '../renderer/audio-processor/SoundManager'
 import { logger } from '../renderer/utils/Logger'
@@ -137,7 +135,7 @@ function TestApp() {
   const [showLeaveConfirm, setShowLeaveConfirm] = React.useState(false)
   const [soundEnabled, setSoundEnabled] = React.useState(true)
   const [isMuted, setIsMuted] = React.useState(false)
-  
+
   const showToast = (message: string, type: string) => {
     const id = Math.random().toString(36).slice(2)
     setToasts(prev => [...prev, { id, message, type }])
@@ -227,7 +225,7 @@ function TestApp() {
         <div data-testid="lobby-view">
           <input data-testid="name-input" placeholder="Your Name" />
           <input data-testid="room-input" placeholder="Room ID" />
-          <button 
+          <button
             data-testid="join-button"
             onClick={() => {
               const name = (document.querySelector('[data-testid="name-input"]') as HTMLInputElement)?.value
@@ -263,7 +261,7 @@ function TestApp() {
           <button data-testid="back-button" onClick={() => setView('lobby')}>
             Back
           </button>
-          <button 
+          <button
             data-testid="download-logs"
             onClick={() => {
               logger.downloadLogs()
@@ -284,12 +282,13 @@ describe('App Component', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     user = userEvent.setup({ delay: null })
-    
+
     // Mock clipboard
-    Object.assign(navigator, {
-      clipboard: {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
         writeText: vi.fn().mockResolvedValue(undefined)
-      }
+      },
+      writable: true
     })
 
     // Mock window.electronAPI
@@ -321,28 +320,28 @@ describe('App Component', () => {
 
     it('should navigate to settings view', async () => {
       render(<TestApp />)
-      
+
       await user.click(screen.getByTestId('settings-button'))
-      
+
       expect(screen.getByTestId('settings-view')).toBeInTheDocument()
     })
 
     it('should navigate back from settings to lobby', async () => {
       render(<TestApp />)
-      
+
       await user.click(screen.getByTestId('settings-button'))
       await user.click(screen.getByTestId('back-button'))
-      
+
       expect(screen.getByTestId('lobby-view')).toBeInTheDocument()
     })
 
     it('should transition to room view on join', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       expect(screen.getByTestId('room-view')).toBeInTheDocument()
     })
   })
@@ -350,22 +349,22 @@ describe('App Component', () => {
   describe('Error Handling', () => {
     it('should show error when joining without name', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       expect(screen.getByTestId('error-banner')).toBeInTheDocument()
     })
 
     it('should dismiss error on button click', async () => {
       render(<TestApp />)
-      
+
       await user.click(screen.getByTestId('join-button'))
-      
+
       expect(screen.getByTestId('error-banner')).toBeInTheDocument()
-      
+
       await user.click(screen.getByTestId('dismiss-error'))
-      
+
       expect(screen.queryByTestId('error-banner')).not.toBeInTheDocument()
     })
   })
@@ -373,15 +372,15 @@ describe('App Component', () => {
   describe('Toast Notifications', () => {
     it('should show toast when toggling sound', async () => {
       render(<TestApp />)
-      
+
       // Go to room view
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       // Toggle sound
       await user.click(screen.getByTestId('sound-toggle'))
-      
+
       await waitFor(() => {
         expect(screen.getByTestId('toast')).toBeInTheDocument()
       })
@@ -389,10 +388,10 @@ describe('App Component', () => {
 
     it('should show toast when downloading logs', async () => {
       render(<TestApp />)
-      
+
       await user.click(screen.getByTestId('settings-button'))
       await user.click(screen.getByTestId('download-logs'))
-      
+
       await waitFor(() => {
         expect(screen.getByTestId('toast')).toBeInTheDocument()
       })
@@ -402,42 +401,42 @@ describe('App Component', () => {
   describe('Leave Confirmation Dialog', () => {
     it('should show leave confirmation when clicking leave button', async () => {
       render(<TestApp />)
-      
+
       // Go to room view
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       // Click leave
       await user.click(screen.getByTestId('leave-button'))
-      
+
       expect(screen.getByTestId('leave-dialog')).toBeInTheDocument()
     })
 
     it('should close dialog on cancel', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
       await user.click(screen.getByTestId('leave-button'))
-      
+
       await user.click(screen.getByTestId('cancel-leave'))
-      
+
       expect(screen.queryByTestId('leave-dialog')).not.toBeInTheDocument()
       expect(screen.getByTestId('room-view')).toBeInTheDocument()
     })
 
     it('should return to lobby on confirm leave', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
       await user.click(screen.getByTestId('leave-button'))
-      
+
       await user.click(screen.getByTestId('confirm-leave'))
-      
+
       expect(screen.getByTestId('lobby-view')).toBeInTheDocument()
     })
   })
@@ -445,48 +444,48 @@ describe('App Component', () => {
   describe('Keyboard Shortcuts', () => {
     it('should toggle mute on M key in room view', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       // Press M key
       await user.keyboard('m')
-      
+
       expect(soundManager.playClick).toHaveBeenCalled()
     })
 
     it('should show leave dialog on Escape in room view', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       // Press Escape
       await user.keyboard('{Escape}')
-      
+
       expect(screen.getByTestId('leave-dialog')).toBeInTheDocument()
     })
 
     it('should download logs on Ctrl+Shift+L', async () => {
       render(<TestApp />)
-      
+
       // Press Ctrl+Shift+L
       fireEvent.keyDown(window, { key: 'l', ctrlKey: true, shiftKey: true })
-      
+
       expect(logger.downloadLogs).toHaveBeenCalled()
     })
 
     it('should not trigger shortcuts when typing in input', async () => {
       render(<TestApp />)
-      
+
       const nameInput = screen.getByTestId('name-input')
       nameInput.focus()
-      
+
       // Type 'm' in input - should not trigger mute
       await user.type(nameInput, 'm')
-      
+
       // M key should not have triggered click sound (mute toggle)
       expect(soundManager.playClick).not.toHaveBeenCalled()
     })
@@ -495,28 +494,28 @@ describe('App Component', () => {
   describe('Mute Functionality', () => {
     it('should toggle mute state', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       const muteButton = screen.getByTestId('mute-button')
       expect(muteButton).toHaveTextContent('Mute')
-      
+
       await user.click(muteButton)
-      
+
       expect(muteButton).toHaveTextContent('Unmute')
     })
 
     it('should play click sound when toggling mute', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       await user.click(screen.getByTestId('mute-button'))
-      
+
       expect(soundManager.playClick).toHaveBeenCalled()
     })
   })
@@ -524,13 +523,13 @@ describe('App Component', () => {
   describe('Sound Toggle', () => {
     it('should toggle sound notifications', async () => {
       render(<TestApp />)
-      
+
       await user.type(screen.getByTestId('name-input'), 'Alice')
       await user.type(screen.getByTestId('room-input'), 'test-room')
       await user.click(screen.getByTestId('join-button'))
-      
+
       await user.click(screen.getByTestId('sound-toggle'))
-      
+
       expect(soundManager.setEnabled).toHaveBeenCalledWith(false)
     })
   })
@@ -545,7 +544,7 @@ describe('App Initialization', () => {
     const initMock = vi.fn().mockResolvedValue(undefined)
     vi.mocked(getAudioPipeline).mockReturnValue({
       initialize: initMock,
-      connectInputStream: vi.fn().mockResolvedValue(new MediaStream()),
+      connectInputStream: vi.fn().mockImplementation(async () => new MediaStream()),
       disconnect: vi.fn(),
       destroy: vi.fn(),
       setNoiseSuppression: vi.fn(),
@@ -560,7 +559,7 @@ describe('App Initialization', () => {
 
   it('should log system info on mount', () => {
     render(<TestApp />)
-    
+
     // The mock should have been called via the real App's useEffect
     // But since we're using TestApp, we test the behavior pattern
     expect(screen.getByTestId('app')).toBeInTheDocument()
@@ -571,11 +570,11 @@ describe('Room View Interaction', () => {
   it('should handle room entry', async () => {
     const user = userEvent.setup({ delay: null })
     render(<TestApp />)
-    
+
     await user.type(screen.getByTestId('name-input'), 'Alice')
     await user.type(screen.getByTestId('room-input'), 'test-room-123')
     await user.click(screen.getByTestId('join-button'))
-    
+
     expect(screen.getByTestId('room-view')).toBeInTheDocument()
   })
 })

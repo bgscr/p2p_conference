@@ -12,7 +12,8 @@ export default defineConfig({
     },
     test: {
         globals: true,
-        environment: 'node', // Using node since we are mocking browser APIs manually where needed
+        environment: 'node',
+        setupFiles: ['src/__tests__/setup.ts'],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],
@@ -30,6 +31,12 @@ export default defineConfig({
                 'dist/**'
             ],
             all: true, // Show all files in report, even if not tested
+            thresholds: {
+                lines: 55,
+                functions: 55,
+                branches: 40,
+                statements: 55
+            }
         },
     },
 })
