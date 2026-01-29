@@ -4,6 +4,12 @@
  */
 
 import { app, BrowserWindow, ipcMain, systemPreferences, Menu, shell, Tray, nativeImage } from 'electron'
+
+// Suppress security warnings in development (CSP unsafe-eval is required by Vite HMR)
+// This warning will not appear in production builds
+if (process.env.NODE_ENV === "development" || process.defaultApp) {
+  process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
+}
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { fileLogger, MainLog, TrayLog, IPCLog } from './logger'

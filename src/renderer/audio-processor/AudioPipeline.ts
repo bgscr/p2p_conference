@@ -58,7 +58,7 @@ export class AudioPipeline {
       }
 
       if (this.isDestroyed || !this.audioContext) {
-        AudioLog.warn('Pipeline destroyed during initialization, aborting');
+        AudioLog.debug('Pipeline destroyed during initialization (expected in React StrictMode)');
         return;
       }
 
@@ -78,7 +78,7 @@ export class AudioPipeline {
 
       // Check if pipeline was destroyed during async worklet loading
       if (this.isDestroyed || !this.audioContext) {
-        AudioLog.warn('Pipeline destroyed during worklet loading, aborting initialization');
+        AudioLog.debug('Pipeline destroyed during worklet loading (expected in React StrictMode)');
         return;
       }
 
