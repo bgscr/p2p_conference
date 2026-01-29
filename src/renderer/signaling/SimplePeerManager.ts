@@ -1063,8 +1063,198 @@ export class SimplePeerManager {
   private onError: ErrorCallback = () => { }
   private onPeerMuteChange: MuteStatusCallback = () => { }
 
+  // Network status monitoring for auto-reconnect
+  private isOnline: boolean = typeof navigator !== 'undefined' ? navigator.onLine : true
+  private networkReconnectTimer: NodeJS.Timeout | null = null
+  private onNetworkStatusChange: ((isOnline: boolean) => void) | null = null
+  private wasInRoomWhenOffline: boolean = false
+  private networkReconnectAttempts: number = 0
+  private readonly NETWORK_RECONNECT_MAX_ATTEMPTS = 5
+  private readonly NETWORK_RECONNECT_BASE_DELAY = 2000
+
   constructor() {
     SignalingLog.info('SimplePeerManager initialized', { selfId })
+    this.setupNetworkMonitoring()
+  }
+
+  /**
+   * Set up network online/offline event listeners
+   */
+  private setupNetworkMonitoring() {
+    if (typeof window === 'undefined') return
+
+    window.addEventListener('online', this.handleOnline)
+    window.addEventListener('offline', this.handleOffline)
+
+    SignalingLog.info('Network monitoring initialized', { isOnline: navigator.onLine })
+  }
+
+  /**
+   * Handle browser going online
+   */
+  private handleOnline = () => {
+    SignalingLog.info('Network: Browser went online')
+    this.isOnline = true
+    this.onNetworkStatusChange?.(true)
+
+    // If we were in a room when network dropped, attempt to reconnect
+    if (this.wasInRoomWhenOffline && this.roomId) {
+      SignalingLog.info('Network restored - attempting to reconnect to room', {
+        roomId: this.roomId,
+        userName: this.userName
+      })
+      this.attemptNetworkReconnect()
+    }
+  }
+
+  /**
+   * Handle browser going offline
+   */
+  private handleOffline = () => {
+    SignalingLog.warn('Network: Browser went offline')
+    this.isOnline = false
+    this.onNetworkStatusChange?.(false)
+
+    // Remember if we were in a room
+    if (this.roomId) {
+      this.wasInRoomWhenOffline = true
+      SignalingLog.info('Was in room when network dropped', { roomId: this.roomId })
+    }
+
+    // Clear any pending reconnect timers
+    if (this.networkReconnectTimer) {
+      clearTimeout(this.networkReconnectTimer)
+      this.networkReconnectTimer = null
+    }
+  }
+
+  /**
+   * Attempt to reconnect after network restoration
+   */
+  private async attemptNetworkReconnect() {
+    if (!this.roomId || !this.isOnline) {
+      return
+    }
+
+    // Clear any existing timer
+    if (this.networkReconnectTimer) {
+      clearTimeout(this.networkReconnectTimer)
+      this.networkReconnectTimer = null
+    }
+
+    this.networkReconnectAttempts++
+
+    if (this.networkReconnectAttempts > this.NETWORK_RECONNECT_MAX_ATTEMPTS) {
+      SignalingLog.error('Network reconnect: Max attempts reached', {
+        attempts: this.networkReconnectAttempts
+      })
+      this.networkReconnectAttempts = 0
+      this.wasInRoomWhenOffline = false
+      this.onError(new Error('Failed to reconnect after network restoration'), 'network-reconnect')
+      return
+    }
+
+    const delay = this.NETWORK_RECONNECT_BASE_DELAY * Math.pow(1.5, this.networkReconnectAttempts - 1)
+    SignalingLog.info('Network reconnect: Scheduling attempt', {
+      attempt: this.networkReconnectAttempts,
+      maxAttempts: this.NETWORK_RECONNECT_MAX_ATTEMPTS,
+      delayMs: Math.round(delay)
+    })
+
+    this.networkReconnectTimer = setTimeout(async () => {
+      if (!this.isOnline || !this.roomId) {
+        SignalingLog.warn('Network reconnect: Aborted - offline or no room')
+        return
+      }
+
+      try {
+        // Reconnect MQTT brokers
+        if (this.mqtt && !this.mqtt.isConnected()) {
+          SignalingLog.info('Network reconnect: Reconnecting MQTT brokers')
+          const connectedBrokers = await this.mqtt.connectAll()
+
+          if (connectedBrokers.length > 0) {
+            // Re-subscribe to the topic
+            await this.mqtt.subscribeAll(this.topic, (message) => {
+              try {
+                const data = JSON.parse(message)
+                this.handleSignalingMessage(data)
+              } catch (e) {
+                SignalingLog.debug('Invalid MQTT message during reconnect')
+              }
+            })
+          }
+        }
+
+        // Re-announce presence to discover peers
+        this.announceStartTime = Date.now()
+        this.broadcastAnnounce()
+        this.startAnnounceInterval()
+
+        // Attempt ICE restart for all existing peers
+        this.peers.forEach((peer, peerId) => {
+          const state = peer.pc.iceConnectionState
+          if (state === 'disconnected' || state === 'failed') {
+            SignalingLog.info('Network reconnect: Triggering ICE restart for peer', { peerId, state })
+            peer.iceRestartAttempts = 0  // Reset attempts for network recovery
+            this.attemptIceRestart(peerId)
+          }
+        })
+
+        // Success - reset counters
+        if (this.mqtt?.isConnected()) {
+          SignalingLog.info('Network reconnect: Successfully reconnected', {
+            mqttConnected: true,
+            peerCount: this.peers.size
+          })
+          this.networkReconnectAttempts = 0
+          this.wasInRoomWhenOffline = false
+          this.updateSignalingState('connected')
+        } else {
+          // MQTT still not connected, try again
+          SignalingLog.warn('Network reconnect: MQTT not connected, retrying')
+          this.attemptNetworkReconnect()
+        }
+
+      } catch (err) {
+        SignalingLog.error('Network reconnect: Failed', { error: String(err) })
+        this.attemptNetworkReconnect()  // Retry
+      }
+    }, delay)
+  }
+
+  /**
+   * Set callback for network status changes
+   */
+  setOnNetworkStatusChange(callback: (isOnline: boolean) => void) {
+    this.onNetworkStatusChange = callback
+  }
+
+  /**
+   * Get current network status
+   */
+  getNetworkStatus(): { isOnline: boolean; wasInRoomWhenOffline: boolean; reconnectAttempts: number } {
+    return {
+      isOnline: this.isOnline,
+      wasInRoomWhenOffline: this.wasInRoomWhenOffline,
+      reconnectAttempts: this.networkReconnectAttempts
+    }
+  }
+
+  /**
+   * Manually trigger reconnection (e.g., from UI button)
+   */
+  async manualReconnect(): Promise<boolean> {
+    if (!this.roomId) {
+      SignalingLog.warn('Manual reconnect: No room to reconnect to')
+      return false
+    }
+
+    SignalingLog.info('Manual reconnect: Triggered by user')
+    this.networkReconnectAttempts = 0
+    this.wasInRoomWhenOffline = true
+    await this.attemptNetworkReconnect()
+    return true
   }
 
   /**
@@ -2049,6 +2239,15 @@ export class SimplePeerManager {
       this.topic = ''
       this.localStream = null
       this.localMuteStatus = { micMuted: false, speakerMuted: false }
+
+      // Reset network reconnect state
+      if (this.networkReconnectTimer) {
+        clearTimeout(this.networkReconnectTimer)
+        this.networkReconnectTimer = null
+      }
+      this.wasInRoomWhenOffline = false
+      this.networkReconnectAttempts = 0
+
       this.updateSignalingState('idle')
 
       SignalingLog.info('Left room successfully')
@@ -2229,7 +2428,11 @@ export class SimplePeerManager {
       peers: Array.from(this.peers.keys()),
       localMuteStatus: this.localMuteStatus,
       isJoining: this.isJoining,
-      isLeaving: this.isLeaving
+      isLeaving: this.isLeaving,
+      // Network status
+      networkOnline: this.isOnline,
+      networkWasInRoomWhenOffline: this.wasInRoomWhenOffline,
+      networkReconnectAttempts: this.networkReconnectAttempts
     }
   }
 }

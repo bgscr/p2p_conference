@@ -75,6 +75,11 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const [copied, setCopied] = useState(false)
   const [peerVolumes, setPeerVolumes] = useState<Map<string, number>>(new Map())
   const [connectionStats, setConnectionStats] = useState<Map<string, ConnectionQuality>>(new Map())
+  const [networkStatus, setNetworkStatus] = useState<{
+    isOnline: boolean
+    isReconnecting: boolean
+    reconnectAttempts: number
+  }>({ isOnline: true, isReconnecting: false, reconnectAttempts: 0 })
 
   const startTimeRef = useRef(Date.now())
 
@@ -116,6 +121,51 @@ export const RoomView: React.FC<RoomViewProps> = ({
     const interval = setInterval(updateStats, 2000)
     return () => clearInterval(interval)
   }, [p2pManager])
+
+  // Network status monitoring
+  useEffect(() => {
+    if (!p2pManager) return
+
+    // Set up network status change callback
+    p2pManager.setOnNetworkStatusChange((isOnline) => {
+      const status = p2pManager.getNetworkStatus()
+      setNetworkStatus({
+        isOnline,
+        isReconnecting: status.wasInRoomWhenOffline && !isOnline,
+        reconnectAttempts: status.reconnectAttempts
+      })
+    })
+
+    // Also poll network status periodically (for reconnect attempts counter)
+    const statusInterval = setInterval(() => {
+      const status = p2pManager.getNetworkStatus()
+      setNetworkStatus(prev => {
+        // Only update if changed
+        if (prev.isOnline !== status.isOnline ||
+            prev.reconnectAttempts !== status.reconnectAttempts ||
+            prev.isReconnecting !== status.wasInRoomWhenOffline) {
+          return {
+            isOnline: status.isOnline,
+            isReconnecting: status.wasInRoomWhenOffline && status.reconnectAttempts > 0,
+            reconnectAttempts: status.reconnectAttempts
+          }
+        }
+        return prev
+      })
+    }, 1000)
+
+    return () => {
+      clearInterval(statusInterval)
+      p2pManager.setOnNetworkStatusChange(() => {})  // Clear callback
+    }
+  }, [p2pManager])
+
+  // Manual reconnect handler
+  const handleManualReconnect = async () => {
+    if (p2pManager) {
+      await p2pManager.manualReconnect()
+    }
+  }
 
   // Format duration
   const formatDuration = (seconds: number): string => {
@@ -161,6 +211,41 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Network Status Banner */}
+      {(!networkStatus.isOnline || networkStatus.isReconnecting) && (
+        <div className={`px-4 py-2 flex items-center justify-between ${
+          !networkStatus.isOnline ? 'bg-red-500' : 'bg-yellow-500'
+        } text-white text-sm`}>
+          <div className="flex items-center gap-2">
+            {!networkStatus.isOnline ? (
+              <>
+                <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M18.364 5.636a9 9 0 010 12.728m-3.536-3.536a4 4 0 010-5.656m-7.072 7.072a9 9 0 010-12.728m3.536 3.536a4 4 0 010 5.656" />
+                </svg>
+                <span>{t('room.networkOffline')}</span>
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>{t('room.reconnecting')} ({networkStatus.reconnectAttempts}/5)</span>
+              </>
+            )}
+          </div>
+          {networkStatus.isOnline && (
+            <button
+              onClick={handleManualReconnect}
+              className="px-2 py-1 bg-white/20 hover:bg-white/30 rounded text-xs transition-colors"
+            >
+              {t('room.retryNow')}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 py-3">
         <div className="flex items-center justify-between">

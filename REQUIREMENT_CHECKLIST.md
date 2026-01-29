@@ -233,7 +233,7 @@
 1. Push-to-talk mode
 2. System tray support
 3. WebRTC stats dashboard
-4. Auto-reconnection on network drop (partial - ICE restart implemented)
+4. Auto-reconnection on network drop ✅ (Full implementation: network monitoring + MQTT reconnect + ICE restart)
 
 ---
 
@@ -355,7 +355,7 @@
 - [ ] Push-to-talk mode
 - [ ] Per-participant volume control  
 - [ ] System tray support
-- [ ] Auto-reconnection on network drop
+- [x] Auto-reconnection on network drop ✅
 - [ ] Window focus handling (auto-mute)
 
 ### Testing Required
@@ -826,3 +826,46 @@ The P2P Conference application is feature-complete for core functionality:
 - System tray support
 - WebRTC stats dashboard
 - Window focus handling (auto-mute)
+
+### Session 14 - Auto-Reconnect on Network Drop (2026-01-29)
+
+**Objective:** Implement automatic reconnection when network connectivity is lost and restored.
+
+**Implementation Details:**
+
+1. **Network Status Monitoring** (`SimplePeerManager.ts`)
+   - Added `online`/`offline` browser event listeners
+   - Tracks `isOnline`, `wasInRoomWhenOffline`, and `networkReconnectAttempts`
+   - Automatically triggers reconnection when browser goes back online
+
+2. **Reconnection Logic**
+   - Exponential backoff with 1.5x multiplier (2s → 3s → 4.5s → ...)
+   - Maximum 5 reconnection attempts
+   - On network restoration:
+     - Reconnects all MQTT brokers
+     - Re-subscribes to room topic
+     - Re-announces presence for peer discovery
+     - Triggers ICE restart for disconnected peers
+
+3. **UI Indicator** (`RoomView.tsx`)
+   - Red banner when offline: "Network offline - waiting for connection"
+   - Yellow banner when reconnecting: "Reconnecting... (X/5)"
+   - Manual "Retry Now" button for immediate reconnection attempt
+
+4. **i18n Translations**
+   - Added English and Chinese translations for network status messages
+
+**Files Modified:**
+- `src/renderer/signaling/SimplePeerManager.ts` - Core reconnection logic
+- `src/renderer/components/RoomView.tsx` - Network status banner
+- `src/renderer/utils/i18n.ts` - Translations
+- `electron/main.ts` - Suppressed dev-mode security warnings
+- `src/renderer/audio-processor/AudioPipeline.ts` - Downgraded StrictMode warning
+
+**New Methods in SimplePeerManager:**
+- `setupNetworkMonitoring()` - Initialize event listeners
+- `handleOnline()` / `handleOffline()` - Event handlers
+- `attemptNetworkReconnect()` - Reconnection with backoff
+- `setOnNetworkStatusChange()` - UI callback registration
+- `getNetworkStatus()` - Get current network state
+- `manualReconnect()` - Trigger reconnection from UI

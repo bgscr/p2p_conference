@@ -85,6 +85,11 @@ const en: Translations = {
     downloadLogs: 'Download Logs',
     micMuted: 'Microphone muted',
     speakerMuted: 'Speaker muted',
+    networkOffline: 'Network offline - waiting for connection',
+    reconnecting: 'Reconnecting...',
+    retryNow: 'Retry Now',
+    reconnectSuccess: 'Connection restored',
+    reconnectFailed: 'Reconnection failed',
   },
   leaveConfirm: {
     title: 'Leave Call?',
@@ -261,6 +266,11 @@ const zhCN: Translations = {
     downloadLogs: '下载日志',
     micMuted: '麦克风已静音',
     speakerMuted: '扬声器已静音',
+    networkOffline: '网络已断开 - 等待连接',
+    reconnecting: '正在重连...',
+    retryNow: '立即重试',
+    reconnectSuccess: '连接已恢复',
+    reconnectFailed: '重连失败',
   },
   leaveConfirm: {
     title: '离开通话？',
