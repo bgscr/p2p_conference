@@ -232,7 +232,7 @@ export class MessageDeduplicator {
   /**
    * Remove entries older than TTL
    */
-  private cleanup() {
+  public cleanup() {
     const cutoff = Date.now() - MESSAGE_DEDUP_TTL_MS
     const toDelete: string[] = []
 

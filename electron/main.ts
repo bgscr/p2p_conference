@@ -567,6 +567,8 @@ app.whenReady().then(async () => {
       createWindow()
     }
   })
+}).catch((error) => {
+  MainLog.error('Failed to initialize app', { error })
 })
 
 /**
