@@ -223,7 +223,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">{t('app.name')}</h1>
+          <h1 className="text-2xl font-bold text-gray-900" data-testid="lobby-title">{t('app.name')}</h1>
           <p className="text-sm text-gray-500 mt-1">{t('app.tagline')}</p>
         </div>
 
@@ -241,6 +241,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               placeholder={t('lobby.enterName')}
               className="input"
               maxLength={32}
+              data-testid="lobby-name-input"
             />
           </div>
 
@@ -257,11 +258,13 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 placeholder={t('lobby.enterRoomId')}
                 className="input flex-1"
                 maxLength={32}
+                data-testid="lobby-room-input"
               />
               <button
                 onClick={handleGenerateRoom}
                 className="btn btn-secondary whitespace-nowrap"
                 title={t('lobby.generate')}
+                data-testid="lobby-generate-btn"
               >
                 {t('lobby.generate')}
               </button>
@@ -353,6 +356,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             onClick={handleJoin}
             disabled={isLoading || isJoining || roomId.length < 4}
             className="btn btn-primary w-full py-3 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            data-testid="lobby-join-btn"
           >
             {(isLoading || isJoining) ? (
               <span className="flex items-center justify-center gap-2">

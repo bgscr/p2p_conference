@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
@@ -19,15 +23,26 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@renderer/*": ["src/renderer/*"],
-      "@types/*": ["src/types/*"]
+      "@/*": [
+        "src/*"
+      ],
+      "@renderer/*": [
+        "src/renderer/*"
+      ],
+      "@types/*": [
+        "src/types/*"
+      ]
     }
   },
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
-    "electron/**/*.ts"
+    "electron/**/*.ts",
+    "e2e/**/*.ts"
   ],
-  "exclude": ["node_modules", "dist", "release"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "release"
+  ]
 }

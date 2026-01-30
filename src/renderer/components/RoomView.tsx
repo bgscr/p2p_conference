@@ -264,6 +264,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               onClick={handleCopy}
               className="flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-sm font-mono text-gray-700 transition-colors"
               title={t('room.roomIdCopyHint')}
+              data-testid="room-copy-btn"
             >
               {roomId}
               {copied ? (
@@ -402,6 +403,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 }
               `}
               title={isMuted ? t('room.unmuteHint') : t('room.muteHint')}
+              data-testid="room-mute-btn"
             >
               {isMuted ? (
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -429,6 +431,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 }
               `}
               title={isSpeakerMuted ? t('room.speakerMuted') : t('common.speaker')}
+              data-testid="room-speaker-btn"
             >
               {isSpeakerMuted ? (
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -456,6 +459,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 }
               `}
               title={soundEnabled ? t('room.muteNotifications') : t('room.enableNotifications')}
+              data-testid="room-sound-btn"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -477,6 +481,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 }
               `}
               title={t('room.audioSettings')}
+              data-testid="room-settings-btn"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -490,6 +495,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               onClick={onLeaveRoom}
               className="w-14 h-14 rounded-full bg-red-600 text-white hover:bg-red-700 flex items-center justify-center transition-colors"
               title={t('room.leaveCallHint')}
+              data-testid="room-leave-btn"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}

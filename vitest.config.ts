@@ -14,10 +14,12 @@ export default defineConfig({
         globals: true,
         environment: 'jsdom',
         setupFiles: ['src/__tests__/setup.ts'],
+        include: ['src/__tests__/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}', 'electron/**/*.test.ts'],
+        exclude: ['e2e/**'],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],
-            include: ['src/**/*.ts', 'src/**/*.tsx'],
+            include: ['src/**/*.ts', 'src/**/*.tsx', 'electron/**/*.ts'],
             exclude: [
                 'src/__tests__/**',
                 'src/types/**',
@@ -25,10 +27,10 @@ export default defineConfig({
                 '**/*.d.ts',
                 '**/*.test.ts',
                 '**/*.test.tsx',
-                'electron/**', // Exclude electron main/preload from this report as we are testing renderer
                 'out/**',
                 'build/**',
-                'dist/**'
+                'dist/**',
+                'e2e/**'
             ],
 
             all: true, // Show all files in report, even if not tested
