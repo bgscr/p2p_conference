@@ -25,13 +25,19 @@ interface RoomViewProps {
   audioLevel: number
   selectedOutputDevice: string | null
   inputDevices: AudioDevice[]
+  videoInputDevices: AudioDevice[]
   outputDevices: AudioDevice[]
   selectedInputDevice: string | null
+  selectedVideoDevice: string | null
+  localStream: MediaStream | null
+  isVideoEnabled: boolean
   soundEnabled: boolean
   onToggleMute: () => void
+  onToggleVideo: () => void
   onToggleSpeakerMute: () => void
   onLeaveRoom: () => void
   onInputDeviceChange: (deviceId: string) => void
+  onVideoDeviceChange: (deviceId: string) => void
   onOutputDeviceChange: (deviceId: string) => void
   onCopyRoomId: () => void
   onToggleSound: () => void
@@ -53,13 +59,19 @@ export const RoomView: React.FC<RoomViewProps> = ({
   audioLevel,
   selectedOutputDevice,
   inputDevices,
+  videoInputDevices,
   outputDevices,
   selectedInputDevice,
+  selectedVideoDevice,
+  localStream,
+  isVideoEnabled,
   soundEnabled,
   onToggleMute,
+  onToggleVideo,
   onToggleSpeakerMute,
   onLeaveRoom,
   onInputDeviceChange,
+  onVideoDeviceChange,
   onOutputDeviceChange,
   onCopyRoomId,
   onToggleSound,
@@ -313,10 +325,12 @@ export const RoomView: React.FC<RoomViewProps> = ({
               name={`${userName} (${t('room.you')})`}
               peerId={localPeerId}
               isMicMuted={isMuted}
+              isVideoMuted={!isVideoEnabled}
               isSpeakerMuted={isSpeakerMuted}
               isLocal={true}
               audioLevel={audioLevel}
               connectionState="connected"
+              stream={localStream || undefined}
               platform={localPlatform}
             />
 
@@ -328,6 +342,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                   name={peer.name}
                   peerId={peer.id}
                   isMicMuted={peer.isMuted}
+                  isVideoMuted={peer.isVideoMuted === true}
                   isSpeakerMuted={peer.isSpeakerMuted || false}
                   isLocal={false}
                   audioLevel={peer.audioLevel}
@@ -392,6 +407,30 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
           {/* Center: Main Controls */}
           <div className="flex items-center gap-3">
+            {/* Camera Toggle Button */}
+            <button
+              onClick={onToggleVideo}
+              className={`
+                 w-14 h-14 rounded-full flex items-center justify-center transition-all
+                 ${!isVideoEnabled
+                  ? 'bg-red-100 text-red-600 hover:bg-red-200'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }
+               `}
+              title={!isVideoEnabled ? t('room.startVideo') : t('room.stopVideo')}
+            >
+              {!isVideoEnabled ? (
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              )}
+            </button>
+
             {/* Mute Microphone Button */}
             <button
               onClick={onToggleMute}
@@ -521,6 +560,13 @@ export const RoomView: React.FC<RoomViewProps> = ({
               selectedDeviceId={selectedInputDevice}
               onSelect={onInputDeviceChange}
               icon="mic"
+            />
+            <DeviceSelector
+              label={t('common.camera')}
+              devices={videoInputDevices}
+              selectedDeviceId={selectedVideoDevice}
+              onSelect={onVideoDeviceChange}
+              icon="video"
             />
             <DeviceSelector
               label={t('common.speaker')}

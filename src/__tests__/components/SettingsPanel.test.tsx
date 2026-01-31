@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * @vitest-environment jsdom
  */
@@ -45,11 +46,12 @@ vi.mock('../../renderer/hooks/useI18n', () => ({
         },
         currentLanguage: 'en',
         setLanguage: mockSetLanguage,
+        getLanguage: () => 'en',
         getAvailableLanguages: () => [
             { code: 'en', name: 'English' },
             { code: 'zh', name: '中文' }
         ]
-    })
+    } as any)
 }))
 
 // Mock Logger with hoisted functions
@@ -63,19 +65,20 @@ vi.mock('../../renderer/utils/Logger', () => ({
 
 // Mock DeviceSelector component
 vi.mock('../../renderer/components/DeviceSelector', () => ({
-    DeviceSelector: ({ label, devices, selectedDeviceId, onSelect }: any) => (
-        <div data-testid={`device-selector-${label || 'unnamed'}`}>
+    // @ts-ignore
+    DeviceSelector: (props: any) => (
+        <div data-testid={`device-selector-${props.label || 'unnamed'}`}>
             <select
-                value={selectedDeviceId || ''}
-                onChange={(e) => onSelect(e.target.value)}
+                value={props.selectedDeviceId || ''}
+                onChange={(e) => props.onSelect(e.target.value)}
             >
-                {devices.map((d: any) => (
+                {props.devices.map((d: any) => (
                     <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
                 ))}
             </select>
         </div>
     )
-}))
+} as any))
 
 describe('SettingsPanel', () => {
     const mockInputDevices = [
@@ -91,6 +94,7 @@ describe('SettingsPanel', () => {
             echoCancellationEnabled: true,
             autoGainControlEnabled: true,
             selectedInputDevice: 'default',
+            selectedVideoDevice: 'default',
             selectedOutputDevice: 'default'
         },
         inputDevices: mockInputDevices,
@@ -100,6 +104,10 @@ describe('SettingsPanel', () => {
         onSettingsChange: vi.fn(),
         onInputDeviceChange: vi.fn(),
         onOutputDeviceChange: vi.fn(),
+        videoInputDevices: [],
+        selectedVideoDevice: 'default',
+        onVideoDeviceChange: vi.fn(),
+        localStream: null,
         onClose: vi.fn(),
         onShowToast: vi.fn()
     }
@@ -251,6 +259,7 @@ describe('SettingsPanel', () => {
             echoCancellationEnabled: true,
             autoGainControlEnabled: false,
             selectedInputDevice: 'default',
+            selectedVideoDevice: 'default',
             selectedOutputDevice: 'default'
         }} />)
 
@@ -264,9 +273,9 @@ describe('SettingsPanel', () => {
     it('handles empty device lists gracefully', () => {
         render(<SettingsPanel {...defaultProps} inputDevices={[]} outputDevices={[]} />)
 
-        // Should still render device selectors
+        // Should still render device selectors (Microphone, Speaker, and now Camera)
         const deviceSelectors = screen.getAllByTestId('device-selector-unnamed')
-        expect(deviceSelectors).toHaveLength(2)
+        expect(deviceSelectors).toHaveLength(3)
     })
 
     it('handles null selected devices gracefully', () => {

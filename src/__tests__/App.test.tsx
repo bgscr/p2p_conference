@@ -112,20 +112,25 @@ vi.mock('../renderer/hooks/useRoom', () => ({
 
 vi.mock('../renderer/hooks/useMediaStream', () => ({
   useMediaStream: vi.fn().mockImplementation(() => ({
-    localStream: { id: 'test-stream' },
+    localStream: { id: 'test-stream', getVideoTracks: () => [] },
     inputDevices: [],
+    videoInputDevices: [],
     outputDevices: [],
     selectedInputDevice: 'default',
+    selectedVideoDevice: 'default',
     selectedOutputDevice: 'default',
     isMuted: false,
+    isVideoEnabled: true,
     audioLevel: 0,
     isLoading: false,
     error: null,
     startCapture: mocks.startCapture,
     stopCapture: mocks.stopCapture,
     switchInputDevice: mocks.switchInputDevice,
+    switchVideoDevice: vi.fn(),
     selectOutputDevice: vi.fn(),
     toggleMute: mocks.toggleMute,
+    toggleVideo: vi.fn(),
     refreshDevices: vi.fn()
   }))
 }))

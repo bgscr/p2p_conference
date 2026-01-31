@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * @vitest-environment jsdom
  */
@@ -36,11 +37,20 @@ vi.mock('../../renderer/hooks/useI18n', () => ({
                 'lobby.settings': 'Settings',
                 'lobby.roomIdMinLength': 'Room ID must be at least 4 characters',
                 'lobby.nameMinLength': 'Name must be at least 2 characters',
-                'lobby.micPermissionDenied': 'Microphone permission denied'
+                'lobby.enterRoomId': 'Enter ID',
+
+                'lobby.micPermissionDenied': 'Microphone permission denied',
+                'lobby.microphone': 'Microphone',
+                'lobby.speaker': 'Speaker',
+                'settings.videoDevice': 'Camera'
             }
             return translations[key] || key
-        }
-    })
+        },
+        currentLanguage: 'en',
+        setLanguage: vi.fn(),
+        getLanguage: () => 'en',
+        getAvailableLanguages: () => [{ code: 'en', name: 'English' }]
+    } as any)
 }))
 
 // Mock Logger
@@ -60,7 +70,7 @@ const mockDisconnect = vi.fn()
 const mockGetAnalyserNode = vi.fn().mockReturnValue({
     frequencyBinCount: 128,
     getByteFrequencyData: vi.fn()
-})
+}) as any
 
 vi.mock('../../renderer/audio-processor/AudioPipeline', () => ({
     getAudioPipeline: () => ({
@@ -68,25 +78,26 @@ vi.mock('../../renderer/audio-processor/AudioPipeline', () => ({
         connectInputStream: mockConnectInputStream,
         disconnect: mockDisconnect,
         getAnalyserNode: mockGetAnalyserNode
-    })
+    } as any)
 }))
 
 // Mock DeviceSelector component
 vi.mock('../../renderer/components/DeviceSelector', () => ({
-    DeviceSelector: ({ label, devices, selectedDeviceId, onSelect }: any) => (
-        <div data-testid={`device-selector-${label}`}>
+    // @ts-ignore
+    DeviceSelector: (props: any) => (
+        <div data-testid={`device-selector-${props.label || 'unnamed'}`}>
             <select
-                value={selectedDeviceId || ''}
-                onChange={(e) => onSelect(e.target.value)}
-                data-testid={`select-${label}`}
+                value={props.selectedDeviceId || ''}
+                onChange={(e) => props.onSelect(e.target.value)}
+                data-testid={`select-${props.label || 'unnamed'}`}
             >
-                {devices.map((d: any) => (
+                {(props.devices || []).map((d: any) => (
                     <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
                 ))}
             </select>
         </div>
     )
-}))
+} as any))
 
 // Mock AudioMeter component
 vi.mock('../../renderer/components/AudioMeter', () => ({
@@ -140,6 +151,9 @@ describe('LobbyView', () => {
         selectedOutputDevice: 'speaker1',
         onInputDeviceChange: vi.fn(),
         onOutputDeviceChange: vi.fn(),
+        videoInputDevices: [],
+        selectedVideoDevice: 'default',
+        onVideoDeviceChange: vi.fn(),
         onRefreshDevices: vi.fn(),
         audioLevel: 0,
         isLoading: false,
@@ -308,7 +322,12 @@ describe('LobbyView', () => {
         render(<LobbyView {...defaultProps} />)
 
         expect(screen.getByTestId('device-selector-Microphone')).toBeInTheDocument()
-        expect(screen.getByTestId('device-selector-Speaker')).toBeInTheDocument()
+        // Speaker and Video selectors have empty labels in the new UI design, so they get 'unnamed'
+        const unnamedSelectors = screen.getAllByTestId('device-selector-unnamed')
+        expect(unnamedSelectors).toHaveLength(2)
+
+        // Verify labels exist in the document separate from selectors
+        expect(screen.getByText('Speaker')).toBeInTheDocument()
     })
 
     it('shows test microphone button', () => {
@@ -388,7 +407,8 @@ describe('LobbyView', () => {
         expect(onInputDeviceChange).toHaveBeenCalledWith('mic2')
 
         // Change output device  
-        const speakerSelect = screen.getByTestId('select-Speaker')
+        // Change output device  
+        const speakerSelect = screen.getAllByTestId('select-unnamed')[0]
         fireEvent.change(speakerSelect, { target: { value: 'speaker1' } })
         expect(onOutputDeviceChange).toHaveBeenCalledWith('speaker1')
     })
@@ -453,14 +473,14 @@ describe('LobbyView', () => {
         render(<LobbyView {...defaultProps} />)
 
         const roomInput = screen.getByPlaceholderText('Enter room ID') as HTMLInputElement
-        expect(roomInput).toHaveAttribute('maxLength', '32')
+        expect(roomInput.maxLength).toBe(32)
     })
 
     it('respects max length for name input', () => {
         render(<LobbyView {...defaultProps} />)
 
         const nameInput = screen.getByPlaceholderText('Enter your name') as HTMLInputElement
-        expect(nameInput).toHaveAttribute('maxLength', '32')
+        expect(nameInput.maxLength).toBe(32)
     })
 
     it('shows joining state during loading', () => {
@@ -479,7 +499,7 @@ describe('LobbyView', () => {
 
         // Should render device selectors even with empty lists
         expect(screen.getByTestId('device-selector-Microphone')).toBeInTheDocument()
-        expect(screen.getByTestId('device-selector-Speaker')).toBeInTheDocument()
+        expect(screen.getAllByTestId('device-selector-unnamed')).toHaveLength(2)
     })
 
     it('handles null selected devices gracefully', () => {

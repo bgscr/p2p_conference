@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   echoCancellationEnabled: true,
   autoGainControlEnabled: true,
   selectedInputDevice: null,
+  selectedVideoDevice: null,
   selectedOutputDevice: null
 }
 
@@ -136,18 +137,23 @@ export default function App() {
   const {
     localStream,
     inputDevices,
+    videoInputDevices,
     outputDevices,
     selectedInputDevice,
+    selectedVideoDevice,
     selectedOutputDevice,
     isMuted,
+    isVideoEnabled,
     audioLevel,
     isLoading: mediaLoading,
     error: mediaError,
     startCapture,
     stopCapture,
     switchInputDevice,
+    switchVideoDevice,
     selectOutputDevice,
     toggleMute,
+    toggleVideo,
     refreshDevices
     // Note: setOnStreamChange is available but we use the direct return value from switchInputDevice instead
   } = useMediaStream()
@@ -392,8 +398,14 @@ export default function App() {
             wasmReady: nsStatus.wasmReady
           })
 
+          // Create combined stream: processed audio + raw video
+          const combinedStream = new MediaStream([
+            ...processedStream.getAudioTracks(),
+            ...rawStream.getVideoTracks()
+          ])
+
           // Send processed stream to WebRTC
-          peerManager.setLocalStream(processedStream)
+          peerManager.setLocalStream(combinedStream)
         } catch (pipelineErr) {
           AppLog.warn('AudioPipeline processing failed, using raw stream', { error: pipelineErr })
           // Fallback: use raw stream if pipeline fails
@@ -477,6 +489,30 @@ export default function App() {
       AppLog.warn('switchInputDevice returned null - device switch may have failed')
     }
   }, [switchInputDevice])
+
+  /**
+   * Handle video device change
+   */
+  const handleVideoDeviceChange = useCallback(async (deviceId: string) => {
+    AppLog.info('Switching video device', { deviceId })
+    const newStream = await switchVideoDevice(deviceId)
+
+    if (newStream) {
+      // We need to update the peer connection with the new video track
+      const videoTrack = newStream.getVideoTracks()[0]
+      if (videoTrack) {
+        AppLog.info('Replacing video track in peer connections', {
+          trackId: videoTrack.id,
+          label: videoTrack.label
+        })
+        peerManager.replaceTrack(videoTrack)
+        // Update local stream ref
+        // Note: setLocalStream in peerManager handles adding tracks, 
+        // but relies on existing senders for replacement.
+        peerManager.setLocalStream(newStream)
+      }
+    }
+  }, [switchVideoDevice])
 
   /**
    * Handle settings change
@@ -578,10 +614,13 @@ export default function App() {
           onJoinRoom={handleJoinRoom}
           inputDevices={inputDevices}
           outputDevices={outputDevices}
+          videoInputDevices={videoInputDevices}
           selectedInputDevice={selectedInputDevice}
           selectedOutputDevice={selectedOutputDevice}
+          selectedVideoDevice={selectedVideoDevice}
           onInputDeviceChange={handleInputDeviceChange}
           onOutputDeviceChange={selectOutputDevice}
+          onVideoDeviceChange={handleVideoDeviceChange}
           onRefreshDevices={refreshDevices}
           audioLevel={audioLevel}
           isLoading={mediaLoading}
@@ -597,19 +636,25 @@ export default function App() {
           localPlatform={localPlatform}
           peers={peers}
           remoteStreams={remoteStreams}
+          localStream={localStream}
           connectionState={connectionState}
           isMuted={isMuted}
+          isVideoEnabled={isVideoEnabled}
           isSpeakerMuted={isSpeakerMuted}
           audioLevel={audioLevel}
           selectedOutputDevice={selectedOutputDevice}
           inputDevices={inputDevices}
+          videoInputDevices={videoInputDevices}
           outputDevices={outputDevices}
           selectedInputDevice={selectedInputDevice}
+          selectedVideoDevice={selectedVideoDevice}
           soundEnabled={soundEnabled}
           onToggleMute={handleToggleMute}
+          onToggleVideo={toggleVideo}
           onToggleSpeakerMute={handleToggleSpeakerMute}
           onLeaveRoom={() => setShowLeaveConfirm(true)}
           onInputDeviceChange={handleInputDeviceChange}
+          onVideoDeviceChange={handleVideoDeviceChange}
           onOutputDeviceChange={selectOutputDevice}
           onCopyRoomId={handleCopyRoomId}
           onToggleSound={handleToggleSound}
@@ -624,11 +669,15 @@ export default function App() {
           settings={settings}
           inputDevices={inputDevices}
           outputDevices={outputDevices}
+          videoInputDevices={videoInputDevices}
           selectedInputDevice={selectedInputDevice}
           selectedOutputDevice={selectedOutputDevice}
+          selectedVideoDevice={selectedVideoDevice}
+          localStream={localStream}
           onSettingsChange={handleSettingsChange}
           onInputDeviceChange={handleInputDeviceChange}
           onOutputDeviceChange={selectOutputDevice}
+          onVideoDeviceChange={handleVideoDeviceChange}
           onClose={() => setAppView('lobby')}
           onShowToast={showToast}
         />

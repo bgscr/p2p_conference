@@ -161,6 +161,8 @@ interface SignalMessage {
 interface MuteStatus {
   micMuted: boolean
   speakerMuted: boolean
+  videoMuted?: boolean
+  videoEnabled?: boolean
 }
 
 interface PeerConnection {
@@ -1046,7 +1048,7 @@ export class SimplePeerManager {
   private broadcastChannel: BroadcastChannel | null = null
   private announceInterval: NodeJS.Timeout | null = null
   private announceStartTime: number = 0
-  private localMuteStatus: MuteStatus = { micMuted: false, speakerMuted: false }
+  private localMuteStatus: MuteStatus = { micMuted: false, speakerMuted: false, videoMuted: false, videoEnabled: true }
 
   // Session tracking to prevent stale messages after rejoin
   private sessionId: number = 0
@@ -1302,38 +1304,37 @@ export class SimplePeerManager {
     // Add tracks to all existing peer connections
     this.peers.forEach((peer, peerId) => {
       const senders = peer.pc.getSenders()
-      const audioSender = senders.find(s => s.track?.kind === 'audio')
-
-      // Check if we already have an audio track added
-      if (audioSender && audioSender.track) {
-        SignalingLog.debug('Audio track already added for peer', { peerId })
-        return
-      }
 
       // Add all tracks from the local stream
       const tracks = stream.getTracks()
       tracks.forEach(track => {
-        // Check if this track is already added
-        const existingSender = senders.find(s => s.track === track)
-        if (existingSender) {
-          SignalingLog.debug('Track already added, skipping', { peerId, trackKind: track.kind })
+        // Check if this track ID is already being sent (exact match)
+        const existingSenderExact = senders.find(s => s.track?.id === track.id)
+        if (existingSenderExact) {
+          SignalingLog.debug('Track already being sent', { peerId, trackKind: track.kind, trackId: track.id })
           return
         }
 
-        // Check if there's a sender without a track that we can use
-        const emptySender = senders.find(s => s.track === null)
-        if (emptySender) {
-          SignalingLog.info('Replacing empty sender track', { peerId, trackKind: track.kind })
-          emptySender.replaceTrack(track)
-            .then(() => SignalingLog.info('Track replaced successfully', { peerId, trackKind: track.kind }))
+        // Check if we have a sender for this kind of track already (to replace)
+        const existingSenderKind = senders.find(s => s.track?.kind === track.kind)
+        if (existingSenderKind) {
+          SignalingLog.info('Replacing existing track of same kind', { peerId, kind: track.kind })
+          existingSenderKind.replaceTrack(track)
             .catch(err => SignalingLog.error('Failed to replace track', { peerId, error: String(err) }))
-        } else {
-          SignalingLog.info('Adding new track to peer', { peerId, trackKind: track.kind })
-          try {
-            peer.pc.addTrack(track, stream)
-          } catch (err) {
-            SignalingLog.error('Failed to add track', { peerId, error: String(err) })
-          }
+          return
+        }
+
+        // Check if there's a sender without a track that we can use (re-use transceiver)
+        // Note: Sender kind must match if it was previously negotiated? 
+        // Usage of empty sender is tricky without knowing its kind capability.
+        // We'll skip empty sender reuse for now to avoid kind mismatch errors unless we are sure.
+        // Instead, just addTrack which creates a new transceiver.
+
+        SignalingLog.info('Adding new track to peer', { peerId, trackKind: track.kind })
+        try {
+          peer.pc.addTrack(track, stream)
+        } catch (err) {
+          SignalingLog.error('Failed to add track', { peerId, error: String(err) })
         }
       })
     })
@@ -1342,17 +1343,19 @@ export class SimplePeerManager {
   /**
    * Broadcast local mute status to all peers
    */
-  broadcastMuteStatus(micMuted: boolean, speakerMuted: boolean) {
-    this.localMuteStatus = { micMuted, speakerMuted }
+  broadcastMuteStatus(micMuted: boolean, speakerMuted: boolean, videoEnabled: boolean = true) {
+    // Note: 'videoEnabled' in hook serves as 'videoMuted' inverted logic + device availability
+    const videoMuted = !videoEnabled
+    this.localMuteStatus = { micMuted, speakerMuted, videoMuted, videoEnabled }
 
     if (this.peers.size === 0) return
 
-    SignalingLog.debug('Broadcasting mute status', { micMuted, speakerMuted })
+    SignalingLog.debug('Broadcasting mute status', { micMuted, speakerMuted, videoMuted })
     this.broadcast({
       v: 1,
       type: 'mute-status',
       from: selfId,
-      data: { micMuted, speakerMuted },
+      data: { micMuted, speakerMuted, videoMuted, videoEnabled },
       sessionId: this.sessionId,
       msgId: generateMessageId()
     })
@@ -1362,7 +1365,7 @@ export class SimplePeerManager {
    * Get mute status of a specific peer
    */
   getPeerMuteStatus(peerId: string): MuteStatus {
-    return this.peers.get(peerId)?.muteStatus ?? { micMuted: false, speakerMuted: false }
+    return this.peers.get(peerId)?.muteStatus ?? { micMuted: false, speakerMuted: false, videoMuted: false, videoEnabled: true }
   }
 
   /**

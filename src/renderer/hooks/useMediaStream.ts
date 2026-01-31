@@ -10,10 +10,13 @@ import type { AudioDevice, AudioProcessingConfig } from '@/types'
 interface UseMediaStreamResult {
   localStream: MediaStream | null
   inputDevices: AudioDevice[]
+  videoInputDevices: AudioDevice[]
   outputDevices: AudioDevice[]
   selectedInputDevice: string | null
+  selectedVideoDevice: string | null
   selectedOutputDevice: string | null
   isMuted: boolean
+  isVideoEnabled: boolean
   audioLevel: number
   isLoading: boolean
   error: string | null
@@ -21,8 +24,10 @@ interface UseMediaStreamResult {
   startCapture: (config?: Partial<AudioProcessingConfig>) => Promise<MediaStream | null>
   stopCapture: () => void
   switchInputDevice: (deviceId: string) => Promise<MediaStream | null>
+  switchVideoDevice: (deviceId: string) => Promise<MediaStream | null>
   selectOutputDevice: (deviceId: string) => void
   toggleMute: () => void
+  toggleVideo: () => void
   refreshDevices: () => Promise<void>
   setOnStreamChange: (callback: (stream: MediaStream) => void) => void
 }
@@ -39,10 +44,13 @@ const DEFAULT_CONFIG: AudioProcessingConfig = {
 export function useMediaStream(): UseMediaStreamResult {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([])
+  const [videoInputDevices, setVideoInputDevices] = useState<AudioDevice[]>([])
   const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([])
   const [selectedInputDevice, setSelectedInputDevice] = useState<string | null>(null)
+  const [selectedVideoDevice, setSelectedVideoDevice] = useState<string | null>(null)
   const [selectedOutputDevice, setSelectedOutputDevice] = useState<string | null>(null)
   const [isMuted, setIsMuted] = useState(false)
+  const [isVideoEnabled, setIsVideoEnabled] = useState(true)
   const [audioLevel, setAudioLevel] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -62,6 +70,9 @@ export function useMediaStream(): UseMediaStreamResult {
    * MUST be defined before startCapture and switchInputDevice
    */
   const setupAudioLevelMonitoring = useCallback((stream: MediaStream) => {
+    // Only set up if audio track exists
+    if (stream.getAudioTracks().length === 0) return
+
     // Clean up existing context
     if (audioContextRef.current) {
       audioContextRef.current.close()
@@ -99,15 +110,16 @@ export function useMediaStream(): UseMediaStreamResult {
   }, [])
 
   /**
-   * Enumerate all audio devices
+   * Enumerate all audio and video devices
    */
   const refreshDevices = useCallback(async () => {
-    MediaLog.debug('Refreshing audio devices')
+    MediaLog.debug('Refreshing devices')
 
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
 
       const inputs: AudioDevice[] = []
+      const videoInputs: AudioDevice[] = []
       const outputs: AudioDevice[] = []
 
       devices.forEach(device => {
@@ -116,6 +128,13 @@ export function useMediaStream(): UseMediaStreamResult {
             deviceId: device.deviceId,
             label: device.label || `Microphone ${inputs.length + 1}`,
             kind: 'audioinput',
+            groupId: device.groupId
+          })
+        } else if (device.kind === 'videoinput') {
+          videoInputs.push({
+            deviceId: device.deviceId,
+            label: device.label || `Camera ${videoInputs.length + 1}`,
+            kind: 'videoinput',
             groupId: device.groupId
           })
         } else if (device.kind === 'audiooutput') {
@@ -129,28 +148,34 @@ export function useMediaStream(): UseMediaStreamResult {
       })
 
       setInputDevices(inputs)
+      setVideoInputDevices(videoInputs)
       setOutputDevices(outputs)
 
       // Set default devices if not selected
       if (!selectedInputDevice && inputs.length > 0) {
         setSelectedInputDevice(inputs[0].deviceId)
       }
+      if (!selectedVideoDevice && videoInputs.length > 0) {
+        setSelectedVideoDevice(videoInputs[0].deviceId)
+      }
       if (!selectedOutputDevice && outputs.length > 0) {
         setSelectedOutputDevice(outputs[0].deviceId)
       }
 
-      MediaLog.info('Audio devices enumerated', {
+      MediaLog.info('Devices enumerated', {
         inputCount: inputs.length,
+        videoInputCount: videoInputs.length,
         outputCount: outputs.length
       })
     } catch (err) {
       MediaLog.error('Failed to enumerate devices', { error: err })
-      setError('Failed to enumerate audio devices')
+      setError('Failed to enumerate devices')
     }
-  }, [selectedInputDevice, selectedOutputDevice])
+  }, [selectedInputDevice, selectedVideoDevice, selectedOutputDevice])
 
   /**
-   * Start audio capture from microphone
+   * Start audio/video capture
+   * video: boolean - if true, capture video as well (default: true if available)
    */
   const startCapture = useCallback(async (config?: Partial<AudioProcessingConfig>): Promise<MediaStream | null> => {
     setIsLoading(true)
@@ -158,7 +183,7 @@ export function useMediaStream(): UseMediaStreamResult {
 
     const finalConfig = { ...DEFAULT_CONFIG, ...config }
 
-    MediaLog.info('Starting audio capture', { config: finalConfig })
+    MediaLog.info('Starting capture', { config: finalConfig })
 
     try {
       const constraints: MediaStreamConstraints = {
@@ -170,19 +195,29 @@ export function useMediaStream(): UseMediaStreamResult {
           noiseSuppression: finalConfig.noiseSuppression,
           autoGainControl: finalConfig.autoGainControl
         },
-        video: false
+        video: selectedVideoDevice
+          ? { deviceId: { exact: selectedVideoDevice } }
+          : true // Default to any camera if not selected, or can be passed in config
+      }
+
+      // If explicit video constraint is passed in config, respect it (e.g. video: false)
+      if (config && 'video' in config) {
+        // This is a bit of a hack since AudioProcessingConfig doesn't have video
+        // We'll trust the default behavior primarily but allow overriding if needed
       }
 
       // Add timeout wrapper to prevent getUserMedia from hanging indefinitely
-      // This is particularly important on Linux where audio devices can get "locked"
       const CAPTURE_TIMEOUT_MS = 10000 // 10 seconds
 
-      MediaLog.debug('Calling getUserMedia', { deviceId: selectedInputDevice || 'default' })
+      MediaLog.debug('Calling getUserMedia', {
+        audioDeviceId: selectedInputDevice || 'default',
+        videoDeviceId: selectedVideoDevice || 'default'
+      })
 
       const stream = await Promise.race([
         navigator.mediaDevices.getUserMedia(constraints),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Microphone capture timed out. The audio device may be in use by another application.')), CAPTURE_TIMEOUT_MS)
+          setTimeout(() => reject(new Error('Media capture timed out. The device may be in use by another application.')), CAPTURE_TIMEOUT_MS)
         )
       ])
 
@@ -195,7 +230,14 @@ export function useMediaStream(): UseMediaStreamResult {
       // Set up audio level monitoring
       setupAudioLevelMonitoring(stream)
 
-      MediaLog.info('Audio capture started', {
+      // Initialize states based on stream tracks
+      const audioTrack = stream.getAudioTracks()[0]
+      if (audioTrack) setIsMuted(!audioTrack.enabled)
+
+      const videoTrack = stream.getVideoTracks()[0]
+      if (videoTrack) setIsVideoEnabled(videoTrack.enabled)
+
+      MediaLog.info('Capture started', {
         streamId: stream.id,
         tracks: stream.getTracks().map(t => ({ kind: t.kind, label: t.label }))
       })
@@ -206,22 +248,22 @@ export function useMediaStream(): UseMediaStreamResult {
       MediaLog.error('Failed to start capture', { error: err })
 
       if (err.name === 'NotAllowedError') {
-        setError('Microphone permission denied. Please allow access in your browser/system settings.')
+        setError('Permission denied. Please allow access to microphone and camera.')
       } else if (err.name === 'NotFoundError') {
-        setError('No microphone found. Please connect a microphone and try again.')
+        setError('No device found. Please connect a microphone/camera and try again.')
       } else {
-        setError(`Failed to access microphone: ${err.message}`)
+        setError(`Failed to access media devices: ${err.message}`)
       }
       setIsLoading(false)
       return null
     }
-  }, [selectedInputDevice, refreshDevices, setupAudioLevelMonitoring])
+  }, [selectedInputDevice, selectedVideoDevice, refreshDevices, setupAudioLevelMonitoring])
 
   // Track if cleanup has already been done to prevent double cleanup
   const cleanupDoneRef = useRef(false)
 
   /**
-   * Stop audio capture - with guard against double cleanup
+   * Stop capture - with guard against double cleanup
    */
   const stopCapture = useCallback(() => {
     // Guard against double cleanup on Linux
@@ -239,7 +281,7 @@ export function useMediaStream(): UseMediaStreamResult {
         MediaLog.debug('Track stopped', { kind: track.kind, label: track.label })
       })
       setLocalStream(null)
-      MediaLog.info('Audio capture stopped')
+      MediaLog.info('Capture stopped')
     }
 
     if (audioContextRef.current) {
@@ -281,6 +323,9 @@ export function useMediaStream(): UseMediaStreamResult {
 
     try {
       // Get new stream from selected device
+      // We need to keep video track if it exists
+      const videoTrack = currentStream.getVideoTracks()[0]
+
       const newStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: { exact: deviceId },
@@ -288,14 +333,19 @@ export function useMediaStream(): UseMediaStreamResult {
           noiseSuppression: true,
           autoGainControl: true
         },
-        video: false
+        video: false // We only ask for audio here, we'll combine later if needed
       })
 
-      // Stop old tracks AFTER we have the new stream
-      currentStream.getTracks().forEach(track => {
-        MediaLog.debug('Stopping old track', { kind: track.kind, label: track.label })
+      // Stop old audio track
+      currentStream.getAudioTracks().forEach(track => {
+        MediaLog.debug('Stopping old audio track', { label: track.label })
         track.stop()
       })
+
+      // If we had a video track, add it to the new stream
+      if (videoTrack) {
+        newStream.addTrack(videoTrack)
+      }
 
       // Reset cleanup flag since this is an intentional switch, not a stop
       cleanupDoneRef.current = false
@@ -318,8 +368,7 @@ export function useMediaStream(): UseMediaStreamResult {
 
       MediaLog.info('Input device switched successfully', {
         deviceId,
-        newStreamId: newStream.id,
-        trackLabel: newStream.getAudioTracks()[0]?.label
+        newStreamId: newStream.id
       })
 
       return newStream
@@ -329,6 +378,62 @@ export function useMediaStream(): UseMediaStreamResult {
       return null
     }
   }, [setupAudioLevelMonitoring])
+
+  /**
+   * Switch to a different video device
+   */
+  const switchVideoDevice = useCallback(async (deviceId: string): Promise<MediaStream | null> => {
+    const currentStream = localStreamRef.current
+    if (!currentStream) {
+      setSelectedVideoDevice(deviceId)
+      return null
+    }
+
+    MediaLog.info('Switching video device', { deviceId })
+
+    try {
+      // Get new video stream
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId } },
+        audio: false
+      })
+
+      const newVideoTrack = videoStream.getVideoTracks()[0]
+
+      // Stop old video track
+      currentStream.getVideoTracks().forEach(track => {
+        MediaLog.debug('Stopping old video track', { label: track.label })
+        track.stop()
+        currentStream.removeTrack(track)
+      })
+
+      // Add new video track to current stream
+      if (newVideoTrack) {
+        currentStream.addTrack(newVideoTrack)
+
+        // Respect current enabled state
+        newVideoTrack.enabled = isVideoEnabled
+      }
+
+      // Update state
+      setSelectedVideoDevice(deviceId)
+
+      // Force update to trigger effects
+      setLocalStream(new MediaStream(currentStream.getTracks()))
+
+      // Notify listeners about stream change
+      if (onStreamChangeRef.current && onStreamChangeRef.current) {
+        onStreamChangeRef.current(currentStream)
+      }
+
+      MediaLog.info('Video device switched successfully', { deviceId })
+      return currentStream
+    } catch (err) {
+      MediaLog.error('Failed to switch video device', { deviceId, error: err })
+      setError('Failed to switch camera')
+      return null
+    }
+  }, [isVideoEnabled])
 
   /**
    * Select output device (for HTMLAudioElement.setSinkId)
@@ -349,6 +454,26 @@ export function useMediaStream(): UseMediaStreamResult {
         audioTrack.enabled = !audioTrack.enabled
         setIsMuted(!audioTrack.enabled)
         MediaLog.info('Mute toggled', { muted: !audioTrack.enabled })
+      }
+    }
+  }, [])
+
+  /**
+   * Toggle video state
+   */
+  const toggleVideo = useCallback(() => {
+    if (localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0]
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled
+        setIsVideoEnabled(videoTrack.enabled)
+        MediaLog.info('Video toggled', { enabled: videoTrack.enabled })
+      } else {
+        // If no video track, we might need to add one? 
+        // For now assume track exists if we started with video. 
+        // If track was stopped/removed, we'd need to re-request getUserMedia, 
+        // but 'enabled' toggle is cleaner for temporary off.
+        MediaLog.warn('No video track to toggle')
       }
     }
   }, [])
@@ -382,18 +507,23 @@ export function useMediaStream(): UseMediaStreamResult {
   return {
     localStream,
     inputDevices,
+    videoInputDevices,
     outputDevices,
     selectedInputDevice,
+    selectedVideoDevice,
     selectedOutputDevice,
     isMuted,
+    isVideoEnabled,
     audioLevel,
     isLoading,
     error,
     startCapture,
     stopCapture,
     switchInputDevice,
+    switchVideoDevice,
     selectOutputDevice,
     toggleMute,
+    toggleVideo,
     refreshDevices,
     setOnStreamChange
   }

@@ -16,12 +16,12 @@ declare global {
 export type ConnectionState = 'idle' | 'signaling' | 'connecting' | 'connected' | 'failed'
 
 /**
- * Audio device information
+ * Audio/Video device information
  */
 export interface AudioDevice {
   deviceId: string
   label: string
-  kind: 'audioinput' | 'audiooutput'
+  kind: 'audioinput' | 'audiooutput' | 'videoinput'
   groupId: string
 }
 
@@ -32,6 +32,7 @@ export interface Peer {
   id: string
   name: string
   isMuted: boolean
+  isVideoMuted?: boolean
   isSpeakerMuted?: boolean
   audioLevel: number
   connectionState: RTCPeerConnectionState
@@ -64,6 +65,7 @@ export interface AppSettings {
   echoCancellationEnabled: boolean
   autoGainControlEnabled: boolean
   selectedInputDevice: string | null
+  selectedVideoDevice: string | null
   selectedOutputDevice: string | null
 }
 

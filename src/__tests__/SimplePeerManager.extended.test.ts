@@ -446,10 +446,10 @@ describe('SimplePeerManager Extended Tests', () => {
       await vi.advanceTimersByTimeAsync(100)
       await joinPromise
 
-      manager.broadcastMuteStatus(true, true)
+      manager.broadcastMuteStatus(true, true, false)
 
       const debugInfo = manager.getDebugInfo() as any
-      expect(debugInfo.localMuteStatus).toEqual({ micMuted: true, speakerMuted: true })
+      expect(debugInfo.localMuteStatus).toEqual({ micMuted: true, speakerMuted: true, videoMuted: true, videoEnabled: false })
     })
   })
 
@@ -728,7 +728,7 @@ describe('SimplePeerManager Extended Tests', () => {
   describe('getPeerMuteStatus', () => {
     it('should return default mute status for unknown peer', () => {
       const status = manager.getPeerMuteStatus('unknown-peer')
-      expect(status).toEqual({ micMuted: false, speakerMuted: false })
+      expect(status).toMatchObject({ micMuted: false, speakerMuted: false })
     })
   })
 

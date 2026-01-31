@@ -33,6 +33,7 @@ const mockStream = {
     id: 'stream-123',
     getTracks: vi.fn(() => [mockTrack]),
     getAudioTracks: vi.fn(() => [mockTrack]),
+    getVideoTracks: vi.fn(() => []),
     active: true
 }
 
@@ -185,7 +186,8 @@ describe('useMediaStream Hook', () => {
             })
 
             expect(result.current.localStream).toBeNull()
-            expect(result.current.error).toContain('permission denied')
+            expect(result.current.error).toBeTruthy()
+            expect(result.current.error?.toLowerCase()).toContain('permission denied')
         })
     })
 

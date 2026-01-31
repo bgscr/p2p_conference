@@ -233,7 +233,7 @@ describe('SimplePeerManager - Edge Cases', () => {
         // Should find existing track and return early
         const { SignalingLog } = await import('../renderer/utils/Logger')
         expect(SignalingLog.debug).toHaveBeenCalledWith(
-            expect.stringContaining('Audio track already added'),
+            expect.stringContaining('Track already being sent'),
             expect.anything()
         )
 

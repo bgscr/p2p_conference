@@ -22,6 +22,9 @@ interface LobbyViewProps {
   onRefreshDevices: () => void
   audioLevel: number
   isLoading: boolean
+  videoInputDevices: AudioDevice[]
+  selectedVideoDevice: string | null
+  onVideoDeviceChange: (deviceId: string) => void
   onOpenSettings: () => void
 }
 
@@ -43,10 +46,13 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   onJoinRoom,
   inputDevices,
   outputDevices,
+  videoInputDevices,
   selectedInputDevice,
   selectedOutputDevice,
+  selectedVideoDevice,
   onInputDeviceChange,
   onOutputDeviceChange,
+  onVideoDeviceChange,
   onRefreshDevices,
   audioLevel: _audioLevel,
   isLoading,
@@ -56,14 +62,19 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const [roomId, setRoomId] = useState('')
   const [userName, setUserName] = useState('')
   const [testingMic, setTestingMic] = useState(false)
+  const [testingSpeaker, setTestingSpeaker] = useState(false)
+  const [testingCamera, setTestingCamera] = useState(false)
   const [testAudioLevel, setTestAudioLevel] = useState(0)
   const [showPrivacyNotice, setShowPrivacyNotice] = useState(false)
-  const [isJoining, setIsJoining] = useState(false)  // Immediate loading state
+  const [isJoining, setIsJoining] = useState(false)
 
   // Refs for audio testing
   const testStreamRef = useRef<MediaStream | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
 
   // Generate default username
   useEffect(() => {
@@ -76,9 +87,14 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   }, [])
 
   // Cleanup on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopMicTest()
+      stopCameraTest()
+      if (audioContextRef.current) {
+        audioContextRef.current.close()
+      }
     }
   }, [])
 
@@ -90,6 +106,24 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInputDevice])
+
+  // Restart camera test when device changes
+  useEffect(() => {
+    if (testingCamera && selectedVideoDevice) {
+      stopCameraTest()
+      startCameraTest()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVideoDevice])
+
+  // Attach stream to video element when it becomes available
+  useEffect(() => {
+    if (testingCamera && videoRef.current && cameraStreamRef.current) {
+      videoRef.current.srcObject = cameraStreamRef.current
+      // Explicitly play to ensure it starts (sometimes needed)
+      videoRef.current.play().catch(e => UILog.warn('Failed to autoplay video preview', { error: e }))
+    }
+  }, [testingCamera])
 
   /**
    * Start microphone test with audio level monitoring
@@ -168,6 +202,115 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     setTestingMic(false)
 
     UILog.debug('Microphone test stopped')
+  }
+
+  /**
+   * Test speaker by playing a frequency sweep
+   */
+  const handleTestSpeaker = async () => {
+    if (testingSpeaker) {
+      if (audioContextRef.current) {
+        audioContextRef.current.close()
+        audioContextRef.current = null
+      }
+      setTestingSpeaker(false)
+      return
+    }
+
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
+      const ctx = new AudioContextClass()
+      audioContextRef.current = ctx
+
+      // Create oscillator for test tone
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+
+      osc.type = 'sine'
+      // Sweep from 440Hz to 880Hz
+      osc.frequency.setValueAtTime(440, ctx.currentTime)
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 1)
+
+      gain.gain.setValueAtTime(0.1, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1)
+
+      osc.connect(gain)
+
+      // Connect to specific output device if selected (Chrome only)
+      if (selectedOutputDevice && (ctx.destination as any).setSinkId) {
+        try {
+          await (ctx.destination as any).setSinkId(selectedOutputDevice)
+        } catch (err) {
+          console.warn('Failed to set output device for test', err)
+        }
+      }
+
+      gain.connect(ctx.destination)
+
+      osc.start()
+      osc.stop(ctx.currentTime + 1)
+
+      setTestingSpeaker(true)
+
+      // Auto stop after duration
+      setTimeout(() => {
+        setTestingSpeaker(false)
+        if (audioContextRef.current === ctx) {
+          ctx.close()
+          audioContextRef.current = null
+        }
+      }, 1000)
+
+    } catch (err) {
+      UILog.error('Speaker test failed', { error: err })
+    }
+  }
+
+  /**
+   * Start camera test
+   */
+  const startCameraTest = async () => {
+    try {
+      const constraints = {
+        audio: false,
+        video: selectedVideoDevice
+          ? { deviceId: { exact: selectedVideoDevice } }
+          : true
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      cameraStreamRef.current = stream
+
+
+
+      setTestingCamera(true)
+      UILog.info('Camera test started')
+    } catch (err) {
+      UILog.error('Camera test failed', { error: err })
+      alert(t('lobby.cameraPermissionDenied'))
+    }
+  }
+
+  /**
+   * Stop camera test
+   */
+  const stopCameraTest = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(track => track.stop())
+      cameraStreamRef.current = null
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+    setTestingCamera(false)
+  }
+
+  const handleTestCamera = () => {
+    if (testingCamera) {
+      stopCameraTest()
+    } else {
+      startCameraTest()
+    }
   }
 
   const handleUserNameChange = (name: string) => {
@@ -315,13 +458,53 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               </div>
             )}
 
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">{t('lobby.speaker')}</span>
+              <button
+                onClick={handleTestSpeaker}
+                className={`text-sm ${testingSpeaker ? 'text-red-600 hover:text-red-700' : 'text-blue-600 hover:text-blue-700'} font-medium`}
+              >
+                {testingSpeaker ? `■ ${t('lobby.stopTest')}` : `▶ ${t('lobby.testSpeaker')}`}
+              </button>
+            </div>
+
             <DeviceSelector
-              label={t('lobby.speaker')}
+              label=""
               devices={outputDevices}
               selectedDeviceId={selectedOutputDevice}
               onSelect={onOutputDeviceChange}
               icon="speaker"
             />
+
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-sm font-medium text-gray-700">{t('settings.videoDevice')}</span>
+              <button
+                onClick={handleTestCamera}
+                className={`text-sm ${testingCamera ? 'text-red-600 hover:text-red-700' : 'text-blue-600 hover:text-blue-700'} font-medium`}
+              >
+                {testingCamera ? `■ ${t('lobby.stopTest')}` : `▶ ${t('lobby.testCamera')}`}
+              </button>
+            </div>
+
+            <DeviceSelector
+              label=""
+              devices={videoInputDevices}
+              selectedDeviceId={selectedVideoDevice}
+              onSelect={onVideoDeviceChange}
+              icon="video"
+            />
+
+            {testingCamera && (
+              <div className="bg-black rounded-lg overflow-hidden aspect-video relative">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
           </div>
 
           {/* Privacy Notice */}

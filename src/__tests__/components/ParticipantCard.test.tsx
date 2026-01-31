@@ -127,7 +127,8 @@ describe('ParticipantCard', () => {
         const mockStream = {
             id: 'stream1',
             getTracks: vi.fn().mockReturnValue([mockTrack]),
-            getAudioTracks: vi.fn().mockReturnValue([mockTrack])
+            getAudioTracks: vi.fn().mockReturnValue([mockTrack]),
+            getVideoTracks: vi.fn().mockReturnValue([])
         } as any
 
         // Track srcObject assignments
