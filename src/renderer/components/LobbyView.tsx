@@ -12,7 +12,7 @@ import { getAudioPipeline } from '../audio-processor/AudioPipeline'
 import type { AudioDevice } from '@/types'
 
 interface LobbyViewProps {
-  onJoinRoom: (roomId: string, userName: string) => void
+  onJoinRoom: (roomId: string, userName: string, cameraEnabled: boolean) => void
   inputDevices: AudioDevice[]
   outputDevices: AudioDevice[]
   selectedInputDevice: string | null
@@ -67,6 +67,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const [testAudioLevel, setTestAudioLevel] = useState(0)
   const [showPrivacyNotice, setShowPrivacyNotice] = useState(false)
   const [isJoining, setIsJoining] = useState(false)
+  const [cameraEnabled, setCameraEnabled] = useState(false)  // Camera OFF by default
 
   // Refs for audio testing
   const testStreamRef = useRef<MediaStream | null>(null)
@@ -344,7 +345,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     // This prevents race condition on Linux where getUserMedia hangs
     await new Promise(resolve => setTimeout(resolve, 100))
 
-    onJoinRoom(roomId.trim(), userName.trim())
+    onJoinRoom(roomId.trim(), userName.trim(), cameraEnabled)
   }
 
   const handleTestMic = () => {
@@ -505,6 +506,22 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 />
               </div>
             )}
+
+            {/* Camera On/Off Toggle for Join */}
+            <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+              <span className="text-sm text-gray-700">{t('lobby.startWithCamera')}</span>
+              <button
+                onClick={() => setCameraEnabled(!cameraEnabled)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${cameraEnabled ? 'bg-blue-600' : 'bg-gray-300'
+                  }`}
+                data-testid="camera-toggle"
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${cameraEnabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                />
+              </button>
+            </div>
           </div>
 
           {/* Privacy Notice */}

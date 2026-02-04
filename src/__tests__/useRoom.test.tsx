@@ -201,5 +201,70 @@ describe('useRoom Hook', () => {
 
             expect(result.current.peers.get('peer-1')?.isSpeakerMuted).toBe(true)
         })
+
+        it('should handle peer video mute change', async () => {
+            const { result } = renderHook(() => useRoom())
+            const callbacks = vi.mocked(peerManager.setCallbacks).mock.calls[0][0]
+
+            // Add peer
+            act(() => {
+                if (callbacks.onPeerJoin) {
+                    callbacks.onPeerJoin('peer-1', 'Bob', 'win')
+                }
+            })
+
+            // Verify initial state (isVideoMuted should be undefined initially)
+            expect(result.current.peers.get('peer-1')?.isVideoMuted).toBeUndefined()
+
+            // Trigger video mute (video disabled)
+            act(() => {
+                if (callbacks.onPeerMuteChange) {
+                    callbacks.onPeerMuteChange('peer-1', { micMuted: false, speakerMuted: false, videoMuted: true })
+                }
+            })
+
+            expect(result.current.peers.get('peer-1')?.isVideoMuted).toBe(true)
+
+            // Trigger video unmute (video enabled)
+            act(() => {
+                if (callbacks.onPeerMuteChange) {
+                    callbacks.onPeerMuteChange('peer-1', { micMuted: false, speakerMuted: false, videoMuted: false })
+                }
+            })
+
+            expect(result.current.peers.get('peer-1')?.isVideoMuted).toBe(false)
+        })
+
+        it('should preserve video mute state when only mic/speaker changes', async () => {
+            const { result } = renderHook(() => useRoom())
+            const callbacks = vi.mocked(peerManager.setCallbacks).mock.calls[0][0]
+
+            // Add peer
+            act(() => {
+                if (callbacks.onPeerJoin) {
+                    callbacks.onPeerJoin('peer-1', 'Bob', 'win')
+                }
+            })
+
+            // Set video muted
+            act(() => {
+                if (callbacks.onPeerMuteChange) {
+                    callbacks.onPeerMuteChange('peer-1', { micMuted: false, speakerMuted: false, videoMuted: true })
+                }
+            })
+
+            expect(result.current.peers.get('peer-1')?.isVideoMuted).toBe(true)
+
+            // Now change only mic status (without videoMuted in payload)
+            act(() => {
+                if (callbacks.onPeerMuteChange) {
+                    callbacks.onPeerMuteChange('peer-1', { micMuted: true, speakerMuted: false })
+                }
+            })
+
+            // isVideoMuted should be preserved
+            expect(result.current.peers.get('peer-1')?.isVideoMuted).toBe(true)
+            expect(result.current.peers.get('peer-1')?.isMuted).toBe(true)
+        })
     })
 })

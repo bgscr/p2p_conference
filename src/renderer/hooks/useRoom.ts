@@ -141,7 +141,7 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
         callbacksRef.current.onPeerLeave?.(peerId, userName)
       },
 
-      onPeerMuteChange: (peerId: string, muteStatus: { micMuted: boolean, speakerMuted: boolean }) => {
+      onPeerMuteChange: (peerId: string, muteStatus: { micMuted: boolean, speakerMuted: boolean, videoMuted?: boolean }) => {
         RoomLog.debug('Peer mute status changed', { peerId, muteStatus })
 
         setPeers(prev => {
@@ -152,7 +152,8 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
             updated.set(peerId, {
               ...peer,
               isMuted: muteStatus.micMuted,
-              isSpeakerMuted: muteStatus.speakerMuted
+              isSpeakerMuted: muteStatus.speakerMuted,
+              isVideoMuted: muteStatus.videoMuted ?? peer.isVideoMuted
             })
           }
 

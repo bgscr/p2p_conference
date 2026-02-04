@@ -1702,12 +1702,13 @@ export class SimplePeerManager {
     }
   }
 
-  private handleMuteStatus(peerId: string, data: { micMuted?: boolean; speakerMuted?: boolean }) {
+  private handleMuteStatus(peerId: string, data: { micMuted?: boolean; speakerMuted?: boolean; videoMuted?: boolean }) {
     const peer = this.peers.get(peerId)
     if (peer) {
       peer.muteStatus = {
         micMuted: data.micMuted ?? peer.muteStatus.micMuted,
-        speakerMuted: data.speakerMuted ?? peer.muteStatus.speakerMuted
+        speakerMuted: data.speakerMuted ?? peer.muteStatus.speakerMuted,
+        videoMuted: data.videoMuted ?? peer.muteStatus?.videoMuted
       }
       SignalingLog.debug('Peer mute status changed', { peerId, ...peer.muteStatus })
       this.onPeerMuteChange(peerId, peer.muteStatus)

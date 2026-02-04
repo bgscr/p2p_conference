@@ -328,9 +328,9 @@ export default function App() {
     if (soundEnabled) {
       soundManager.playClick()
     }
-    // Broadcast mute status to all peers
-    peerManager.broadcastMuteStatus(newMuted, isSpeakerMuted)
-  }, [toggleMute, soundEnabled, isMuted, isSpeakerMuted])
+    // Broadcast mute status to all peers (including video state)
+    peerManager.broadcastMuteStatus(newMuted, isSpeakerMuted, isVideoEnabled)
+  }, [toggleMute, soundEnabled, isMuted, isSpeakerMuted, isVideoEnabled])
 
   /**
    * Handle speaker mute toggle
@@ -341,9 +341,19 @@ export default function App() {
     if (soundEnabled) {
       soundManager.playClick()
     }
-    // Broadcast mute status to all peers
-    peerManager.broadcastMuteStatus(isMuted, newSpeakerMuted)
-  }, [soundEnabled, isMuted, isSpeakerMuted])
+    // Broadcast mute status to all peers (including video state)
+    peerManager.broadcastMuteStatus(isMuted, newSpeakerMuted, isVideoEnabled)
+  }, [soundEnabled, isMuted, isSpeakerMuted, isVideoEnabled])
+
+  /**
+   * Handle video toggle with broadcast to peers
+   */
+  const handleToggleVideo = useCallback(() => {
+    const newVideoEnabled = !isVideoEnabled
+    toggleVideo()
+    // Broadcast mute status including video state to all peers
+    peerManager.broadcastMuteStatus(isMuted, isSpeakerMuted, newVideoEnabled)
+  }, [toggleVideo, isVideoEnabled, isMuted, isSpeakerMuted])
 
   /**
    * Cancel search and return to lobby
@@ -360,11 +370,11 @@ export default function App() {
   /**
    * Join room handler - switch to room view IMMEDIATELY, then start capture
    */
-  const handleJoinRoom = useCallback(async (roomIdInput: string, name: string) => {
+  const handleJoinRoom = useCallback(async (roomIdInput: string, name: string, cameraEnabled: boolean = false) => {
     setUserName(name)
     setGlobalError(null)
 
-    AppLog.info('Attempting to join room', { roomId: roomIdInput, userName: name })
+    AppLog.info('Attempting to join room', { roomId: roomIdInput, userName: name, cameraEnabled })
 
     // Switch to room view IMMEDIATELY so user sees the searching overlay
     setAppView('room')
@@ -376,8 +386,9 @@ export default function App() {
       const rawStream = await startCapture({
         echoCancellation: settings.echoCancellationEnabled,
         noiseSuppression: false, // Let RNNoise handle this instead of browser
-        autoGainControl: settings.autoGainControlEnabled
-      })
+        autoGainControl: settings.autoGainControlEnabled,
+        videoEnabled: cameraEnabled  // Pass camera state from lobby
+      } as any)
 
       if (rawStream) {
         // Process through AudioPipeline for RNNoise AI noise suppression
@@ -416,7 +427,10 @@ export default function App() {
       // Join the signaling room
       await joinRoom(roomIdInput, name)
 
-      AppLog.info('Successfully joined room', { roomId: roomIdInput })
+      // Set initial mute status including video state so peers know camera is off
+      peerManager.broadcastMuteStatus(isMuted, isSpeakerMuted, cameraEnabled)
+
+      AppLog.info('Successfully joined room', { roomId: roomIdInput, cameraEnabled })
 
     } catch (err: any) {
       AppLog.error('Failed to join room', { roomId: roomIdInput, error: err })
@@ -424,7 +438,7 @@ export default function App() {
       // Go back to lobby on error
       setAppView('lobby')
     }
-  }, [startCapture, settings, joinRoom, t])
+  }, [startCapture, settings, joinRoom, t, isMuted, isSpeakerMuted])
 
   /**
    * Update local stream in peer manager when it changes
@@ -650,7 +664,7 @@ export default function App() {
           selectedVideoDevice={selectedVideoDevice}
           soundEnabled={soundEnabled}
           onToggleMute={handleToggleMute}
-          onToggleVideo={toggleVideo}
+          onToggleVideo={handleToggleVideo}
           onToggleSpeakerMute={handleToggleSpeakerMute}
           onLeaveRoom={() => setShowLeaveConfirm(true)}
           onInputDeviceChange={handleInputDeviceChange}

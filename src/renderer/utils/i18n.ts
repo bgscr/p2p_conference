@@ -43,6 +43,7 @@ const en: Translations = {
     nameMinLength: 'Please enter your name',
     micPermissionDenied: 'Could not access microphone. Please check permissions.',
     cameraPermissionDenied: 'Could not access camera. Please check permissions.',
+    startWithCamera: 'Start with camera',
   },
   room: {
     you: 'You',
@@ -230,6 +231,7 @@ const zhCN: Translations = {
     nameMinLength: '请输入您的名字',
     micPermissionDenied: '无法访问麦克风，请检查权限设置。',
     cameraPermissionDenied: '无法访问摄像头，请检查权限设置。',
+    startWithCamera: '启动时打开摄像头',
   },
   room: {
     you: '我',

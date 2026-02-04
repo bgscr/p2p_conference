@@ -186,6 +186,16 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream, isLocal])
 
+  // Separate effect to handle localSpeakerMuted changes
+  // This avoids re-running the complex audio setup effect
+  useEffect(() => {
+    const audioElement = audioRef.current
+    if (audioElement && !isLocal) {
+      audioElement.muted = localSpeakerMuted
+      AudioLog.debug('Audio muted state updated', { peerId, muted: localSpeakerMuted })
+    }
+  }, [localSpeakerMuted, isLocal, peerId])
+
   // ... (lines 161-271 same)
 
   const showVideo = stream && !isVideoMuted && (stream.getVideoTracks().length > 0)

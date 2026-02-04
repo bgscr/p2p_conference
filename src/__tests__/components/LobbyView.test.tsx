@@ -37,11 +37,12 @@ vi.mock('../../renderer/hooks/useI18n', () => ({
                 'lobby.settings': 'Settings',
                 'lobby.roomIdMinLength': 'Room ID must be at least 4 characters',
                 'lobby.nameMinLength': 'Name must be at least 2 characters',
-                'lobby.enterRoomId': 'Enter ID',
 
                 'lobby.micPermissionDenied': 'Microphone permission denied',
-                'lobby.microphone': 'Microphone',
-                'lobby.speaker': 'Speaker',
+                'lobby.cameraPermissionDenied': 'Camera permission denied',
+                'lobby.testSpeaker': 'Test Speaker',
+                'lobby.testCamera': 'Test Camera',
+                'lobby.startWithCamera': 'Start with camera',
                 'settings.videoDevice': 'Camera'
             }
             return translations[key] || key
@@ -227,7 +228,7 @@ describe('LobbyView', () => {
             vi.advanceTimersByTime(200)
         })
 
-        expect(onJoinRoom).toHaveBeenCalledWith('test-room-123', 'Test User')
+        expect(onJoinRoom).toHaveBeenCalledWith('test-room-123', 'Test User', false)
     })
 
     it('disables join button for room ID less than 4 characters', () => {
@@ -466,7 +467,7 @@ describe('LobbyView', () => {
             vi.advanceTimersByTime(200)
         })
 
-        expect(onJoinRoom).toHaveBeenCalledWith('test-room', 'Test User')
+        expect(onJoinRoom).toHaveBeenCalledWith('test-room', 'Test User', false)
     })
 
     it('respects max length for room ID input', () => {
@@ -511,5 +512,63 @@ describe('LobbyView', () => {
 
         // Should render without errors
         expect(screen.getByText('P2P Conference')).toBeInTheDocument()
+    })
+
+    // Camera toggle tests
+    describe('Camera Toggle', () => {
+        it('renders camera toggle with default OFF state', () => {
+            render(<LobbyView {...defaultProps} />)
+
+            const cameraToggle = screen.getByTestId('camera-toggle')
+            expect(cameraToggle).toBeInTheDocument()
+            // Default should be OFF (gray background)
+            expect(cameraToggle).toHaveClass('bg-gray-300')
+        })
+
+        it('toggles camera state when clicked', () => {
+            render(<LobbyView {...defaultProps} />)
+
+            const cameraToggle = screen.getByTestId('camera-toggle')
+
+            // Initially OFF
+            expect(cameraToggle).toHaveClass('bg-gray-300')
+
+            // Click to turn ON
+            fireEvent.click(cameraToggle)
+            expect(cameraToggle).toHaveClass('bg-blue-600')
+
+            // Click to turn OFF again
+            fireEvent.click(cameraToggle)
+            expect(cameraToggle).toHaveClass('bg-gray-300')
+        })
+
+        it('passes cameraEnabled=true to onJoinRoom when toggle is ON', async () => {
+            const onJoinRoom = vi.fn()
+            render(<LobbyView {...defaultProps} onJoinRoom={onJoinRoom} />)
+
+            const nameInput = screen.getByPlaceholderText('Enter your name')
+            const roomInput = screen.getByPlaceholderText('Enter room ID')
+            const cameraToggle = screen.getByTestId('camera-toggle')
+
+            fireEvent.change(nameInput, { target: { value: 'Test User' } })
+            fireEvent.change(roomInput, { target: { value: 'test-room' } })
+
+            // Turn camera ON
+            fireEvent.click(cameraToggle)
+
+            const joinBtn = screen.getByText('Join Room')
+            await act(async () => {
+                fireEvent.click(joinBtn)
+                vi.advanceTimersByTime(200)
+            })
+
+            expect(onJoinRoom).toHaveBeenCalledWith('test-room', 'Test User', true)
+        })
+
+        it('displays "Start with camera" label', () => {
+            render(<LobbyView {...defaultProps} />)
+
+            expect(screen.getByText('Start with camera')).toBeInTheDocument()
+        })
     })
 })

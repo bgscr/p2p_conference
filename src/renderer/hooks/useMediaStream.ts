@@ -50,7 +50,7 @@ export function useMediaStream(): UseMediaStreamResult {
   const [selectedVideoDevice, setSelectedVideoDevice] = useState<string | null>(null)
   const [selectedOutputDevice, setSelectedOutputDevice] = useState<string | null>(null)
   const [isMuted, setIsMuted] = useState(false)
-  const [isVideoEnabled, setIsVideoEnabled] = useState(true)
+  const [isVideoEnabled, setIsVideoEnabled] = useState(false)
   const [audioLevel, setAudioLevel] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -234,8 +234,14 @@ export function useMediaStream(): UseMediaStreamResult {
       const audioTrack = stream.getAudioTracks()[0]
       if (audioTrack) setIsMuted(!audioTrack.enabled)
 
+      // Handle video enabled state - check if videoEnabled option was passed
       const videoTrack = stream.getVideoTracks()[0]
-      if (videoTrack) setIsVideoEnabled(videoTrack.enabled)
+      const shouldEnableVideo = (config as any)?.videoEnabled ?? false  // Default: camera OFF
+      if (videoTrack) {
+        videoTrack.enabled = shouldEnableVideo
+        setIsVideoEnabled(shouldEnableVideo)
+        MediaLog.info('Video toggled', { enabled: shouldEnableVideo })
+      }
 
       MediaLog.info('Capture started', {
         streamId: stream.id,

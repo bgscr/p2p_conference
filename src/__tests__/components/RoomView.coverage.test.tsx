@@ -54,6 +54,7 @@ vi.mock('../../renderer/hooks/useI18n', () => ({
 
 vi.mock('../../renderer/utils/Logger', () => ({
   UILog: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  AudioLog: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   logger: { downloadLogs: vi.fn() }
 }))
 
