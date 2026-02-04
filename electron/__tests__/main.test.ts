@@ -83,7 +83,7 @@ vi.mock('electron', () => {
     };
 });
 
-vi.mock('./logger', () => ({
+vi.mock('../logger', () => ({
     fileLogger: {
         init: vi.fn().mockResolvedValue(undefined),
         getLogsDir: vi.fn(),
@@ -100,15 +100,15 @@ vi.mock('./logger', () => ({
     IPCLog: { info: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock('./credentials', () => ({
+vi.mock('../credentials', () => ({
     getICEServers: vi.fn(),
     getMQTTBrokers: vi.fn(),
 }));
 
 // Import main to trigger execution
-import './main';
+import '../main';
 import { ipcMain, app, BrowserWindow } from 'electron';
-import { MainLog } from './logger';
+import { MainLog } from '../logger';
 
 describe('Main Process', () => {
     it('should register IPC handlers', () => {

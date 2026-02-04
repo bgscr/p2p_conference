@@ -26,7 +26,7 @@ vi.mock('fs', async () => {
 
 import { app } from 'electron';
 import fs from 'fs';
-import { fileLogger } from './logger';
+import { fileLogger } from '../logger';
 
 describe('FileLogger', () => {
     beforeEach(() => {

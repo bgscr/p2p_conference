@@ -140,8 +140,7 @@ describe('AudioPipeline Extended', () => {
 
     it('should handle AudioContext creation failure', async () => {
       const originalContext = global.AudioContext;
-      // @ts-ignore
-      global.AudioContext = class { constructor() { throw new Error('Failed'); } };
+      vi.stubGlobal('AudioContext', class { constructor() { throw new Error('Failed'); } });
 
       const p = new AudioPipeline();
       await expect(p.initialize()).rejects.toThrow();

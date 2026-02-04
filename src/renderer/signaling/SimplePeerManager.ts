@@ -1186,7 +1186,7 @@ export class SimplePeerManager {
               try {
                 const data = JSON.parse(message)
                 this.handleSignalingMessage(data)
-              } catch (e) {
+              } catch {
                 SignalingLog.debug('Invalid MQTT message during reconnect')
               }
             })

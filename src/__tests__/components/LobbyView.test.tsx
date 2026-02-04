@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * @vitest-environment jsdom
  */
@@ -84,7 +84,7 @@ vi.mock('../../renderer/audio-processor/AudioPipeline', () => ({
 
 // Mock DeviceSelector component
 vi.mock('../../renderer/components/DeviceSelector', () => ({
-    // @ts-ignore
+
     DeviceSelector: (props: any) => (
         <div data-testid={`device-selector-${props.label || 'unnamed'}`}>
             <select

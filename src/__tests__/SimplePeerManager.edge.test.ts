@@ -186,13 +186,12 @@ describe('SimplePeerManager - Edge Cases', () => {
 
         // Inject dummy peer so broadcast happens
         const mockPeerPC = new MockRTCPeerConnection()
-        const peer = {
+        const peer: any = {
             pc: mockPeerPC,
             muteStatus: { micMuted: false, speakerMuted: false },
             isConnected: true
-        }
-        // @ts-ignore
-        manager.peers.set('other-peer', peer)
+        };
+        (manager as any).peers.set('other-peer', peer as any)
 
         manager.broadcastMuteStatus(true, false)
 
@@ -213,13 +212,12 @@ describe('SimplePeerManager - Edge Cases', () => {
         const sender = { track: track1, replaceTrack: vi.fn() }
         mockPeerPC.getSenders.mockReturnValue([sender])
 
-        const peer = {
+        const peer: any = {
             pc: mockPeerPC,
             muteStatus: { micMuted: false, speakerMuted: false },
             isConnected: true
-        }
-        // @ts-ignore
-        manager.peers.set('other-peer', peer)
+        };
+        (manager as any).peers.set('other-peer', peer as any)
 
         const stream1 = {
             id: 's1',

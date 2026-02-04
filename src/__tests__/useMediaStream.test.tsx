@@ -44,8 +44,8 @@ const mockEnumerateDevices = vi.fn().mockResolvedValue([
     { deviceId: 'headset', kind: 'audiooutput', label: 'Headset', groupId: '2' }
 ])
 
-const listeners: Record<string, Function[]> = {}
-const mockAddEventListener = vi.fn((event: string, cb: Function) => {
+const listeners: Record<string, ((event: Event) => void)[]> = {}
+const mockAddEventListener = vi.fn((event: string, cb: (event: Event) => void) => {
     listeners[event] = listeners[event] || []
     listeners[event].push(cb)
 })

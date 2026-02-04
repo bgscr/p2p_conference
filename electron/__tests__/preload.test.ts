@@ -22,7 +22,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 // Also the file is .ts, so we can mock imports if needed.
 // But we want to test that 'exposeInMainWorld' was called.
 // So we just import it.
-import './preload';
+import '../preload';
 
 describe('Preload Script', () => {
     it('should expose electronAPI', () => {

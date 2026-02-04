@@ -128,7 +128,6 @@ describe('SimplePeerManager - Network Resilience', () => {
         manager.leaveRoom()
         vi.runOnlyPendingTimers()
         vi.useRealTimers()
-        // @ts-ignore
         delete window.electronAPI
         vi.restoreAllMocks()
     })

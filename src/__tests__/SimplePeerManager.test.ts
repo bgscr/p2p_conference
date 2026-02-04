@@ -97,11 +97,11 @@ describe('MQTTClient', () => {
         // Spy on WebSocket constructor to capture instance
         // We need to do this BEFORE creating the client
 
-        // @ts-ignore
+
         global.WebSocket = class extends MockWebSocket {
             constructor(url: string, protocol: string) {
                 super(url, protocol);
-                mockWsInstance = this;
+                mockWsInstance = this; // eslint-disable-line @typescript-eslint/no-this-alias
             }
         } as any;
 
@@ -156,7 +156,7 @@ describe('MultiBrokerMQTT', () => {
         // Setup Mock WebSocket global again since it might be reset or we want fresh state
         // (Doing it in MQTTClient describe block might isolate it, here we need it too)
 
-        // @ts-ignore
+
         global.WebSocket = class extends MockWebSocket {
             constructor(url: string, protocol: string) {
                 super(url, protocol);

@@ -89,15 +89,14 @@ describe('AudioPipeline Edge Cases', () => {
         class ErrorWorkletNode {
             port = {
                 postMessage: vi.fn(),
-                onmessage: null,
+                onmessage: null as ((e: MessageEvent) => void) | null,
                 addEventListener: vi.fn(),
                 removeEventListener: vi.fn()
             }
             constructor() {
                 setTimeout(() => {
                     if (this.port.onmessage) {
-                        // @ts-ignore
-                        this.port.onmessage({ data: { type: 'error', error: 'WASM crashed' } })
+                        this.port.onmessage!({ data: { type: 'error', error: 'WASM crashed' } } as MessageEvent)
                     }
                 }, 10)
             }
@@ -125,15 +124,14 @@ describe('AudioPipeline Edge Cases', () => {
         class SilentWorkletNode {
             port = {
                 postMessage: vi.fn(),
-                onmessage: null,
+                onmessage: null as ((e: MessageEvent) => void) | null,
                 addEventListener: vi.fn(),
                 removeEventListener: vi.fn()
             }
             constructor() {
                 setTimeout(() => {
                     if (this.port.onmessage) {
-                        // @ts-ignore
-                        this.port.onmessage({ data: { type: 'ready' } })
+                        this.port.onmessage!({ data: { type: 'ready' } } as MessageEvent)
                     }
                 }, 10)
             }

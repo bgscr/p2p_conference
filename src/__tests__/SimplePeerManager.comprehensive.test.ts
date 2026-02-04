@@ -292,7 +292,6 @@ describe('SimplePeerManager - ICE Handling', () => {
     manager.leaveRoom()
     vi.runOnlyPendingTimers()
     vi.useRealTimers()
-    // @ts-ignore
     delete window.electronAPI
   })
 
@@ -628,7 +627,6 @@ describe('SimplePeerManager - Connection Stats', () => {
     manager.leaveRoom()
     vi.runOnlyPendingTimers()
     vi.useRealTimers()
-    // @ts-ignore
     delete window.electronAPI
   })
 
@@ -778,7 +776,6 @@ describe('MultiBrokerMQTT', () => {
   afterEach(() => {
     vi.runOnlyPendingTimers()
     vi.useRealTimers()
-    // @ts-ignore
     delete window.electronAPI
   })
 

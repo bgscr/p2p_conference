@@ -119,7 +119,6 @@ describe('MultiBrokerMQTT Reconnection', () => {
 
     afterEach(() => {
         vi.useRealTimers()
-        // @ts-ignore
         delete window.electronAPI
     })
 

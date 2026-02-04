@@ -189,7 +189,7 @@ vi.mock('../renderer/utils/Logger', () => ({
 
 describe('App Integration', () => {
   let user: ReturnType<typeof userEvent.setup>
-  let electronCallbacks: Record<string, Function> = {}
+  let electronCallbacks: Record<string, (...args: any[]) => any> = {}
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -231,7 +231,6 @@ describe('App Integration', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
-    // @ts-ignore
     delete window.electronAPI
   })
 

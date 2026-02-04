@@ -347,7 +347,6 @@ describe('SimplePeerManager Extended Tests', () => {
     manager.leaveRoom()
     vi.runOnlyPendingTimers()
     vi.useRealTimers()
-    // @ts-ignore
     delete window.electronAPI
   })
 
@@ -376,7 +375,6 @@ describe('SimplePeerManager Extended Tests', () => {
     })
 
     it('should handle missing electron API', async () => {
-      // @ts-ignore
       delete window.electronAPI
 
       // Should not throw
