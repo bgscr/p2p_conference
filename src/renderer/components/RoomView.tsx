@@ -418,6 +418,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 }
                `}
               title={!isVideoEnabled ? t('room.startVideo') : t('room.stopVideo')}
+              data-testid="room-video-btn"
             >
               {!isVideoEnabled ? (
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

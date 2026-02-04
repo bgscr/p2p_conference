@@ -94,6 +94,8 @@ const en: Translations = {
     retryNow: 'Retry Now',
     reconnectSuccess: 'Connection restored',
     reconnectFailed: 'Reconnection failed',
+    startVideo: 'Start Video',
+    stopVideo: 'Stop Video',
   },
   leaveConfirm: {
     title: 'Leave Call?',
@@ -282,6 +284,8 @@ const zhCN: Translations = {
     retryNow: '立即重试',
     reconnectSuccess: '连接已恢复',
     reconnectFailed: '重连失败',
+    startVideo: '开启视频',
+    stopVideo: '关闭视频',
   },
   leaveConfirm: {
     title: '离开通话？',
