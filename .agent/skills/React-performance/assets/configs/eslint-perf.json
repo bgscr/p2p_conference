@@ -1,0 +1,41 @@
+{
+  "plugins": ["react", "react-hooks"],
+  "rules": {
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn",
+    
+    "react/jsx-no-bind": ["warn", {
+      "allowArrowFunctions": false,
+      "allowBind": false,
+      "allowFunctions": false,
+      "ignoreDOMComponents": true,
+      "ignoreRefs": true
+    }],
+    
+    "react/jsx-no-constructed-context-values": "warn",
+    
+    "react/no-array-index-key": "warn",
+    
+    "react/no-unstable-nested-components": ["warn", {
+      "allowAsProps": false
+    }],
+    
+    "react/jsx-key": ["error", {
+      "checkFragmentShorthand": true,
+      "checkKeyMustBeforeSpread": true,
+      "warnOnDuplicates": true
+    }],
+    
+    "no-console": ["warn", {
+      "allow": ["warn", "error"]
+    }]
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}"],
+      "rules": {
+        "react/jsx-no-bind": "off"
+      }
+    }
+  ]
+}
