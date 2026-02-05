@@ -35,8 +35,25 @@ class MockRTCPeerConnection {
 }
 
 global.RTCPeerConnection = MockRTCPeerConnection as any;
-global.RTCSessionDescription = vi.fn().mockImplementation((init) => init) as any;
-global.RTCIceCandidate = vi.fn().mockImplementation((init) => init) as any;
+class MockRTCSessionDescription {
+    type?: RTCSdpType;
+    sdp?: string;
+    constructor(init: RTCSessionDescriptionInit) {
+        Object.assign(this, init);
+    }
+}
+
+class MockRTCIceCandidate {
+    candidate?: string;
+    sdpMid?: string | null;
+    sdpMLineIndex?: number | null;
+    constructor(init: RTCIceCandidateInit) {
+        Object.assign(this, init);
+    }
+}
+
+global.RTCSessionDescription = MockRTCSessionDescription as any;
+global.RTCIceCandidate = MockRTCIceCandidate as any;
 
 describe('usePeerConnections', () => {
     const mockOnIceCandidate = vi.fn();

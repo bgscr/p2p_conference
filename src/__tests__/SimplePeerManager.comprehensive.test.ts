@@ -487,6 +487,109 @@ describe('SimplePeerManager - ICE Handling', () => {
     })
   })
 
+  describe('Heartbeat and Unload', () => {
+    it('should remove stale peer after heartbeat timeout', async () => {
+      const onPeerLeave = vi.fn()
+      manager.setCallbacks({ onPeerLeave })
+
+      const joinPromise = manager.joinRoom('test-room', 'Alice')
+      await vi.advanceTimersByTimeAsync(200)
+      await joinPromise
+
+      const managerAny = manager as any
+      const peerId = 'peer-heartbeat'
+      managerAny.peers.set(peerId, {
+        pc: new MockRTCPeerConnection(),
+        stream: null,
+        userName: 'HeartbeatPeer',
+        platform: 'win',
+        connectionStartTime: Date.now(),
+        isConnected: true,
+        muteStatus: { micMuted: false, speakerMuted: false },
+        iceRestartAttempts: 0,
+        iceRestartInProgress: false,
+        disconnectTimer: null,
+        reconnectTimer: null
+      })
+      expect(managerAny.peers.size).toBe(1)
+
+      // Force peer to appear stale and trigger heartbeat cleanup
+      managerAny.peerLastSeen.set(peerId, Date.now() - 20000)
+      managerAny.startHeartbeat()
+      await vi.advanceTimersByTimeAsync(5100)
+
+      expect(onPeerLeave).toHaveBeenCalled()
+    })
+
+    it('should reset heartbeat activity on pong', async () => {
+      const onPeerLeave = vi.fn()
+      manager.setCallbacks({ onPeerLeave })
+
+      const joinPromise = manager.joinRoom('test-room', 'Alice')
+      await vi.advanceTimersByTimeAsync(200)
+      await joinPromise
+
+      const managerAny = manager as any
+      const peerId = 'peer-pong'
+      managerAny.peers.set(peerId, {
+        pc: new MockRTCPeerConnection(),
+        stream: null,
+        userName: 'PongPeer',
+        platform: 'win',
+        connectionStartTime: Date.now(),
+        isConnected: true,
+        muteStatus: { micMuted: false, speakerMuted: false },
+        iceRestartAttempts: 0,
+        iceRestartInProgress: false,
+        disconnectTimer: null,
+        reconnectTimer: null
+      })
+      expect(managerAny.peers.size).toBe(1)
+      managerAny.startHeartbeat()
+
+      // Advance some time then send pong to reset activity
+      await vi.advanceTimersByTimeAsync(6000)
+
+      managerAny.handleSignalingMessage({
+        v: 1,
+        type: 'pong',
+        from: peerId,
+        msgId: 'msg-pong-2'
+      })
+
+      await vi.advanceTimersByTimeAsync(100)
+      const lastSeenAfterPong = managerAny.peerLastSeen.get(peerId) || 0
+      expect(lastSeenAfterPong).toBeGreaterThan(0)
+
+      managerAny.peerLastSeen.set(peerId, Date.now() - 10000)
+      await vi.advanceTimersByTimeAsync(6000)
+      expect(onPeerLeave).not.toHaveBeenCalled()
+
+      // Advance further to exceed timeout after pong
+      managerAny.peerLastSeen.set(peerId, Date.now() - 20000)
+      await vi.advanceTimersByTimeAsync(6000)
+      expect(onPeerLeave).toHaveBeenCalled()
+    })
+
+    it('should send leave on beforeunload', async () => {
+      const publishSpy = vi.spyOn(MultiBrokerMQTT.prototype, 'publish').mockReturnValue(1)
+
+      const joinPromise = manager.joinRoom('test-room', 'Alice')
+      await vi.advanceTimersByTimeAsync(200)
+      await joinPromise
+
+      window.dispatchEvent(new Event('beforeunload'))
+
+      const leaveSent = publishSpy.mock.calls.some(([, message]) => {
+        return typeof message === 'string' && message.includes('"type":"leave"')
+      })
+
+      expect(leaveSent).toBe(true)
+
+      publishSpy.mockRestore()
+    })
+  })
+
   describe('Remote Stream Handling', () => {
     it('should notify when remote stream is received', async () => {
       const onRemoteStream = vi.fn()

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
 // Mock dependencies
 vi.mock('../../renderer/hooks/useI18n', () => ({
@@ -136,6 +136,7 @@ describe('RoomView Component - Coverage Tests', () => {
 
   describe('Network Status Banner', () => {
     it('should show offline banner when network is offline', () => {
+      vi.useFakeTimers()
       const mockP2PManager = {
         getConnectionStats: vi.fn().mockResolvedValue(new Map()),
         setOnNetworkStatusChange: vi.fn((cb: (isOnline: boolean) => void) => {
@@ -149,9 +150,12 @@ describe('RoomView Component - Coverage Tests', () => {
         manualReconnect: vi.fn()
       }
 
-      render(<RoomView {...defaultProps} p2pManager={mockP2PManager as any} />)
+      const { unmount } = render(<RoomView {...defaultProps} p2pManager={mockP2PManager as any} />)
 
       expect(screen.getByText('You are offline')).toBeInTheDocument()
+
+      unmount()
+      vi.useRealTimers()
     })
 
     it('should show reconnecting banner with retry count', () => {
@@ -168,7 +172,7 @@ describe('RoomView Component - Coverage Tests', () => {
         manualReconnect: vi.fn()
       }
 
-      render(<RoomView {...defaultProps} p2pManager={mockP2PManager as any} />)
+      const { unmount } = render(<RoomView {...defaultProps} p2pManager={mockP2PManager as any} />)
 
       // Trigger the network status poll
       act(() => {
@@ -178,6 +182,7 @@ describe('RoomView Component - Coverage Tests', () => {
       expect(screen.getByText(/Reconnecting/)).toBeInTheDocument()
       expect(screen.getByText(/2\/5/)).toBeInTheDocument()
 
+      unmount()
       vi.useRealTimers()
     })
 
@@ -196,7 +201,7 @@ describe('RoomView Component - Coverage Tests', () => {
         manualReconnect: mockManualReconnect
       }
 
-      render(<RoomView {...defaultProps} p2pManager={mockP2PManager as any} />)
+      const { unmount } = render(<RoomView {...defaultProps} p2pManager={mockP2PManager as any} />)
 
       act(() => {
         vi.advanceTimersByTime(1100)
@@ -207,6 +212,7 @@ describe('RoomView Component - Coverage Tests', () => {
 
       expect(mockManualReconnect).toHaveBeenCalled()
 
+      unmount()
       vi.useRealTimers()
     })
   })
@@ -349,7 +355,7 @@ describe('RoomView Component - Coverage Tests', () => {
   })
 
   describe('Connection Stats', () => {
-    it('should fetch connection stats when p2pManager provided', () => {
+    it('should fetch connection stats when p2pManager provided', async () => {
       const mockStats = new Map([
         ['peer-1', {
           peerId: 'peer-1',
@@ -378,7 +384,7 @@ describe('RoomView Component - Coverage Tests', () => {
         ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected' as const, platform: 'mac' as const }]
       ])
 
-      render(
+      const { unmount } = render(
         <RoomView
           {...defaultProps}
           peers={peers}
@@ -386,7 +392,11 @@ describe('RoomView Component - Coverage Tests', () => {
         />
       )
 
-      expect(mockP2PManager.getConnectionStats).toHaveBeenCalled()
+      await waitFor(() => {
+        expect(mockP2PManager.getConnectionStats).toHaveBeenCalled()
+      })
+
+      unmount()
     })
   })
 

@@ -118,6 +118,8 @@ const ICE_DISCONNECT_GRACE_PERIOD = 5000  // Wait this long before triggering IC
 const ICE_FAILED_TIMEOUT = 15000  // How long to wait for ICE restart before giving up
 const ANNOUNCE_DEBOUNCE = 100
 const MQTT_CONNECT_TIMEOUT = 8000
+const HEARTBEAT_INTERVAL = 5000
+const HEARTBEAT_TIMEOUT = 15000
 
 // Message deduplication settings
 const MESSAGE_DEDUP_WINDOW_SIZE = 500      // Max messages to track
@@ -1049,6 +1051,9 @@ export class SimplePeerManager {
   private announceInterval: NodeJS.Timeout | null = null
   private announceStartTime: number = 0
   private localMuteStatus: MuteStatus = { micMuted: false, speakerMuted: false, videoMuted: false, videoEnabled: true }
+  private heartbeatInterval: NodeJS.Timeout | null = null
+  private peerLastSeen: Map<string, number> = new Map()
+  private peerLastPing: Map<string, number> = new Map()
 
   // Session tracking to prevent stale messages after rejoin
   private sessionId: number = 0
@@ -1082,6 +1087,7 @@ export class SimplePeerManager {
   constructor() {
     SignalingLog.info('SimplePeerManager initialized', { selfId })
     this.setupNetworkMonitoring()
+    this.setupUnloadHandler()
   }
 
   /**
@@ -1094,6 +1100,21 @@ export class SimplePeerManager {
     window.addEventListener('offline', this.handleOffline)
 
     SignalingLog.info('Network monitoring initialized', { isOnline: navigator.onLine })
+  }
+
+  /**
+   * Set up app unload handler for best-effort leave signaling
+   */
+  private setupUnloadHandler() {
+    if (typeof window === 'undefined') return
+    window.addEventListener('beforeunload', this.handleBeforeUnload)
+  }
+
+  /**
+   * Best-effort leave on app exit
+   */
+  private handleBeforeUnload = () => {
+    this.sendLeaveSignal()
   }
 
   /**
@@ -1546,6 +1567,7 @@ export class SimplePeerManager {
         }
       }, 300)
       this.startAnnounceInterval()
+      this.startHeartbeat()
 
       SignalingLog.info('Successfully joined room', {
         roomId,
@@ -1623,6 +1645,55 @@ export class SimplePeerManager {
     }
   }
 
+  /**
+   * Start signaling heartbeat to detect silent exits
+   */
+  private startHeartbeat() {
+    this.stopHeartbeat()
+
+    this.heartbeatInterval = setInterval(() => {
+      // Skip if no signaling channel available
+      if (!this.mqtt?.isConnected() && !this.broadcastChannel) {
+        return
+      }
+
+      if (this.peers.size === 0) return
+
+      const now = Date.now()
+
+      this.peers.forEach((_peer, peerId) => {
+        const lastSeen = this.peerLastSeen.get(peerId)
+
+        if (!lastSeen) {
+          this.peerLastSeen.set(peerId, now)
+        }
+
+        const seenAt = this.peerLastSeen.get(peerId) ?? now
+
+        if (now - seenAt > HEARTBEAT_TIMEOUT) {
+          PeerLog.warn('Peer heartbeat timeout, removing', { peerId, lastSeen: seenAt })
+          this.cleanupPeer(peerId)
+          this.peerLastSeen.delete(peerId)
+          this.peerLastPing.delete(peerId)
+          return
+        }
+
+        const lastPing = this.peerLastPing.get(peerId) ?? 0
+        if (now - lastPing >= HEARTBEAT_INTERVAL) {
+          this.peerLastPing.set(peerId, now)
+          this.sendToPeer(peerId, { v: 1, type: 'ping', from: selfId })
+        }
+      })
+    }, HEARTBEAT_INTERVAL)
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval)
+      this.heartbeatInterval = null
+    }
+  }
+
   private broadcast(message: SignalMessage) {
     // Ensure message has an ID for deduplication
     if (!message.msgId) {
@@ -1673,6 +1744,9 @@ export class SimplePeerManager {
       return
     }
 
+    // Track activity for heartbeat
+    this.recordPeerActivity(message.from)
+
     if (message.type !== 'ping' && message.type !== 'pong' && message.type !== 'mute-status') {
       SignalingLog.info('Received signaling message', { type: message.type, from: message.from, userName: message.userName })
     }
@@ -1696,10 +1770,22 @@ export class SimplePeerManager {
       case 'ping':
         this.sendToPeer(message.from, { v: 1, type: 'pong', from: selfId })
         break
+      case 'pong':
+        // Activity already recorded; no further action
+        break
       case 'mute-status':
         this.handleMuteStatus(message.from, message.data)
         break
     }
+  }
+
+  /**
+   * Record peer activity for heartbeat tracking
+   */
+  private recordPeerActivity(peerId: string) {
+    const now = Date.now()
+    this.peerLastSeen.set(peerId, now)
+    this.peerLastPing.set(peerId, now)
   }
 
   private handleMuteStatus(peerId: string, data: { micMuted?: boolean; speakerMuted?: boolean; videoMuted?: boolean }) {
@@ -2075,6 +2161,8 @@ export class SimplePeerManager {
     this.peers.delete(peerId)
     this.pendingCandidates.delete(peerId)
     this.previousStats.delete(peerId)  // Clean up stats tracking
+    this.peerLastSeen.delete(peerId)
+    this.peerLastPing.delete(peerId)
 
     // Notify listeners
     this.onPeerLeave(peerId, peer.userName, peer.platform)
@@ -2206,11 +2294,10 @@ export class SimplePeerManager {
       SignalingLog.info('Leaving room', { roomId: this.roomId, sessionId: this.sessionId })
 
       this.stopAnnounceInterval()
+      this.stopHeartbeat()
 
-      // Send leave message only if connected
-      if (this.mqtt?.isConnected()) {
-        this.broadcast({ v: 1, type: 'leave', from: selfId, sessionId: this.sessionId })
-      }
+      // Best-effort leave message (MQTT or BroadcastChannel)
+      this.sendLeaveSignal()
 
       // Close all peer connections with error handling and clear timers
       this.peers.forEach((peer, peerId) => {
@@ -2230,6 +2317,8 @@ export class SimplePeerManager {
       })
       this.peers.clear()
       this.pendingCandidates.clear()
+      this.peerLastSeen.clear()
+      this.peerLastPing.clear()
 
       // Disconnect all MQTT brokers
       if (this.mqtt) {
@@ -2265,6 +2354,16 @@ export class SimplePeerManager {
     } finally {
       this.isLeaving = false
     }
+  }
+
+  /**
+   * Best-effort leave signal without full cleanup
+   */
+  private sendLeaveSignal() {
+    if (!this.roomId) return
+    try {
+      this.broadcast({ v: 1, type: 'leave', from: selfId, sessionId: this.sessionId })
+    } catch { /* ignore errors on best-effort leave */ }
   }
 
   getPeers(): Map<string, { userName: string; stream: MediaStream | null; muteStatus: MuteStatus }> {

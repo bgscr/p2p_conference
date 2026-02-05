@@ -142,12 +142,17 @@ describe('useMediaStream Hook', () => {
         mockTrack.enabled = true
     })
 
-    it('should initialize with empty state', () => {
+    it('should initialize with empty state', async () => {
         const { result } = renderHook(() => useMediaStream())
         expect(result.current.localStream).toBeNull()
         expect(result.current.isMuted).toBe(false)
         expect(result.current.isLoading).toBe(false)
         expect(result.current.error).toBeNull()
+
+        // Flush initial device enumeration updates
+        await waitFor(() => {
+            expect(mockEnumerateDevices).toHaveBeenCalled()
+        })
     })
 
     it('should enumerate devices on mount', async () => {
@@ -256,7 +261,7 @@ describe('useMediaStream Hook', () => {
         })
     })
     describe('Output Device Selection', () => {
-        it('should select output device', () => {
+        it('should select output device', async () => {
             const { result } = renderHook(() => useMediaStream())
 
             act(() => {
@@ -264,6 +269,11 @@ describe('useMediaStream Hook', () => {
             })
 
             expect(result.current.selectedOutputDevice).toBe('speaker-1')
+
+            // Flush initial device enumeration updates
+            await waitFor(() => {
+                expect(mockEnumerateDevices).toHaveBeenCalled()
+            })
         })
     })
 

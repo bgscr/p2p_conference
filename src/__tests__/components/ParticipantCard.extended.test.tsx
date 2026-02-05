@@ -388,12 +388,15 @@ describe('ParticipantCard Extended', () => {
   })
 
   describe('Remote Audio Playback', () => {
-    it('should render audio element for remote participant with stream', () => {
+    it('should render audio element for remote participant with stream', async () => {
       const mockStream = new MediaStream()
 
       render(<TestParticipantCard isLocal={false} stream={mockStream} />)
 
-      expect(screen.getByTestId('remote-audio')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(screen.getByTestId('remote-audio')).toBeInTheDocument()
+        expect(screen.getByTestId('playback-status')).toHaveTextContent('Audio playing')
+      })
     })
 
     it('should not render audio element for local participant', () => {
@@ -492,7 +495,10 @@ describe('ParticipantCard Edge Cases', () => {
     rerender(<TestParticipantCard isLocal={false} stream={stream1} />)
 
     // Should not throw and should handle transitions gracefully
-    expect(screen.getByTestId('remote-audio')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-audio')).toBeInTheDocument()
+      expect(screen.getByTestId('playback-status')).toHaveTextContent('Audio playing')
+    })
   })
 
   it('should handle play failure gracefully', async () => {

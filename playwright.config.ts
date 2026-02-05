@@ -1,5 +1,10 @@
 import { defineConfig } from '@playwright/test';
 
+// Ensure Electron runs in app mode for e2e tests (not Node mode).
+if (process.env.ELECTRON_RUN_AS_NODE) {
+    delete process.env.ELECTRON_RUN_AS_NODE;
+}
+
 export default defineConfig({
     testDir: './e2e',
     timeout: 60000,
