@@ -4,3 +4,4 @@ export { useIntersectionObserver } from './useIntersectionObserver';
 export { useVirtualList } from './useVirtualList';
 export { usePrevious } from './usePrevious';
 export { useStableCallback } from './useStableCallback';
+export { useOptimisticUpdate, useOptimisticMutation } from './useOptimisticUpdate';

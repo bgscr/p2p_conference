@@ -1,14 +1,12 @@
 ---
 name: react-performance
 description: |
-  Expert guidance for building high-performance React applications with reusable code assets. 
-  Use this skill when: (1) Creating or optimizing React components, (2) Discussing React performance 
-  patterns like memoization, code splitting, or lazy loading, (3) Debugging re-render issues or 
-  bundle size problems, (4) Building with React-related terms (hooks, state, context, props), 
-  (5) Working with React frameworks (Next.js, Remix, Vite, CRA), (6) Implementing virtual lists, 
-  intersection observers, or runtime optimizations, (7) Configuring bundlers or linters for React projects.
-  Triggers: "React", "component", "useState", "useEffect", "memo", "useMemo", "useCallback", 
-  "re-render", "bundle size", "lazy load", "code split", "virtual list", "Next.js", "Remix", "Vite".
+  Expert guidance for high-performance React apps with reusable assets. Use when: creating/optimizing 
+  components, performance patterns (memoization, code splitting, lazy loading), debugging re-renders or 
+  bundle size, working with Next.js App Router/RSC/Remix/Vite, virtual lists, Zustand state management, 
+  or integrating React Router v6, Axios/fetch, Tailwind CSS, shadcn/ui. Triggers: React, component, 
+  useState, useEffect, memo, useMemo, useCallback, re-render, bundle size, lazy load, virtual list, 
+  Next.js, App Router, RSC, Zustand, React Router, Tailwind, shadcn, fetch, Axios.
 ---
 
 # React Performance Skill
@@ -23,6 +21,9 @@ Build high-performance React applications with proven patterns and reusable asse
 | Bundle Size | Code splitting, lazy loading, tree shaking | `references/bundle.md` |
 | Runtime | Virtual lists, debounce, intersection observer | `references/runtime.md` |
 | State | Colocation, selectors, normalized state | `references/state.md` |
+| Zustand | Slices, computed state, persistence, TypeScript | `references/zustand.md` |
+| Server Components | RSC patterns, Next.js App Router, streaming | `references/server-components.md` |
+| Integrations | Router, data fetching, styling, UI libraries | `references/integrations.md` |
 
 ## Core Principles
 
@@ -31,6 +32,7 @@ Build high-performance React applications with proven patterns and reusable asse
 3. **Minimize re-renders** - Prevent unnecessary component updates
 4. **Reduce bundle size** - Ship less JavaScript to users
 5. **Defer non-critical work** - Load and execute only what's needed
+6. **Server-first** - Prefer Server Components for static/data-fetching code
 
 ## Workflow
 
@@ -39,6 +41,18 @@ Build high-performance React applications with proven patterns and reusable asse
 1. Start with `assets/components/OptimizedComponent.tsx` template
 2. Apply rendering patterns from `references/rendering.md`
 3. Use hooks from `assets/hooks/` for common performance patterns
+
+### For State Management
+
+1. Review `references/zustand.md` for Zustand patterns
+2. Use slice pattern from `assets/stores/` for feature modules
+3. Apply computed/derived state for expensive calculations
+
+### For Next.js App Router
+
+1. Consult `references/server-components.md` for RSC patterns
+2. Default to Server Components, add `'use client'` only when needed
+3. Use streaming and Suspense for progressive loading
 
 ### For Optimization Tasks
 
@@ -62,12 +76,20 @@ Build high-performance React applications with proven patterns and reusable asse
 - `useVirtualList.ts` - Efficiently render large lists
 - `usePrevious.ts` - Track previous values for comparison
 - `useStableCallback.ts` - Stable function references
+- `useOptimisticUpdate.ts` - Optimistic UI updates with rollback
+
+### Stores (`assets/stores/`)
+
+- `createSlice.ts` - Zustand slice factory with TypeScript
+- `storeWithComputed.ts` - Derived/computed state pattern
+- `persistedStore.ts` - Hydration and persistence patterns
 
 ### Components (`assets/components/`)
 
 - `OptimizedComponent.tsx` - Base template with performance best practices
 - `VirtualList.tsx` - Windowed list for large datasets
 - `LazyImage.tsx` - Intersection observer image loading
+- `StreamingBoundary.tsx` - RSC streaming with fallback
 
 ### Configs (`assets/configs/`)
 
@@ -89,21 +111,7 @@ Build high-performance React applications with proven patterns and reusable asse
 
 // ❌ Index as key causes issues with list reordering
 {items.map((item, index) => <Item key={index} />)}
+
+// ❌ Using 'use client' unnecessarily in Next.js
+// Only add when component uses hooks, event handlers, or browser APIs
 ```
-
-## Framework-Specific Notes
-
-### Next.js
-- Use `next/dynamic` for code splitting
-- Leverage `next/image` for automatic image optimization
-- Use React Server Components for reduced client bundle
-
-### Remix
-- Loaders run server-side, reducing client JS
-- Use `useFetcher` for non-navigation data loading
-- Leverage nested routes for code splitting
-
-### Vite
-- Automatic code splitting on dynamic imports
-- Use `vite-plugin-compression` for gzip/brotli
-- Configure `manualChunks` for vendor splitting
