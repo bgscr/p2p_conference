@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { logger } from '../utils/Logger'
 import { ICE_SERVERS } from './useRoom'
+import { configureOpusSdp } from '../signaling/opus'
 
 const WebRTCLog = logger.createModuleLogger('WebRTC')
 
@@ -178,7 +179,7 @@ export function usePeerConnections(
 
       // Modify SDP for Opus configuration
       if (offer.sdp) {
-        offer.sdp = optimizeOpusSdp(offer.sdp)
+        offer.sdp = configureOpusSdp(offer.sdp)
       }
 
       await pc.setLocalDescription(offer)
@@ -213,7 +214,7 @@ export function usePeerConnections(
       const answer = await pc.createAnswer()
       
       if (answer.sdp) {
-        answer.sdp = optimizeOpusSdp(answer.sdp)
+        answer.sdp = configureOpusSdp(answer.sdp)
       }
 
       await pc.setLocalDescription(answer)
@@ -387,15 +388,3 @@ export function usePeerConnections(
   }
 }
 
-/**
- * Optimize Opus codec settings in SDP
- */
-function optimizeOpusSdp(sdp: string): string {
-  // Set Opus bitrate to 60kbps (good quality for voice, low bandwidth)
-  // Enable forward error correction for packet loss resilience
-  // Disable stereo (not needed for conference)
-  return sdp.replace(
-    /(a=fmtp:\d+ .*)/g,
-    '$1;maxaveragebitrate=60000;stereo=0;useinbandfec=1'
-  )
-}

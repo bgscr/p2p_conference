@@ -689,3 +689,31 @@ ipcMain.handle('get-mqtt-brokers', () => {
   IPCLog.debug('MQTT brokers requested')
   return getMQTTBrokers()
 })
+
+/**
+ * Testing surface - exposes internal helpers and state setters for unit tests only.
+ * Not used in production runtime.
+ */
+export const __testing = {
+  getAppIconPath,
+  getAppIcon,
+  createFallbackIcon,
+  createTrayIcon,
+  createTray,
+  updateTrayMenu,
+  updateTrayIcon,
+  createMenu,
+  createWindow,
+  requestMicrophonePermission,
+  // State getters/setters for test assertions
+  get mainWindow() { return mainWindow },
+  set mainWindow(w) { mainWindow = w },
+  get tray() { return tray },
+  set tray(t) { tray = t },
+  get isMuted() { return isMuted },
+  set isMuted(v) { isMuted = v },
+  get isInCall() { return isInCall },
+  set isInCall(v) { isInCall = v },
+  get isQuitting() { return isQuitting },
+  set isQuitting(v) { isQuitting = v },
+}

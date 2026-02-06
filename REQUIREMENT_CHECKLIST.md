@@ -290,7 +290,7 @@
 - [x] Connection state management
 
 ### ✅ Phase 3: Serverless Signaling - COMPLETE
-- [x] Trystero BitTorrent DHT integration
+- [x] MQTT-based signaling (multi-broker: HiveMQ, EMQX, Mosquitto)
 - [x] Room join/leave logic
 - [x] Peer events handling
 - [x] SDP and user info exchange
@@ -353,8 +353,8 @@
 
 ### Nice to Have (Not Blocking Release)
 - [ ] Push-to-talk mode
-- [ ] Per-participant volume control  
-- [ ] System tray support
+- [x] Per-participant volume control ✅ (Session 11)
+- [x] System tray support ✅ (Session 15)
 - [x] Auto-reconnection on network drop ✅
 - [ ] Window focus handling (auto-mute)
 
@@ -376,43 +376,58 @@ npm run dev
 
 ---
 
-## Project Structure (Final)
+## Project Structure (Current)
 
 ```
 P2P_Conference/
 ├── build/
 │   └── entitlements.mac.plist
 ├── electron/
+│   ├── __tests__/
+│   │   └── main.test.ts
+│   ├── credentials.ts
+│   ├── logger.ts
 │   ├── main.ts
 │   └── preload.ts
 ├── public/
 │   └── audio-processor/
-│       └── noise-processor.js
+│       ├── noise-processor.js
+│       └── rnnoise.wasm
 ├── src/
+│   ├── __tests__/                     # Vitest unit tests
+│   │   ├── setup.ts
+│   │   └── *.test.{ts,tsx}
 │   ├── renderer/
 │   │   ├── audio-processor/
 │   │   │   ├── AudioPipeline.ts
 │   │   │   ├── RingBuffer.ts
-│   │   │   └── SoundManager.ts       # NEW
+│   │   │   └── SoundManager.ts
 │   │   ├── components/
 │   │   │   ├── AudioMeter.tsx
 │   │   │   ├── ConnectionOverlay.tsx
 │   │   │   ├── DeviceSelector.tsx
 │   │   │   ├── ErrorBanner.tsx
-│   │   │   ├── LeaveConfirmDialog.tsx # NEW
+│   │   │   ├── LeaveConfirmDialog.tsx
 │   │   │   ├── LobbyView.tsx
 │   │   │   ├── ParticipantCard.tsx
 │   │   │   ├── RoomView.tsx
 │   │   │   ├── SettingsPanel.tsx
-│   │   │   ├── Toast.tsx              # NEW
+│   │   │   ├── Toast.tsx
 │   │   │   └── index.ts
 │   │   ├── hooks/
+│   │   │   ├── useI18n.ts
 │   │   │   ├── useMediaStream.ts
 │   │   │   ├── usePeerConnections.ts
 │   │   │   ├── useRoom.ts
 │   │   │   └── index.ts
 │   │   ├── signaling/
-│   │   │   ├── TrysteroClient.ts
+│   │   │   ├── SimplePeerManager.ts
+│   │   │   ├── connectionStats.ts
+│   │   │   ├── opus.ts
+│   │   │   └── index.ts
+│   │   ├── utils/
+│   │   │   ├── Logger.ts
+│   │   │   ├── i18n.ts
 │   │   │   └── index.ts
 │   │   ├── styles/
 │   │   │   └── globals.css
@@ -421,7 +436,7 @@ P2P_Conference/
 │   │   └── main.tsx
 │   └── types/
 │       └── index.ts
-├── electron.vite.config.ts
+├── vitest.config.ts
 ├── package.json
 ├── postcss.config.js
 ├── tailwind.config.js
@@ -611,38 +626,21 @@ After thorough analysis of all project files against the p2p-conference skill do
 
 ##### ❌ Unfinished Requirements
 
-1. **ICE Restart on Connection Failure**
-   - Currently: Connection failures result in peer removal
-   - Should: Attempt ICE restart before giving up
-   - Priority: Medium
+1. ~~**ICE Restart on Connection Failure**~~ ✅ IMPLEMENTED (Session 10)
 
-2. **WebRTC Stats Monitoring**
-   - Currently: No network quality indicators
-   - Should: Monitor RTT, packet loss, bitrate via `pc.getStats()`
-   - Priority: Low (UX enhancement)
+2. ~~**WebRTC Stats Monitoring**~~ ✅ IMPLEMENTED (Session 13 - connection quality indicators)
 
-3. **Connection Timeout with User Feedback**
-   - Currently: 30-second announce duration hardcoded
-   - Should: Show progress/timeout warning in UI
-   - Priority: Medium
+3. ~~**Connection Timeout with User Feedback**~~ ✅ IMPLEMENTED (Session 10)
 
 4. **Push-to-Talk Mode**
    - Status: Listed as "Nice to Have", not implemented
    - Priority: Low
 
-5. **Per-Participant Volume Control**
-   - Status: Not implemented
-   - Should: Add GainNode per remote stream
-   - Priority: Low
+5. ~~**Per-Participant Volume Control**~~ ✅ IMPLEMENTED (Session 11)
 
-6. **System Tray Support**
-   - Status: Not implemented
-   - Priority: Low
+6. ~~**System Tray Support**~~ ✅ IMPLEMENTED (Session 15)
 
-7. **Auto-Reconnection on Network Drop**
-   - Status: Not implemented
-   - Should: Detect `disconnected` state and attempt reconnect
-   - Priority: Medium
+7. ~~**Auto-Reconnection on Network Drop**~~ ✅ IMPLEMENTED (Session 14)
 
 ##### 🔧 Optimization Opportunities
 
@@ -782,9 +780,9 @@ Cons: May have licensing considerations
 ### Low Priority (Nice to Have)
 - [ ] Push-to-talk mode
 - [x] Per-participant volume control **IMPLEMENTED Session 11**
-- [ ] System tray support
+- [x] System tray support **IMPLEMENTED Session 15**
 - [ ] Window focus handling (auto-mute)
-- [ ] WebRTC stats dashboard
+- [x] WebRTC stats dashboard (connection quality indicators) **IMPLEMENTED Session 13**
 - [x] RNNoise WASM AI noise suppression **IMPLEMENTED Session 12**
 
 ---
@@ -823,8 +821,6 @@ The P2P Conference application is feature-complete for core functionality:
 
 📝 **Future Enhancements (Nice to Have):**
 - Push-to-talk mode
-- System tray support
-- WebRTC stats dashboard
 - Window focus handling (auto-mute)
 
 ### Session 14 - Auto-Reconnect on Network Drop (2026-01-29)

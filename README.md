@@ -11,6 +11,8 @@ A serverless, peer-to-peer audio conferencing application built with Electron, R
 - **Multi-Broker Signaling**: Redundant MQTT broker connectivity for reliable peer discovery
 - **Hot-Swappable Devices**: Switch microphones and speakers during calls
 - **Connection Quality Monitoring**: Real-time RTT, packet loss, and jitter statistics
+- **Per-Participant Volume Control**: Adjust volume individually for each participant
+- **System Tray Integration**: Minimize to tray during calls, with mute/leave controls
 - **Internationalization**: English and Chinese language support
 
 ## Architecture
@@ -118,8 +120,10 @@ npm run lint:fix
 5. **Call controls**:
    - 🎤 Mute/unmute your microphone (M key)
    - 🔊 Mute/unmute speakers
+   - 🔉 Per-participant volume sliders
    - ⚙️ Change audio devices
    - 📞 Leave the call (Esc key)
+6. **System tray**: The app minimizes to the system tray when closed during a call. Use the tray icon to show/hide the window, toggle mute, or leave the call.
 
 ### Keyboard Shortcuts
 
@@ -175,6 +179,11 @@ Audio processing options (Settings panel):
 - Try disabling noise suppression
 - Limit to fewer participants (10 max recommended)
 
+### App disappeared / can't find the window
+- The app minimizes to the **system tray** when you close it during an active call
+- Look for the P2P Conference icon in the system tray (bottom-right on Windows, top bar on macOS)
+- Double-click the tray icon to restore the window
+
 ### Debug Logs
 Press `Ctrl+Shift+L` or use the Help menu to download debug logs for troubleshooting.
 
@@ -184,22 +193,23 @@ Press `Ctrl+Shift+L` or use the Help menu to download debug logs for troubleshoo
 
 ```
 P2P_Conference/
-├── electron/           # Main process
-│   ├── main.ts         # Window management, tray, IPC
-│   ├── preload.ts      # IPC bridge
-│   ├── credentials.ts  # MQTT/TURN credentials
-│   └── logger.ts       # File-based logging
+├── electron/              # Main process
+│   ├── main.ts            # Window management, tray, IPC
+│   ├── preload.ts         # IPC bridge (contextBridge)
+│   ├── credentials.ts     # MQTT/TURN credentials (main-process only)
+│   └── logger.ts          # File-based logging (main-process)
 ├── src/
-│   ├── renderer/       # React application
-│   │   ├── components/   # UI components
-│   │   ├── hooks/        # React hooks
-│   │   ├── audio-processor/  # Audio pipeline + RNNoise
-│   │   ├── signaling/    # SimplePeerManager (MQTT)
-│   │   └── utils/        # Logger, i18n
-│   └── types/          # TypeScript definitions
-├── public/             # Static assets
-│   └── audio-processor/  # WASM + AudioWorklet
-└── build/              # Build configuration
+│   ├── renderer/          # React application
+│   │   ├── components/    # UI components
+│   │   ├── hooks/         # React hooks (useRoom, useMediaStream, etc.)
+│   │   ├── audio-processor/  # Audio pipeline + RNNoise WASM
+│   │   ├── signaling/     # SimplePeerManager (MQTT), connectionStats, opus
+│   │   └── utils/         # Logger, i18n
+│   ├── __tests__/         # Vitest unit tests
+│   └── types/             # TypeScript definitions
+├── public/                # Static assets
+│   └── audio-processor/   # WASM + AudioWorklet processor
+└── build/                 # Build configuration + icons
 ```
 
 ### Key Files

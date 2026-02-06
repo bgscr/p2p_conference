@@ -35,10 +35,10 @@ export default defineConfig({
 
             all: true, // Show all files in report, even if not tested
             thresholds: {
-                lines: 55,
-                functions: 55,
-                branches: 40,
-                statements: 55
+                lines: 90,
+                functions: 93,
+                branches: 85,
+                statements: 90
             }
         },
     },
