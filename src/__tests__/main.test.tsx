@@ -48,7 +48,7 @@ describe('Renderer entry point (main.tsx)', () => {
     mockCreateRoot.mockReturnValue({ render: mockRender })
 
     // Spy on console.error (suppress output in test runner)
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => { })
 
     // Clear any previous global error handlers
     window.onerror = null
@@ -128,7 +128,13 @@ describe('Renderer entry point (main.tsx)', () => {
       await loadMain()
       consoleErrorSpy.mockClear()
 
-      const handler = window.onerror as Function
+      const handler = window.onerror as (
+        message: string | Event,
+        source?: string,
+        lineno?: number,
+        colno?: number,
+        error?: Error,
+      ) => void
       handler('Oops', 'index.js', 1, 1, new Error('fail'))
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -202,7 +208,7 @@ describe('Renderer entry point (main.tsx)', () => {
 
     it('handles non-Error throw values gracefully', async () => {
       mockCreateRoot.mockImplementation(() => {
-        throw 'string error' // eslint-disable-line no-throw-literal
+        throw 'string error'
       })
 
       await loadMain()

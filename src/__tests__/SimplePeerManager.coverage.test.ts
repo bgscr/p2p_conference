@@ -129,7 +129,7 @@ class MockPC {
     this.remoteDescription = desc
   })
 
-  addIceCandidate = vi.fn(async () => {})
+  addIceCandidate = vi.fn(async () => { })
 
   addTrack = vi.fn((track: any, _stream: any) => {
     const sender = {
@@ -361,7 +361,7 @@ describe('MQTTClient - uncovered paths', () => {
 
   it('subscribe returns false when not connected', async () => {
     const client = new MQTTClient('wss://test/mqtt')
-    const result = await client.subscribe('topic', () => {})
+    const result = await client.subscribe('topic', () => { })
     expect(result).toBe(false)
     client.disconnect()
   })
@@ -378,7 +378,7 @@ describe('MQTTClient - uncovered paths', () => {
     ws = mockWebSockets[mockWebSockets.length - 1]
     ws.send = vi.fn()
 
-    const subPromise = client.subscribe('topic', () => {})
+    const subPromise = client.subscribe('topic', () => { })
     // Advance past subscribe timeout (5000ms)
     await vi.advanceTimersByTimeAsync(6000)
 
@@ -396,7 +396,7 @@ describe('MQTTClient - uncovered paths', () => {
     ws = mockWebSockets[mockWebSockets.length - 1]
     ws.send = vi.fn(() => { throw new Error('send failed') })
 
-    const result = await client.subscribe('topic', () => {})
+    const result = await client.subscribe('topic', () => { })
     expect(result).toBe(false)
     client.disconnect()
   })
@@ -667,7 +667,7 @@ describe('MultiBrokerMQTT - uncovered paths', () => {
     await vi.advanceTimersByTimeAsync(100)
     await connectP
 
-    const subP = multi.subscribeAll('topic', () => {})
+    const subP = multi.subscribeAll('topic', () => { })
     await vi.advanceTimersByTimeAsync(100)
     await subP
 
@@ -703,7 +703,7 @@ describe('MultiBrokerMQTT - uncovered paths', () => {
     await connectP
 
     // Subscribe so reconnect re-subscribes
-    const subP = multi.subscribeAll('test-topic', () => {})
+    const subP = multi.subscribeAll('test-topic', () => { })
     await vi.advanceTimersByTimeAsync(100)
     await subP
 
@@ -712,8 +712,8 @@ describe('MultiBrokerMQTT - uncovered paths', () => {
     const client = (multi as any).clients.get(brokerUrl)
     expect(client).toBeDefined()
 
-    // Simulate unexpected disconnect
-    ;(multi as any).handleBrokerDisconnect(brokerUrl)
+      // Simulate unexpected disconnect
+      ; (multi as any).handleBrokerDisconnect(brokerUrl)
     // Wait for exponential backoff + reconnection
     await vi.advanceTimersByTimeAsync(5000)
 
@@ -1167,7 +1167,6 @@ describe('SimplePeerManager - coverage gaps', () => {
     const onPeerLeave = vi.fn()
     manager.setCallbacks({ onPeerLeave })
 
-    const pc = new MockPC()
     const peerId = 'peer-fail-cleanup'
 
     // Create peer connection (which also sets up event handlers)
@@ -1235,8 +1234,8 @@ describe('SimplePeerManager - coverage gaps', () => {
     managerAny.createPeerConnection(peerId, 'IceConnPeer', 'win')
 
     const peer = managerAny.peers.get(peerId)
-    peer.disconnectTimer = setTimeout(() => {}, 10000)
-    peer.reconnectTimer = setTimeout(() => {}, 10000)
+    peer.disconnectTimer = setTimeout(() => { }, 10000)
+    peer.reconnectTimer = setTimeout(() => { }, 10000)
     peer.iceRestartInProgress = true
     peer.iceRestartAttempts = 2
 
@@ -1420,7 +1419,6 @@ describe('SimplePeerManager - coverage gaps', () => {
     resetCredentialsCacheForTesting()
 
     // Make MultiBrokerMQTT.connectAll throw
-    const origConnectAll = MultiBrokerMQTT.prototype.connectAll
     vi.spyOn(MultiBrokerMQTT.prototype, 'connectAll').mockRejectedValue(new Error('No MQTT brokers could be connected'))
 
     const onError = vi.fn()

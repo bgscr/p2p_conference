@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import React from 'react'
 
@@ -143,7 +143,7 @@ describe('LobbyView', () => {
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((_cb) => {
       return 42 as unknown as number
     })
-    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => { })
 
     // Mock HTMLVideoElement.play to return a Promise (jsdom doesn't implement it)
     HTMLVideoElement.prototype.play = vi.fn().mockResolvedValue(undefined)
@@ -238,7 +238,7 @@ describe('LobbyView', () => {
 
   // --- handleJoin validation paths ---
   it('alerts when room ID is too short (< 4 chars after trim)', async () => {
-    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => { })
     const props = defaultProps()
     render(<LobbyView {...props} />)
 
@@ -257,7 +257,7 @@ describe('LobbyView', () => {
   })
 
   it('alerts when username is too short (< 2 chars)', async () => {
-    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => { })
     const props = defaultProps()
     render(<LobbyView {...props} />)
 
@@ -425,7 +425,7 @@ describe('LobbyView', () => {
 
   it('shows alert when mic test fails with permission denied', async () => {
     mockGetUserMedia.mockRejectedValueOnce(new Error('Permission denied'))
-    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => { })
 
     render(<LobbyView {...defaultProps()} />)
     const testMicBtn = screen.getByText((content, element) => {
@@ -443,7 +443,7 @@ describe('LobbyView', () => {
 
   it('throws error when pipeline analyser is not available', async () => {
     mocks.pipelineGetAnalyserNode.mockReturnValueOnce(null)
-    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => { })
 
     render(<LobbyView {...defaultProps()} />)
     const testMicBtn = screen.getByText((content, element) => {
@@ -474,14 +474,14 @@ describe('LobbyView', () => {
     }
     const mockCtxClose = vi.fn()
 
-    // Use a class-based mock for AudioContext (required for `new` calls)
-    ;(window as any).AudioContext = class MockAudioContext {
-      createOscillator() { return mockOscillator }
-      createGain() { return mockGain }
-      destination = {}
-      currentTime = 0
-      close = mockCtxClose
-    }
+      // Use a class-based mock for AudioContext (required for `new` calls)
+      ; (window as any).AudioContext = class MockAudioContext {
+        createOscillator() { return mockOscillator }
+        createGain() { return mockGain }
+        destination = {}
+        currentTime = 0
+        close = mockCtxClose
+      }
 
     render(<LobbyView {...defaultProps()} />)
 
@@ -506,26 +506,26 @@ describe('LobbyView', () => {
   it('stops speaker test when clicked while testing', async () => {
     const mockCtxClose = vi.fn()
 
-    ;(window as any).AudioContext = class MockAudioContext {
-      createOscillator() {
-        return {
-          type: 'sine',
-          frequency: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
-          connect: vi.fn(),
-          start: vi.fn(),
-          stop: vi.fn(),
+      ; (window as any).AudioContext = class MockAudioContext {
+        createOscillator() {
+          return {
+            type: 'sine',
+            frequency: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
+            connect: vi.fn(),
+            start: vi.fn(),
+            stop: vi.fn(),
+          }
         }
-      }
-      createGain() {
-        return {
-          gain: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
-          connect: vi.fn(),
+        createGain() {
+          return {
+            gain: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
+            connect: vi.fn(),
+          }
         }
+        destination = {}
+        currentTime = 0
+        close = mockCtxClose
       }
-      destination = {}
-      currentTime = 0
-      close = mockCtxClose
-    }
 
     render(<LobbyView {...defaultProps()} />)
 
@@ -553,7 +553,7 @@ describe('LobbyView', () => {
   })
 
   it('handles speaker test failure gracefully', async () => {
-    ;(window as any).AudioContext = class FailingAudioContext {
+    ; (window as any).AudioContext = class FailingAudioContext {
       constructor() { throw new Error('Audio not supported') }
     }
 
@@ -569,26 +569,26 @@ describe('LobbyView', () => {
   it('tries to set sink ID when selectedOutputDevice is set and setSinkId exists', async () => {
     const mockSetSinkId = vi.fn().mockResolvedValue(undefined)
 
-    ;(window as any).AudioContext = class MockAudioContextWithSink {
-      createOscillator() {
-        return {
-          type: 'sine',
-          frequency: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
-          connect: vi.fn(),
-          start: vi.fn(),
-          stop: vi.fn(),
+      ; (window as any).AudioContext = class MockAudioContextWithSink {
+        createOscillator() {
+          return {
+            type: 'sine',
+            frequency: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
+            connect: vi.fn(),
+            start: vi.fn(),
+            stop: vi.fn(),
+          }
         }
-      }
-      createGain() {
-        return {
-          gain: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
-          connect: vi.fn(),
+        createGain() {
+          return {
+            gain: { setValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn() },
+            connect: vi.fn(),
+          }
         }
+        destination = { setSinkId: mockSetSinkId }
+        currentTime = 0
+        close = vi.fn()
       }
-      destination = { setSinkId: mockSetSinkId }
-      currentTime = 0
-      close = vi.fn()
-    }
 
     render(<LobbyView {...defaultProps({ selectedOutputDevice: 'speaker-device-1' })} />)
     const testSpeakerBtn = screen.getByText((content, element) => {
@@ -673,7 +673,7 @@ describe('LobbyView', () => {
 
   it('shows alert when camera test fails with permission denied', async () => {
     mockGetUserMedia.mockRejectedValueOnce(new Error('Permission denied'))
-    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => { })
 
     render(<LobbyView {...defaultProps()} />)
     const testCameraBtn = screen.getByText((content, element) => {

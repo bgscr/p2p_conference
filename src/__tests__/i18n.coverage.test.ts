@@ -12,7 +12,7 @@
  * - Line 456: return key when resolved value is not a string (e.g., object/namespace)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 
 describe('i18n coverage gaps', () => {
 

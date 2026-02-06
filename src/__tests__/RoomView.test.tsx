@@ -9,7 +9,7 @@
  * copied state in empty state button, and connection stats intervals.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
 // Mock dependencies before importing component

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, type Mock } from 'vitest'
 
-// Mock process.getSystemVersion (Electron API, not available in Node)
-;(process as any).getSystemVersion = vi.fn().mockReturnValue('10.0.0')
+  // Mock process.getSystemVersion (Electron API, not available in Node)
+  ; (process as any).getSystemVersion = vi.fn().mockReturnValue('10.0.0')
 
 /* ------------------------------------------------------------------ */
 /*  Mocks – vi.hoisted() makes these available to hoisted vi.mock()    */
@@ -71,14 +71,14 @@ const {
       isPackaged: false,
     },
     BrowserWindow: Object.assign(
-      vi.fn(function() { return mockBrowserWindowInstance }),
+      vi.fn(function () { return mockBrowserWindowInstance }),
       { getAllWindows: vi.fn().mockReturnValue([]) },
     ),
     ipcMain: {
       handle: vi.fn(),
       on: vi.fn(),
     },
-    Tray: vi.fn(function() { return mockTrayInstance }),
+    Tray: vi.fn(function () { return mockTrayInstance }),
     Menu: {
       buildFromTemplate: vi.fn((template: any[]) => {
         lastMenuTemplateRef.value = template
@@ -255,8 +255,8 @@ beforeEach(() => {
   __testing.isInCall = false
   __testing.isQuitting = false
 
-  // Re-set process.getSystemVersion mock (Electron API)
-  ;(process as any).getSystemVersion = vi.fn().mockReturnValue('10.0.0')
+    // Re-set process.getSystemVersion mock (Electron API)
+    ; (process as any).getSystemVersion = vi.fn().mockReturnValue('10.0.0')
 
   // Re-set default mock behaviours that individual tests may override
   mockIcon.isEmpty.mockReturnValue(false)
@@ -270,9 +270,9 @@ beforeEach(() => {
   electronMock.BrowserWindow.getAllWindows.mockReturnValue([])
   mockBrowserWindowInstance.isVisible.mockReturnValue(true)
 
-  // Reset BrowserWindow & Tray constructors (use function for constructor compatibility)
-  ;(electronMock.BrowserWindow as unknown as Mock).mockImplementation(function() { return mockBrowserWindowInstance })
-  ;(electronMock.Tray as unknown as Mock).mockImplementation(function() { return mockTrayInstance })
+    // Reset BrowserWindow & Tray constructors (use function for constructor compatibility)
+    ; (electronMock.BrowserWindow as unknown as Mock).mockImplementation(function () { return mockBrowserWindowInstance })
+    ; (electronMock.Tray as unknown as Mock).mockImplementation(function () { return mockTrayInstance })
 })
 
 /* ================================================================== */
@@ -358,7 +358,7 @@ describe('getAppIcon', () => {
       const originalPlatform = process.platform
       Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
       try {
-        const result = __testing.getAppIcon(true)
+        __testing.getAppIcon(true)
         expect(mockIcon.resize).toHaveBeenCalledWith({ width: 22, height: 22, quality: 'best' })
       } finally {
         Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
@@ -738,7 +738,7 @@ describe('updateTrayMenu', () => {
     })
 
     it('Open Logs Folder does nothing when logsDir is falsy', () => {
-      ;(fileLogger.getLogsDir as Mock).mockReturnValueOnce('')
+      ; (fileLogger.getLogsDir as Mock).mockReturnValueOnce('')
       __testing.updateTrayMenu()
       const item = findMenuItem('Open Logs Folder')
       item.click()
@@ -886,7 +886,7 @@ describe('createMenu', () => {
   })
 
   it('File > Open Logs Folder click does nothing when logsDir is falsy', () => {
-    ;(fileLogger.getLogsDir as Mock).mockReturnValueOnce('')
+    ; (fileLogger.getLogsDir as Mock).mockReturnValueOnce('')
     __testing.createMenu()
     const template = (Menu.buildFromTemplate as Mock).mock.calls[0][0]
     const fileMenu = template.find((m: any) => m.label === 'File')
@@ -1535,7 +1535,7 @@ describe('IPC handlers', () => {
     })
 
     it('returns false when logsDir is falsy', async () => {
-      ;(fileLogger.getLogsDir as Mock).mockReturnValueOnce('')
+      ; (fileLogger.getLogsDir as Mock).mockReturnValueOnce('')
       const handler = getIpcHandler('open-logs-folder')!
       const result = await handler()
       expect(shell.openPath).not.toHaveBeenCalled()
@@ -1543,7 +1543,7 @@ describe('IPC handlers', () => {
     })
 
     it('returns false when logsDir is null', async () => {
-      ;(fileLogger.getLogsDir as Mock).mockReturnValueOnce(null)
+      ; (fileLogger.getLogsDir as Mock).mockReturnValueOnce(null)
       const handler = getIpcHandler('open-logs-folder')!
       const result = await handler()
       expect(result).toBe(false)
@@ -1748,10 +1748,10 @@ describe('App lifecycle', () => {
 
     it('creates a new window if no windows exist and mainWindow is null', () => {
       __testing.mainWindow = null
-      ;(BrowserWindow as unknown as any).getAllWindows.mockReturnValue([])
+        ; (BrowserWindow as unknown as any).getAllWindows.mockReturnValue([])
 
-      ;(BrowserWindow as unknown as Mock).mockClear()
-      ;(BrowserWindow as unknown as Mock).mockImplementation(function() { return mockBrowserWindowInstance })
+        ; (BrowserWindow as unknown as Mock).mockClear()
+        ; (BrowserWindow as unknown as Mock).mockImplementation(function () { return mockBrowserWindowInstance })
 
       activateHandler!()
       expect(BrowserWindow).toHaveBeenCalled()
@@ -1759,9 +1759,9 @@ describe('App lifecycle', () => {
 
     it('does not create window if mainWindow is null but other windows exist', () => {
       __testing.mainWindow = null
-      ;(BrowserWindow as unknown as any).getAllWindows.mockReturnValue([{}])
+        ; (BrowserWindow as unknown as any).getAllWindows.mockReturnValue([{}])
 
-      ;(BrowserWindow as unknown as Mock).mockClear()
+        ; (BrowserWindow as unknown as Mock).mockClear()
       activateHandler!()
       expect(BrowserWindow).not.toHaveBeenCalled()
     })
