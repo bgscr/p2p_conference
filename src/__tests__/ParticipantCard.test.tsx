@@ -230,14 +230,10 @@ describe('ParticipantCard - Coverage Tests', () => {
           audioLevel={0}
           connectionState="connected"
           connectionQuality={{
-            peerId: 'p1',
             rtt: 20,
             packetLoss: 0,
             jitter: 1,
-            bytesReceived: 1000,
-            bytesSent: 500,
             quality: 'excellent',
-            connectionState: 'connected'
           }}
         />
       )
@@ -258,14 +254,10 @@ describe('ParticipantCard - Coverage Tests', () => {
           audioLevel={0}
           connectionState="connected"
           connectionQuality={{
-            peerId: 'p2',
             rtt: 80,
             packetLoss: 1,
             jitter: 5,
-            bytesReceived: 1000,
-            bytesSent: 500,
             quality: 'good',
-            connectionState: 'connected'
           }}
         />
       )
@@ -285,14 +277,10 @@ describe('ParticipantCard - Coverage Tests', () => {
           audioLevel={0}
           connectionState="connected"
           connectionQuality={{
-            peerId: 'p3',
             rtt: 200,
             packetLoss: 3,
             jitter: 20,
-            bytesReceived: 1000,
-            bytesSent: 500,
             quality: 'fair',
-            connectionState: 'connected'
           }}
         />
       )
@@ -312,14 +300,10 @@ describe('ParticipantCard - Coverage Tests', () => {
           audioLevel={0}
           connectionState="connected"
           connectionQuality={{
-            peerId: 'p4',
             rtt: 500,
             packetLoss: 10,
             jitter: 50,
-            bytesReceived: 1000,
-            bytesSent: 500,
             quality: 'poor',
-            connectionState: 'connected'
           }}
         />
       )
@@ -339,14 +323,10 @@ describe('ParticipantCard - Coverage Tests', () => {
           audioLevel={0}
           connectionState="connected"
           connectionQuality={{
-            peerId: 'local',
             rtt: 0,
             packetLoss: 0,
             jitter: 0,
-            bytesReceived: 0,
-            bytesSent: 0,
             quality: 'excellent',
-            connectionState: 'connected'
           }}
         />
       )
@@ -384,14 +364,10 @@ describe('ParticipantCard - Coverage Tests', () => {
           audioLevel={0}
           connectionState="connected"
           connectionQuality={{
-            peerId: 'ptest',
             rtt: 10,
             packetLoss: 0,
             jitter: 1,
-            bytesReceived: 0,
-            bytesSent: 0,
             quality: 'excellent',
-            connectionState: 'connected'
           }}
         />
       )
@@ -412,14 +388,10 @@ describe('ParticipantCard - Coverage Tests', () => {
           audioLevel={0}
           connectionState="connected"
           connectionQuality={{
-            peerId: 'ptest2',
             rtt: 200,
             packetLoss: 3,
             jitter: 20,
-            bytesReceived: 0,
-            bytesSent: 0,
             quality: 'fair',
-            connectionState: 'connected'
           }}
         />
       )
@@ -439,14 +411,10 @@ describe('ParticipantCard - Coverage Tests', () => {
           audioLevel={0}
           connectionState="connected"
           connectionQuality={{
-            peerId: 'ptest3',
             rtt: 500,
             packetLoss: 10,
             jitter: 50,
-            bytesReceived: 0,
-            bytesSent: 0,
             quality: 'poor',
-            connectionState: 'connected'
           }}
         />
       )

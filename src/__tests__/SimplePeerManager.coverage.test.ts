@@ -1738,8 +1738,8 @@ describe('SimplePeerManager - coverage gaps', () => {
     // Spy on createPeerConnection so that after a real PC is created, we make createOffer fail
     const origCPC = managerAny.createPeerConnection.bind(managerAny)
     vi.spyOn(managerAny, 'createPeerConnection').mockImplementation(
-      (pid: string, uname: string, plat: string) => {
-        const pc = origCPC(pid, uname, plat)
+      (...args: any[]) => {
+        const pc = origCPC(...args)
         pc.createOffer = vi.fn(async () => { throw new Error('create offer failed') })
         return pc
       }

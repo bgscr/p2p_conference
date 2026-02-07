@@ -17,7 +17,7 @@ export interface PreviousStats {
  */
 export function calculateConnectionStats(
   peerId: string,
-  connectionState: string,
+  connectionState: RTCPeerConnectionState,
   rtcStats: { forEach: (cb: (stat: any) => void) => void },
   previousStats: PreviousStats | null,
   currentTimestamp: number

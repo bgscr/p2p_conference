@@ -5,7 +5,11 @@
       "Bash(wc:*)",
       "Bash(npm test:*)",
       "Bash(npx vitest:*)",
-      "Bash(npm install)"
+      "Bash(npm install)",
+      "Bash(find:*)",
+      "Bash(findstr:*)",
+      "Bash(Select-String -Pattern \"%\")",
+      "Bash(Select-Object -Last 40)"
     ]
   }
 }

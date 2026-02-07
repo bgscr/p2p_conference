@@ -514,7 +514,7 @@ describe('createTray', () => {
     beforeEach(() => {
       __testing.createTray()
       const clickCall = mockTrayInstance.on.mock.calls.find((c: any) => c[0] === 'click')
-      clickHandler = clickCall[1]
+      clickHandler = clickCall![1]
     })
 
     it('returns early on darwin (no-op)', () => {
@@ -576,7 +576,7 @@ describe('createTray', () => {
     beforeEach(() => {
       __testing.createTray()
       const dblClickCall = mockTrayInstance.on.mock.calls.find((c: any) => c[0] === 'double-click')
-      dblClickHandler = dblClickCall[1]
+      dblClickHandler = dblClickCall![1]
     })
 
     it('shows and focuses the window', () => {
@@ -1178,7 +1178,7 @@ describe('createWindow', () => {
       __testing.createWindow()
       const readyHandler = mockBrowserWindowInstance.on.mock.calls.find(
         (c: any) => c[0] === 'ready-to-show'
-      )[1]
+      )![1]
       __testing.mainWindow = mockBrowserWindowInstance as any
       readyHandler()
       expect(mockBrowserWindowInstance.show).toHaveBeenCalled()
@@ -1192,7 +1192,7 @@ describe('createWindow', () => {
       __testing.createWindow()
       closeHandler = mockBrowserWindowInstance.on.mock.calls.find(
         (c: any) => c[0] === 'close'
-      )[1]
+      )![1]
     })
 
     it('hides to tray when in call and not quitting', () => {
@@ -1309,7 +1309,7 @@ describe('createWindow', () => {
       __testing.mainWindow = mockBrowserWindowInstance as any
       const closedHandler = mockBrowserWindowInstance.on.mock.calls.find(
         (c: any) => c[0] === 'closed'
-      )[1]
+      )![1]
       closedHandler()
       expect(__testing.mainWindow).toBeNull()
     })
@@ -1320,7 +1320,7 @@ describe('createWindow', () => {
       __testing.createWindow()
       const failHandler = mockWebContents.on.mock.calls.find(
         (c: any) => c[0] === 'did-fail-load'
-      )[1]
+      )![1]
       failHandler({}, -3, 'net::ERR_CONNECTION_REFUSED')
       expect(loggerMock.MainLog.error).toHaveBeenCalledWith(
         'Failed to load',

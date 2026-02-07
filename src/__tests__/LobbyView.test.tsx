@@ -101,7 +101,7 @@ function defaultProps(overrides: Partial<React.ComponentProps<typeof LobbyView>>
 
 describe('LobbyView', () => {
   let user: ReturnType<typeof userEvent.setup>
-  let mockGetUserMedia: ReturnType<typeof vi.fn>
+  let mockGetUserMedia: typeof mocks.getUserMedia
 
   beforeEach(() => {
     vi.clearAllMocks()
