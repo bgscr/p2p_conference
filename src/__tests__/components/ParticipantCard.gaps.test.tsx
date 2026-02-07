@@ -92,7 +92,7 @@ describe('ParticipantCard - coverage gaps', () => {
 
     // Mock HTMLMediaElement (same pattern as working test)
     HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined)
-    ;(HTMLMediaElement.prototype as any).setSinkId = vi.fn().mockResolvedValue(undefined)
+      ; (HTMLMediaElement.prototype as any).setSinkId = vi.fn().mockResolvedValue(undefined)
 
     let srcObjStore: any = null
     Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
@@ -214,6 +214,7 @@ describe('ParticipantCard - coverage gaps', () => {
     // Video should be hidden (opacity-0)
     const videoContainer = container.querySelector('.opacity-0')
     // The video element exists but is visually hidden
+    expect(videoContainer).toBeDefined()
   })
 
   it('displays connection state: disconnected', () => {

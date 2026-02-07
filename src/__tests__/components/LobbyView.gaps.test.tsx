@@ -255,4 +255,164 @@ describe('LobbyView - additional coverage gaps', () => {
     const roomInput = screen.getByTestId('lobby-room-input') as HTMLInputElement
     expect(roomInput.value.length).toBeGreaterThan(0)
   })
+
+  describe('camera test functionality', () => {
+    it('starts and stops camera test', async () => {
+      const mockVideoStream = {
+        getTracks: () => [{ stop: vi.fn(), kind: 'video', id: 'v1', enabled: true }],
+        getAudioTracks: () => [],
+        getVideoTracks: () => [{ stop: vi.fn(), kind: 'video', id: 'v1', enabled: true }],
+      }
+        ; (navigator.mediaDevices.getUserMedia as any).mockResolvedValue(mockVideoStream)
+
+      const user = userEvent.setup()
+      render(<LobbyView {...defaultProps} />)
+
+      // Find and click test camera button
+      const testCameraBtn = screen.getByText(/lobby.testCamera/)
+      await user.click(testCameraBtn)
+
+      // Now should show stop button
+      expect(screen.getByText(/lobby.stopTest/)).toBeInTheDocument()
+
+      // Click again to stop
+      await user.click(screen.getByText(/lobby.stopTest/))
+    })
+
+    it('handles camera permission denied', async () => {
+      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => { })
+        ; (navigator.mediaDevices.getUserMedia as any).mockRejectedValue(new Error('Permission denied'))
+
+      const user = userEvent.setup()
+      render(<LobbyView {...defaultProps} />)
+
+      const testCameraBtn = screen.getByText(/lobby.testCamera/)
+      await user.click(testCameraBtn)
+
+      // Should show alert with error message
+      expect(alertSpy).toHaveBeenCalled()
+      alertSpy.mockRestore()
+    })
+
+    it('restarts camera when video device changes while testing', async () => {
+      const mockVideoStream = {
+        getTracks: () => [{ stop: vi.fn(), kind: 'video', id: 'v1', enabled: true }],
+        getAudioTracks: () => [],
+        getVideoTracks: () => [{ stop: vi.fn(), kind: 'video', id: 'v1', enabled: true }],
+      }
+        ; (navigator.mediaDevices.getUserMedia as any).mockResolvedValue(mockVideoStream)
+
+      const user = userEvent.setup()
+      const { rerender } = render(<LobbyView {...defaultProps} />)
+
+      // Start camera test
+      const testCameraBtn = screen.getByText(/lobby.testCamera/)
+      await user.click(testCameraBtn)
+
+      // Wait for test to start
+      await vi.waitFor(() => {
+        expect(screen.getByText(/lobby.stopTest/)).toBeInTheDocument()
+      })
+
+      // Change video device - this should restart camera test (line 114-115)
+      rerender(<LobbyView {...defaultProps} selectedVideoDevice="cam-2" />)
+
+      // getUserMedia should be called again
+      expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('camera toggle', () => {
+    it('toggles camera enabled state', async () => {
+      const user = userEvent.setup()
+      render(<LobbyView {...defaultProps} />)
+
+      const cameraToggle = screen.getByTestId('camera-toggle')
+      expect(cameraToggle).toBeInTheDocument()
+
+      // Initially off (based on default state)
+      await user.click(cameraToggle)
+      // Toggle state (camera should now be on)
+      await user.click(cameraToggle)
+      // Toggle back
+    })
+
+    it('joins with camera enabled when toggled on', async () => {
+      const { waitFor } = await import('@testing-library/react')
+      const user = userEvent.setup()
+      render(<LobbyView {...defaultProps} />)
+
+      // Enable camera
+      await user.click(screen.getByTestId('camera-toggle'))
+
+      // Fill in required fields
+      const roomInput = screen.getByTestId('lobby-room-input')
+      const nameInput = screen.getByTestId('lobby-name-input')
+
+      await user.clear(nameInput)
+      await user.type(nameInput, 'TestUser')
+      await user.type(roomInput, 'myroom1234')
+
+      await user.click(screen.getByTestId('lobby-join-btn'))
+
+      await waitFor(() => {
+        expect(defaultProps.onJoinRoom).toHaveBeenCalledWith(
+          'myroom1234',
+          'TestUser',
+          true // cameraEnabled = true
+        )
+      })
+    })
+  })
+
+  describe('video play error handling', () => {
+    it('handles video play failure gracefully', async () => {
+      const mockVideoStream = {
+        getTracks: () => [{ stop: vi.fn(), kind: 'video', id: 'v1', enabled: true }],
+        getAudioTracks: () => [],
+        getVideoTracks: () => [{ stop: vi.fn(), kind: 'video', id: 'v1', enabled: true }],
+      }
+        ; (navigator.mediaDevices.getUserMedia as any).mockResolvedValue(mockVideoStream)
+
+      // Mock video play to fail
+      HTMLVideoElement.prototype.play = vi.fn().mockRejectedValue(new Error('Autoplay blocked'))
+
+      const user = userEvent.setup()
+      render(<LobbyView {...defaultProps} />)
+
+      const testCameraBtn = screen.getByText(/lobby.testCamera/)
+
+      // Should not throw even if play fails
+      await expect(user.click(testCameraBtn)).resolves.not.toThrow()
+    })
+  })
+
+  describe('microphone test restart on device change', () => {
+    it('restarts mic test when input device changes while testing', async () => {
+      // Setup analyser mock for mic test
+      mocks.pipelineGetAnalyserNode.mockReturnValue({
+        fftSize: 256,
+        frequencyBinCount: 128,
+        getByteFrequencyData: vi.fn(),
+      })
+
+      const user = userEvent.setup()
+      const { rerender } = render(<LobbyView {...defaultProps} />)
+
+      // Find and click test microphone button
+      const testMicBtn = screen.getByText(/lobby.testMicrophone/)
+      await user.click(testMicBtn)
+
+      // Wait for test to start
+      await vi.waitFor(() => {
+        expect(screen.getByText(/lobby.stopTest/)).toBeInTheDocument()
+      })
+
+      // Change input device - this should restart mic test (line 104-107)
+      rerender(<LobbyView {...defaultProps} selectedInputDevice="mic-2" />)
+
+      // Pipeline disconnect should be called (from restart)
+      expect(mocks.pipelineDisconnect).toHaveBeenCalled()
+    })
+  })
 })

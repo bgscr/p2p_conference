@@ -114,7 +114,7 @@ class MockPC {
   createAnswer = vi.fn(async () => ({ type: 'answer', sdp: 'mock-answer-sdp' }))
   setLocalDescription = vi.fn(async (desc: any) => { this.localDescription = desc })
   setRemoteDescription = vi.fn(async (desc: any) => { this.remoteDescription = desc })
-  addIceCandidate = vi.fn(async () => {})
+  addIceCandidate = vi.fn(async () => { })
   addTrack = vi.fn((track: any, _stream: any) => {
     const sender = {
       track,
@@ -535,8 +535,8 @@ describe('SimplePeerManager - additional gaps', () => {
     managerAny.createPeerConnection(peerId, 'User', 'win')
 
     const peer = managerAny.peers.get(peerId)
-    peer.disconnectTimer = setTimeout(() => {}, 10000)
-    peer.reconnectTimer = setTimeout(() => {}, 10000)
+    peer.disconnectTimer = setTimeout(() => { }, 10000)
+    peer.reconnectTimer = setTimeout(() => { }, 10000)
     peer.iceRestartInProgress = true
     peer.iceRestartAttempts = 2
 
@@ -767,8 +767,8 @@ describe('SimplePeerManager - additional gaps', () => {
     const peerId = 'peer-timers'
     managerAny.peers.set(peerId, createPeer(pc, {
       isConnected: true,
-      disconnectTimer: setTimeout(() => {}, 10000),
-      reconnectTimer: setTimeout(() => {}, 10000),
+      disconnectTimer: setTimeout(() => { }, 10000),
+      reconnectTimer: setTimeout(() => { }, 10000),
     }))
 
     // Also set previousStats and peerLastSeen/peerLastPing
@@ -1039,7 +1039,7 @@ describe('MQTTClient - additional gaps', () => {
       send = vi.fn()
       close = vi.fn()
       static OPEN = 1
-      constructor() {}
+      constructor() { }
     })
 
     const client = new MQTTClient('wss://timeout/mqtt')
@@ -1166,10 +1166,10 @@ describe('MultiBrokerMQTT - additional gaps', () => {
 
     // Trigger two disconnects to test timer clearing
     const brokerUrl = (multi as any).clients.keys().next().value
-    ;(multi as any).handleBrokerDisconnect(brokerUrl)
+      ; (multi as any).handleBrokerDisconnect(brokerUrl)
 
-    // Second disconnect should clear previous timer
-    ;(multi as any).handleBrokerDisconnect(brokerUrl)
+      // Second disconnect should clear previous timer
+      ; (multi as any).handleBrokerDisconnect(brokerUrl)
     await vi.advanceTimersByTimeAsync(100)
 
     multi.disconnect()
@@ -1183,10 +1183,10 @@ describe('MultiBrokerMQTT - additional gaps', () => {
 
     const brokerUrl = (multi as any).clients.keys().next().value
 
-    // Set reconnect attempts to max
-    ;(multi as any).reconnectAttempts.set(brokerUrl, 5) // RECONNECT_MAX_ATTEMPTS = 5
+      // Set reconnect attempts to max
+      ; (multi as any).reconnectAttempts.set(brokerUrl, 5) // RECONNECT_MAX_ATTEMPTS = 5
 
-    ;(multi as any).handleBrokerDisconnect(brokerUrl)
+      ; (multi as any).handleBrokerDisconnect(brokerUrl)
 
     // Should not schedule reconnection
     expect((multi as any).reconnectTimers.has(brokerUrl)).toBe(false)
@@ -1205,10 +1205,150 @@ describe('MultiBrokerMQTT - additional gaps', () => {
       ws.send = vi.fn(() => { throw new Error('send failed') })
     })
 
-    const count = await multi.subscribeAll('fail-topic', () => {})
+    const count = await multi.subscribeAll('fail-topic', () => { })
     // All subscriptions should fail
     expect(count).toBe(0)
 
     multi.disconnect()
+  })
+})
+
+// ==========================================================
+// Additional tests for uncovered lines
+// ==========================================================
+
+describe('SimplePeerManager - ICE restart and leave coverage', () => {
+  let manager: SimplePeerManager
+  let managerAny: any
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    mockWebSockets = []
+    mockPeerConnections = []
+    resetCredentialsCacheForTesting()
+    setupElectronAPI()
+
+    Object.defineProperty(navigator, 'onLine', { value: true, writable: true, configurable: true })
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Windows NT 10.0)',
+      writable: true, configurable: true,
+    })
+
+    manager = new SimplePeerManager()
+    managerAny = manager as any
+  })
+
+  afterEach(() => {
+    if (managerAny.mqtt && typeof managerAny.mqtt.disconnect !== 'function') {
+      managerAny.mqtt = null
+    }
+    managerAny.isLeaving = false
+    manager.leaveRoom()
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    teardownElectronAPI()
+  })
+
+  // --- Line 2267: ICE restart createOffer failure at max attempts triggers cleanupPeer ---
+  it('ICE restart createOffer failure at max attempts triggers cleanupPeer (line 2267)', async () => {
+    managerAny.roomId = 'test-room'
+    managerAny.mqtt = mockMqtt()
+    managerAny.broadcastChannel = null
+
+    const pc = new MockPC()
+    // Make createOffer fail
+    pc.createOffer = vi.fn().mockRejectedValue(new Error('createOffer failed'))
+
+    const peerId = 'peer-offer-fail'
+    // Set to max-1 attempts so the next attempt is the final one
+    managerAny.peers.set(peerId, createPeer(pc, {
+      iceRestartAttempts: 2 // MAX_ICE_RESTART_ATTEMPTS is usually 3
+    }))
+
+    const onPeerLeave = vi.fn()
+    manager.setCallbacks({ onPeerLeave })
+
+    // Attempt ICE restart which will fail at max attempts
+    await managerAny.attemptIceRestart(peerId)
+
+    // Wait for async rejection handling
+    await vi.advanceTimersByTimeAsync(100)
+
+    // Peer should be cleaned up because it was the last attempt
+    expect(managerAny.peers.has(peerId)).toBe(false)
+  })
+
+  // --- Lines 2286-2287: leaveRoom ignores concurrent leave operations ---
+  it('leaveRoom ignores concurrent leave when isLeaving is true (lines 2286-2287)', () => {
+    managerAny.roomId = 'test-room'
+    managerAny.mqtt = mockMqtt()
+    managerAny.broadcastChannel = new MockBC('test')
+    managerAny.isLeaving = true // Already leaving
+
+    const cleanupSpy = vi.spyOn(managerAny, 'cleanupPeer')
+
+    // Add a peer that would normally be cleaned up
+    const pc = new MockPC()
+    managerAny.peers.set('p1', createPeer(pc))
+
+    // Call leaveRoom - should return early due to isLeaving
+    manager.leaveRoom()
+
+    // cleanupPeer should NOT have been called
+    expect(cleanupSpy).not.toHaveBeenCalled()
+    // Peer should still exist
+    expect(managerAny.peers.has('p1')).toBe(true)
+
+    cleanupSpy.mockRestore()
+  })
+
+  // --- leaveRoom with no roomId returns early ---
+  it('leaveRoom returns early when not in a room', () => {
+    managerAny.roomId = null
+    managerAny.isLeaving = false
+
+    const cleanupSpy = vi.spyOn(managerAny, 'cleanupPeer')
+
+    manager.leaveRoom()
+
+    // Should not attempt any cleanup
+    expect(cleanupSpy).not.toHaveBeenCalled()
+
+    cleanupSpy.mockRestore()
+  })
+
+  // --- ICE restart createOffer failure NOT at max attempts schedules another attempt ---
+  it('ICE restart createOffer failure before max attempts schedules retry', async () => {
+    managerAny.roomId = 'test-room'
+    managerAny.mqtt = mockMqtt()
+    managerAny.broadcastChannel = null
+
+    const pc = new MockPC()
+    // Make createOffer fail
+    pc.createOffer = vi.fn().mockRejectedValue(new Error('createOffer failed'))
+
+    const peerId = 'peer-offer-retry'
+    // Only 1 attempt so far - should schedule another
+    managerAny.peers.set(peerId, createPeer(pc, {
+      iceRestartAttempts: 0
+    }))
+
+    const restartSpy = vi.spyOn(managerAny, 'attemptIceRestart')
+
+    // First attempt
+    await managerAny.attemptIceRestart(peerId)
+    await vi.advanceTimersByTimeAsync(100)
+
+    // Peer should still exist (not at max attempts)
+    expect(managerAny.peers.has(peerId)).toBe(true)
+
+    // Wait for retry delay (exponential backoff)
+    vi.advanceTimersByTime(3000)
+
+    // Should have scheduled a retry
+    expect(restartSpy.mock.calls.length).toBeGreaterThan(1)
+
+    restartSpy.mockRestore()
   })
 })

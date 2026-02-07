@@ -51,7 +51,6 @@ const mocks = vi.hoisted(() => ({
   downloadLogs: vi.fn(),
 }))
 
-let roomCallbacksCapture: any = {}
 let useRoomReturnOverrides: any = {}
 
 vi.mock('../renderer/components/LobbyView', () => ({
@@ -122,8 +121,7 @@ vi.mock('../renderer/components/Toast', () => ({
 }))
 
 vi.mock('../renderer/hooks/useRoom', () => ({
-  useRoom: vi.fn().mockImplementation((callbacks: any) => {
-    roomCallbacksCapture = callbacks
+  useRoom: vi.fn().mockImplementation((_callbacks: any) => {
     return {
       roomId: null,
       peers: new Map(),
@@ -210,7 +208,6 @@ describe('App - additional coverage gaps', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     electronCallbacks = {}
-    roomCallbacksCapture = {}
     useRoomReturnOverrides = {}
 
     const mockStream = {
@@ -234,9 +231,9 @@ describe('App - additional coverage gaps', () => {
 
     Object.defineProperty(window, 'electronAPI', {
       value: {
-        onDownloadLogs: vi.fn().mockImplementation(cb => { electronCallbacks.onDownloadLogs = cb; return () => {} }),
-        onTrayToggleMute: vi.fn().mockImplementation(cb => { electronCallbacks.onTrayToggleMute = cb; return () => {} }),
-        onTrayLeaveCall: vi.fn().mockImplementation(cb => { electronCallbacks.onTrayLeaveCall = cb; return () => {} }),
+        onDownloadLogs: vi.fn().mockImplementation(cb => { electronCallbacks.onDownloadLogs = cb; return () => { } }),
+        onTrayToggleMute: vi.fn().mockImplementation(cb => { electronCallbacks.onTrayToggleMute = cb; return () => { } }),
+        onTrayLeaveCall: vi.fn().mockImplementation(cb => { electronCallbacks.onTrayLeaveCall = cb; return () => { } }),
         updateCallState: mocks.updateCallState,
         flashWindow: mocks.flashWindow,
         showWindow: mocks.showWindow,

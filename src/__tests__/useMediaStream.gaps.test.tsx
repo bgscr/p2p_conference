@@ -153,7 +153,7 @@ describe('useMediaStream - additional gaps', () => {
   it('startCapture handles timeout', async () => {
     vi.useFakeTimers()
     // getUserMedia never resolves
-    mockGetUserMedia.mockImplementation(() => new Promise(() => {}))
+    mockGetUserMedia.mockImplementation(() => new Promise(() => { }))
 
     const { result } = renderHook(() => useMediaStream())
 
@@ -420,7 +420,7 @@ describe('useMediaStream - additional gaps', () => {
   })
 
   it('device change event triggers refresh', async () => {
-    const { result } = renderHook(() => useMediaStream())
+    const { result: _result } = renderHook(() => useMediaStream())
 
     // Wait for initial enumeration
     await act(async () => {

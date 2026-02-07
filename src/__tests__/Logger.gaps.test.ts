@@ -104,7 +104,7 @@ describe('Logger - additional gaps', () => {
     })
 
     it('handles objects with function properties', () => {
-      const result = (logger as any).sanitizeData({ a: 1, fn: () => {} })
+      const result = (logger as any).sanitizeData({ a: 1, fn: () => { } })
       expect(result.a).toBe(1)
       expect(result.fn).toBe('[function]')
     })
@@ -131,6 +131,65 @@ describe('Logger - additional gaps', () => {
       const result = (logger as any).sanitizeData(stream)
       expect(result._type).toBe('MediaStream')
     })
+
+    it('handles MediaStream with audio and video tracks (line 141)', () => {
+      // Create mock tracks
+      const mockAudioTrack = {
+        kind: 'audio',
+        label: 'Built-in Microphone',
+        enabled: true,
+        readyState: 'live'
+      }
+      const mockVideoTrack = {
+        kind: 'video',
+        label: 'USB Camera',
+        enabled: true,
+        readyState: 'live'
+      }
+
+      // Mock MediaStream with tracks
+      const mockStream = {
+        id: 'stream-123',
+        active: true,
+        getTracks: () => [mockAudioTrack, mockVideoTrack]
+      }
+
+      // Temporarily replace MediaStream check
+      vi.stubGlobal('MediaStream', class {
+        id = 'mock'
+        active = true
+        getTracks() { return [] }
+      })
+
+      // Create instance that will match instanceof
+      const stream = Object.create(MediaStream.prototype)
+      Object.assign(stream, mockStream)
+
+      const result = (logger as any).sanitizeData(stream)
+      expect(result._type).toBe('MediaStream')
+      expect(result.tracks).toHaveLength(2)
+      expect(result.tracks[0].kind).toBe('audio')
+      expect(result.tracks[1].kind).toBe('video')
+    })
+
+    it('handles BigInt data (line 218 fallback to String)', () => {
+      // BigInt cannot be serialized by JSON.stringify
+      // This should trigger the catch block on line 216-218
+      const bigIntValue = BigInt(9007199254740991)
+      const result = (logger as any).sanitizeData(bigIntValue)
+      // Should be converted to string representation
+      expect(result).toBe('9007199254740991')
+    })
+
+    it('handles objects with circular references via fallback', () => {
+      // Create object that fails serialization
+      const circular: any = { a: 1 }
+      circular.self = circular
+
+      // At depth 6 (which is > 5), it returns max depth exceeded
+      const result = (logger as any).sanitizeData(circular, 6)
+      expect(result).toBe('[max depth exceeded]')
+    })
   })
 
   describe('getLogsAsText', () => {
@@ -138,20 +197,20 @@ describe('Logger - additional gaps', () => {
       logger.log = []
       // Add a log entry with very long data
       const longData = { longField: 'x'.repeat(600) }
-      ;(logger as any).logs = [{
-        timestamp: '2025-01-01T00:00:00Z',
-        level: 'info',
-        module: 'Test',
-        message: 'test',
-        data: longData
-      }]
+        ; (logger as any).logs = [{
+          timestamp: '2025-01-01T00:00:00Z',
+          level: 'info',
+          module: 'Test',
+          message: 'test',
+          data: longData
+        }]
 
       const text = logger.getLogsAsText()
       expect(text).toContain('truncated')
     })
 
     it('handles non-serializable data in text output', () => {
-      ;(logger as any).logs = [{
+      ; (logger as any).logs = [{
         timestamp: '2025-01-01T00:00:00Z',
         level: 'info',
         module: 'Test',
@@ -164,7 +223,7 @@ describe('Logger - additional gaps', () => {
     })
 
     it('formats entry without data', () => {
-      ;(logger as any).logs = [{
+      ; (logger as any).logs = [{
         timestamp: '2025-01-01T00:00:00Z',
         level: 'info',
         module: 'Test',
@@ -179,7 +238,7 @@ describe('Logger - additional gaps', () => {
 
   describe('downloadLogs', () => {
     it('creates blob and triggers download', () => {
-      ;(logger as any).logs = [{
+      ; (logger as any).logs = [{
         timestamp: '2025-01-01T00:00:00Z',
         level: 'info', module: 'Test', message: 'download test'
       }]
@@ -221,7 +280,7 @@ describe('Logger - additional gaps', () => {
   describe('log level filtering', () => {
     it('filters out debug messages when level set to warn', () => {
       logger.setLogLevel('warn')
-      ;(logger as any).logs = []
+        ; (logger as any).logs = []
 
       const origDebug = console.debug
       console.debug = vi.fn()
@@ -242,8 +301,8 @@ describe('Logger - additional gaps', () => {
 
   describe('log trimming', () => {
     it('trims logs when exceeding maxLogs', () => {
-      ;(logger as any).maxLogs = 10
-      ;(logger as any).logs = []
+      ; (logger as any).maxLogs = 10
+        ; (logger as any).logs = []
 
       const moduleLogger = logger.createModuleLogger('Test')
       for (let i = 0; i < 15; i++) {
@@ -276,7 +335,7 @@ describe('Logger - additional gaps', () => {
 
   describe('logSystemInfo', () => {
     it('logs system info entry', () => {
-      ;(logger as any).logs = []
+      ; (logger as any).logs = []
       logger.logSystemInfo()
       expect((logger as any).logs.length).toBe(1)
       expect((logger as any).logs[0].module).toBe('System')

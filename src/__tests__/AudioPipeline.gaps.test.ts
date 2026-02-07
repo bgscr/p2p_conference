@@ -125,12 +125,45 @@ describe('AudioPipeline - additional gaps', () => {
     // Destroy while worklet loading
     await pipeline.destroy()
 
-    // Complete the worklet loading
-    addModuleResolve?.()
+      // Complete the worklet loading
+      ; (addModuleResolve as (() => void) | null)?.()
     await initPromise
 
     // Should not be initialized since destroyed
     expect(pipeline.isReady()).toBe(false)
+  })
+
+  it('initialize aborts if destroyed during AudioContext creation (lines 60-62)', async () => {
+    // This test covers the edge case where the pipeline is destroyed
+    // right after AudioContext is created but before worklet loading
+
+    // Create a context that marks isDestroyed=true during construction
+    let pipeline: AudioPipeline
+    class DestroyDuringInitCtx extends MockAudioContext {
+      constructor() {
+        super()
+          // Simulate destruction happening right after context creation
+          // This mimics React StrictMode unmount during init
+          ; (pipeline as any).isDestroyed = true
+      }
+    }
+    vi.stubGlobal('AudioContext', DestroyDuringInitCtx)
+
+    pipeline = new AudioPipeline()
+
+    // Initialize should detect isDestroyed after creating context
+    await pipeline.initialize()
+
+    // Pipeline should not be initialized since destroyed
+    expect(pipeline.isReady()).toBe(false)
+  })
+
+  it('initializeWorkletWasm throws when workletNode is null (line 208)', async () => {
+    const pipeline = new AudioPipeline()
+    // workletNode is null by default
+
+    await expect((pipeline as any).initializeWorkletWasm())
+      .rejects.toThrow('Worklet not ready')
   })
 
   it('connectInputStream resumes suspended audioContext', async () => {
@@ -181,8 +214,8 @@ describe('AudioPipeline - additional gaps', () => {
 
   it('connectBypass returns early when nodes are null', () => {
     const pipeline = new AudioPipeline()
-    // Call private connectBypass without initialization
-    ;(pipeline as any).connectBypass()
+      // Call private connectBypass without initialization
+      ; (pipeline as any).connectBypass()
     // Should not throw
   })
 
@@ -236,13 +269,13 @@ describe('AudioPipeline - additional gaps', () => {
 
   it('getStats times out when worklet does not respond', async () => {
     const pipeline = new AudioPipeline()
-    ;(pipeline as any).workletNode = {
-      port: {
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        postMessage: vi.fn()
+      ; (pipeline as any).workletNode = {
+        port: {
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          postMessage: vi.fn()
+        }
       }
-    }
 
     const statsPromise = pipeline.getStats()
     await vi.advanceTimersByTimeAsync(1100)
@@ -274,14 +307,14 @@ describe('AudioPipeline - additional gaps', () => {
     const pipeline = new AudioPipeline()
     await pipeline.initialize()
 
-    // Make nodes throw on disconnect
-    ;(pipeline as any).sourceNode = { disconnect: vi.fn(() => { throw new Error('disc error') }) }
-    ;(pipeline as any).workletNode = {
-      disconnect: vi.fn(() => { throw new Error('disc error') }),
-      port: { postMessage: vi.fn(() => { throw new Error('msg error') }) }
-    }
-    ;(pipeline as any).gainNode.disconnect = vi.fn(() => { throw new Error('disc error') })
-    ;(pipeline as any).analyserNode.disconnect = vi.fn(() => { throw new Error('disc error') })
+      // Make nodes throw on disconnect
+      ; (pipeline as any).sourceNode = { disconnect: vi.fn(() => { throw new Error('disc error') }) }
+      ; (pipeline as any).workletNode = {
+        disconnect: vi.fn(() => { throw new Error('disc error') }),
+        port: { postMessage: vi.fn(() => { throw new Error('msg error') }) }
+      }
+      ; (pipeline as any).gainNode.disconnect = vi.fn(() => { throw new Error('disc error') })
+      ; (pipeline as any).analyserNode.disconnect = vi.fn(() => { throw new Error('disc error') })
 
     expect(() => pipeline.disconnect()).not.toThrow()
   })
@@ -320,12 +353,12 @@ describe('AudioPipeline - additional gaps', () => {
 
   it('initializeWorkletWasm timeout rejects', async () => {
     const pipeline = new AudioPipeline()
-    ;(pipeline as any).workletNode = {
-      port: {
-        onmessage: null,
-        postMessage: vi.fn()
+      ; (pipeline as any).workletNode = {
+        port: {
+          onmessage: null,
+          postMessage: vi.fn()
+        }
       }
-    }
 
     const promise = (pipeline as any).initializeWorkletWasm().catch((err: Error) => err)
     await vi.advanceTimersByTimeAsync(11000)
@@ -341,19 +374,18 @@ describe('AudioPipeline - additional gaps', () => {
   it('initializeWorkletWasm handles error message', async () => {
     const pipeline = new AudioPipeline()
     let handler: ((event: any) => void) | null = null
-    ;(pipeline as any).workletNode = {
-      port: {
-        onmessage: null,
-        get onmessage() { return handler },
-        set onmessage(h: any) { handler = h },
-        postMessage: vi.fn()
+      ; (pipeline as any).workletNode = {
+        port: {
+          get onmessage() { return handler },
+          set onmessage(h: ((event: any) => void) | null) { handler = h },
+          postMessage: vi.fn()
+        }
       }
-    }
 
     const promise = (pipeline as any).initializeWorkletWasm()
 
-    // Simulate error message from worklet
-    handler?.({ data: { type: 'error', error: 'WASM init failed' } })
+      // Simulate error message from worklet
+      ; (handler as ((event: any) => void) | null)?.({ data: { type: 'error', error: 'WASM init failed' } })
 
     await expect(promise).rejects.toThrow('WASM init failed')
 
@@ -364,20 +396,19 @@ describe('AudioPipeline - additional gaps', () => {
   it('initializeWorkletWasm handles log message', async () => {
     const pipeline = new AudioPipeline()
     let handler: ((event: any) => void) | null = null
-    ;(pipeline as any).workletNode = {
-      port: {
-        onmessage: null,
-        get onmessage() { return handler },
-        set onmessage(h: any) { handler = h },
-        postMessage: vi.fn()
+      ; (pipeline as any).workletNode = {
+        port: {
+          get onmessage() { return handler },
+          set onmessage(h: ((event: any) => void) | null) { handler = h },
+          postMessage: vi.fn()
+        }
       }
-    }
 
     const promise = (pipeline as any).initializeWorkletWasm()
 
-    // Simulate log message then ready synchronously
-    handler?.({ data: { type: 'log', message: 'Loading...' } })
-    handler?.({ data: { type: 'ready' } })
+      // Simulate log message then ready synchronously
+      ; (handler as ((event: any) => void) | null)?.({ data: { type: 'log', message: 'Loading...' } })
+      ; (handler as ((event: any) => void) | null)?.({ data: { type: 'ready' } })
 
     await expect(promise).resolves.toBeUndefined()
 

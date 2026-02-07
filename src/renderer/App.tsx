@@ -280,44 +280,7 @@ export default function App() {
     }
   }, [peers.size])
 
-  /**
-   * Keyboard shortcuts
-   */
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return
-      }
 
-      // Ctrl+Shift+L - Download logs (also handled by menu, but keep for direct use)
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'l') {
-        e.preventDefault()
-        AppLog.info('Log download triggered via keyboard shortcut')
-        logger.downloadLogs()
-        showToast(t('settings.downloadLogs'), 'success')
-        return
-      }
-
-      if (appView === 'room') {
-        switch (e.key.toLowerCase()) {
-          case 'm':
-            handleToggleMute()
-            break
-          case 'escape':
-            if (connectionState === 'signaling' || connectionState === 'connecting') {
-              handleCancelSearch()
-            } else {
-              setShowLeaveConfirm(true)
-            }
-            break
-        }
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appView, connectionState, showToast, t])
 
   /**
    * Handle mute toggle with sound and broadcast to peers
@@ -366,6 +329,51 @@ export default function App() {
     setRemoteStreams(new Map())
     setAppView('lobby')
   }, [leaveRoom, stopCapture])
+
+  /**
+   * Keyboard shortcuts
+   */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
+      // Ctrl+Shift+L - Download logs (also handled by menu, but keep for direct use)
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault()
+        AppLog.info('Log download triggered via keyboard shortcut')
+        logger.downloadLogs()
+        showToast(t('settings.downloadLogs'), 'success')
+        return
+      }
+
+      if (appView === 'room') {
+        switch (e.key.toLowerCase()) {
+          case 'm':
+            handleToggleMute()
+            break
+          case 'l':
+            handleToggleSpeakerMute()
+            break
+          case 'v':
+            handleToggleVideo()
+            break
+          case 'escape':
+            if (connectionState === 'signaling' || connectionState === 'connecting') {
+              handleCancelSearch()
+            } else {
+              setShowLeaveConfirm(true)
+            }
+            break
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+     
+  }, [appView, connectionState, showToast, t, handleToggleMute, handleToggleSpeakerMute, handleToggleVideo, handleCancelSearch])
 
   /**
    * Join room handler - switch to room view IMMEDIATELY, then start capture
