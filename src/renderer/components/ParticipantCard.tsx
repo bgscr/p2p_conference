@@ -105,16 +105,11 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
       // ... (rest of audio setup)
     }
 
-    // ...
-    // Note: I will keep the existing complex audio logic (playRetry etc) below
-    // essentially just wrapping standard behavior.
-
-    // Check if we need to set srcObject again (it was set above conditionally)
-    // The original code set it unconditionally.
-    audioElement.srcObject = stream
-
     // Mute audio element if local speaker is muted
     audioElement.muted = localSpeakerMuted
+
+    // AbortController for cleaning up autoplay retry listeners on unmount
+    const autoplayAbort = new AbortController()
 
     // Try to play with retry mechanism
     const playAudio = async () => {
@@ -124,17 +119,16 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
       } catch (err: any) {
         AudioLog.warn('Autoplay blocked, will retry on user interaction', { error: err.message })
 
-        // Set up a one-time click handler to retry playback
+        // Set up a one-time handler to retry playback, cleaned up via AbortController
         const handleUserInteraction = () => {
           audioElement.play()
             .then(() => AudioLog.info('Audio playback started after user interaction', { peerId }))
             .catch(e => AudioLog.error('Still failed to play after interaction', e))
-          document.removeEventListener('click', handleUserInteraction)
-          document.removeEventListener('keydown', handleUserInteraction)
+          autoplayAbort.abort()
         }
 
-        document.addEventListener('click', handleUserInteraction, { once: true })
-        document.addEventListener('keydown', handleUserInteraction, { once: true })
+        document.addEventListener('click', handleUserInteraction, { signal: autoplayAbort.signal })
+        document.addEventListener('keydown', handleUserInteraction, { signal: autoplayAbort.signal })
       }
     }
 
@@ -175,6 +169,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     updateLevel()
 
     return () => {
+      autoplayAbort.abort()
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current)
       }

@@ -200,12 +200,6 @@ export function useMediaStream(): UseMediaStreamResult {
           : true // Default to any camera if not selected, or can be passed in config
       }
 
-      // If explicit video constraint is passed in config, respect it (e.g. video: false)
-      if (config && 'video' in config) {
-        // This is a bit of a hack since AudioProcessingConfig doesn't have video
-        // We'll trust the default behavior primarily but allow overriding if needed
-      }
-
       // Add timeout wrapper to prevent getUserMedia from hanging indefinitely
       const CAPTURE_TIMEOUT_MS = 10000 // 10 seconds
 
@@ -428,7 +422,7 @@ export function useMediaStream(): UseMediaStreamResult {
       setLocalStream(new MediaStream(currentStream.getTracks()))
 
       // Notify listeners about stream change
-      if (onStreamChangeRef.current && onStreamChangeRef.current) {
+      if (onStreamChangeRef.current) {
         onStreamChangeRef.current(currentStream)
       }
 

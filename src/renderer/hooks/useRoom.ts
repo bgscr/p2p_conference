@@ -4,30 +4,15 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { peerManager, selfId } from '../signaling/SimplePeerManager'
+import { peerManager, selfId, SimplePeerManager } from '../signaling/SimplePeerManager'
 import { RoomLog } from '../utils/Logger'
 import type { Peer, ConnectionState } from '@/types'
 
 // Re-export selfId for other components
 export { selfId }
 
-// ICE server configuration (public STUN servers only - no TURN)
-export const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' },
-  {
-    urls: [
-      'turn:47.111.10.155:3478',
-    ],
-    username: 'turnuser',
-    credential: 'huUKPizqnXPY5W94BXpPh3hZ4nZcdhA3'
-  }
-]
-
 interface UseRoomResult {
-  room: any | null
+  room: SimplePeerManager | null
   roomId: string | null
   peers: Map<string, Peer>
   localPeerId: string

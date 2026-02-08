@@ -5,8 +5,13 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { logger } from '../utils/Logger'
-import { ICE_SERVERS } from './useRoom'
 import { configureOpusSdp } from '../signaling/opus'
+
+// Public STUN servers only (TURN credentials are managed via IPC in SimplePeerManager)
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' }
+]
 
 const WebRTCLog = logger.createModuleLogger('WebRTC')
 
@@ -49,7 +54,7 @@ export function usePeerConnections(
     WebRTCLog.info(`Creating peer connection for ${peerId}`, { initiator: isInitiator })
 
     const config: RTCConfiguration = {
-      iceServers: ICE_SERVERS,
+      iceServers: DEFAULT_ICE_SERVERS,
       iceCandidatePoolSize: 10
     }
 

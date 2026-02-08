@@ -9,7 +9,12 @@
       "Bash(find:*)",
       "Bash(findstr:*)",
       "Bash(Select-String -Pattern \"%\")",
-      "Bash(Select-Object -Last 40)"
+      "Bash(Select-Object -Last 40)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run test:*)",
+      "Bash(npx eslint:*)"
     ]
   }
 }

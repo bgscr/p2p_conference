@@ -137,19 +137,17 @@ describe('AudioPipeline - additional gaps', () => {
     // This test covers the edge case where the pipeline is destroyed
     // right after AudioContext is created but before worklet loading
 
-    // Create a context that marks isDestroyed=true during construction
-    let pipeline: AudioPipeline
+    // Create pipeline first, then stub AudioContext to destroy it during construction
+    const pipeline = new AudioPipeline()
     class DestroyDuringInitCtx extends MockAudioContext {
       constructor() {
         super()
-          // Simulate destruction happening right after context creation
-          // This mimics React StrictMode unmount during init
-          ; (pipeline as any).isDestroyed = true
+        // Simulate destruction happening right after context creation
+        // This mimics React StrictMode unmount during init
+        ;(pipeline as any).isDestroyed = true
       }
     }
     vi.stubGlobal('AudioContext', DestroyDuringInitCtx)
-
-    pipeline = new AudioPipeline()
 
     // Initialize should detect isDestroyed after creating context
     await pipeline.initialize()

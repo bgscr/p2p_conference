@@ -18,7 +18,6 @@ describe('barrel exports', () => {
     expect(hooks.useMediaStream).toBeDefined()
     expect(hooks.usePeerConnections).toBeDefined()
     expect(hooks.useI18n).toBeDefined()
-    expect(hooks.ICE_SERVERS).toBeDefined()
   })
 
   it('exports signaling utilities', () => {

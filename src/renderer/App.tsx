@@ -89,38 +89,42 @@ export default function App() {
   /**
    * Room callbacks for sound notifications
    */
-  const roomCallbacks = {
-    onPeerJoin: useCallback((peerId: string, peerName: string) => {
-      AppLog.info('Peer joined', { peerId, peerName })
-      if (soundEnabled) {
-        soundManager.playJoin()
-      }
-      showToast(t('room.participantJoined', { name: peerName }), 'success')
-    }, [soundEnabled, showToast, t]),
+  const onPeerJoinCallback = useCallback((peerId: string, peerName: string) => {
+    AppLog.info('Peer joined', { peerId, peerName })
+    if (soundEnabled) {
+      soundManager.playJoin()
+    }
+    showToast(t('room.participantJoined', { name: peerName }), 'success')
+  }, [soundEnabled, showToast, t])
 
-    onPeerLeave: useCallback((peerId: string, peerName: string) => {
-      AppLog.info('Peer left', { peerId, peerName })
-      if (soundEnabled) {
-        soundManager.playLeave()
-      }
-      showToast(t('room.participantLeft', { name: peerName }), 'info')
+  const onPeerLeaveCallback = useCallback((peerId: string, peerName: string) => {
+    AppLog.info('Peer left', { peerId, peerName })
+    if (soundEnabled) {
+      soundManager.playLeave()
+    }
+    showToast(t('room.participantLeft', { name: peerName }), 'info')
 
-      setRemoteStreams(prev => {
-        const updated = new Map(prev)
-        updated.delete(peerId)
-        return updated
-      })
-    }, [soundEnabled, showToast, t]),
+    setRemoteStreams(prev => {
+      const updated = new Map(prev)
+      updated.delete(peerId)
+      return updated
+    })
+  }, [soundEnabled, showToast, t])
 
-    onConnectionStateChange: useCallback((state: ConnectionState) => {
-      AppLog.info('Connection state changed', { state })
-      if (state === 'connected' && soundEnabled) {
-        soundManager.playConnected()
-      } else if (state === 'failed' && soundEnabled) {
-        soundManager.playError()
-      }
-    }, [soundEnabled])
-  }
+  const onConnectionStateChangeCallback = useCallback((state: ConnectionState) => {
+    AppLog.info('Connection state changed', { state })
+    if (state === 'connected' && soundEnabled) {
+      soundManager.playConnected()
+    } else if (state === 'failed' && soundEnabled) {
+      soundManager.playError()
+    }
+  }, [soundEnabled])
+
+  const roomCallbacks = useMemo(() => ({
+    onPeerJoin: onPeerJoinCallback,
+    onPeerLeave: onPeerLeaveCallback,
+    onConnectionStateChange: onConnectionStateChangeCallback
+  }), [onPeerJoinCallback, onPeerLeaveCallback, onConnectionStateChangeCallback])
 
   // Room management
   const {
@@ -178,7 +182,7 @@ export default function App() {
 
     initPipeline()
 
-    const electronAPI = (window as any).electronAPI
+    const electronAPI = window.electronAPI
 
     // Listen for download-logs from menu bar
     let unsubscribeDownloadLogs: (() => void) | undefined
@@ -262,7 +266,7 @@ export default function App() {
    * Sync call state with system tray
    */
   useEffect(() => {
-    const electronAPI = (window as any).electronAPI
+    const electronAPI = window.electronAPI
     if (electronAPI?.updateCallState) {
       const inCall = appView === 'room' && connectionState === 'connected'
       electronAPI.updateCallState({ inCall, muted: isMuted })
@@ -274,7 +278,7 @@ export default function App() {
    * Flash window when peer joins (if window is not focused)
    */
   useEffect(() => {
-    const electronAPI = (window as any).electronAPI
+    const electronAPI = window.electronAPI
     if (electronAPI?.flashWindow && peers.size > 0 && !document.hasFocus()) {
       electronAPI.flashWindow()
     }

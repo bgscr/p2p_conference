@@ -117,9 +117,6 @@ describe('Barrel exports - hooks/index.ts', () => {
     expect(hooks.useRoom).toBeDefined()
     expect(typeof hooks.useRoom).toBe('function')
 
-    expect(hooks.ICE_SERVERS).toBeDefined()
-    expect(Array.isArray(hooks.ICE_SERVERS)).toBe(true)
-
     expect(hooks.selfId).toBeDefined()
   })
 
