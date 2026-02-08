@@ -39,6 +39,7 @@ vi.mock('../renderer/utils/Logger', () => ({
 
 describe('useRoom - additional gaps', () => {
   beforeEach(() => {
+    vi.resetModules()
     vi.clearAllMocks()
     peerManagerCallbacks = {}
   })
