@@ -625,12 +625,15 @@ describe('MultiBrokerMQTT - uncovered paths', () => {
     await subP
 
     const internalOnMessage = (multi as any).onMessage
+    vi.clearAllMocks()
 
     // First call - new message
     internalOnMessage(JSON.stringify({ type: 'announce', msgId: 'dup-1' }))
     expect(callback).toHaveBeenCalledTimes(1)
 
-    // Second call - duplicate
+    // Repeated duplicates should be throttled (not logged one-by-one)
+    internalOnMessage(JSON.stringify({ type: 'announce', msgId: 'dup-1' }))
+    internalOnMessage(JSON.stringify({ type: 'announce', msgId: 'dup-1' }))
     internalOnMessage(JSON.stringify({ type: 'announce', msgId: 'dup-1' }))
     expect(callback).toHaveBeenCalledTimes(1) // Still 1 - deduped
 
@@ -638,7 +641,54 @@ describe('MultiBrokerMQTT - uncovered paths', () => {
     internalOnMessage(JSON.stringify({ type: 'announce' }))
     expect(callback).toHaveBeenCalledTimes(2)
 
+    // First duplicate logs an immediate breadcrumb only once
+    expect(vi.mocked(SignalingLog.debug)).toHaveBeenCalledWith(
+      'Duplicate message detected (throttling enabled)',
+      expect.objectContaining({ msgId: 'dup-1' })
+    )
+
+    // Interval flush should emit one summary log with aggregate counts
+    await vi.advanceTimersByTimeAsync(16000)
+    expect(vi.mocked(SignalingLog.debug)).toHaveBeenCalledWith(
+      'Duplicate messages filtered (throttled)',
+      expect.objectContaining({
+        reason: 'interval',
+        filteredCount: 3,
+        uniqueMsgIds: 1
+      })
+    )
+
+    vi.clearAllMocks()
     multi.disconnect()
+  })
+
+  it('disconnect flushes pending throttled duplicate summary', async () => {
+    const multi = new MultiBrokerMQTT()
+    const connectP = multi.connectAll()
+    await vi.advanceTimersByTimeAsync(100)
+    await connectP
+
+    const callback = vi.fn()
+    const subP = multi.subscribeAll('test-topic', callback)
+    await vi.advanceTimersByTimeAsync(100)
+    await subP
+
+    const internalOnMessage = (multi as any).onMessage
+    vi.clearAllMocks()
+
+    internalOnMessage(JSON.stringify({ type: 'announce', msgId: 'dup-shutdown' })) // first message
+    internalOnMessage(JSON.stringify({ type: 'announce', msgId: 'dup-shutdown' })) // duplicate
+
+    multi.disconnect()
+
+    expect(vi.mocked(SignalingLog.debug)).toHaveBeenCalledWith(
+      'Duplicate messages filtered (throttled)',
+      expect.objectContaining({
+        reason: 'shutdown',
+        filteredCount: 1,
+        uniqueMsgIds: 1
+      })
+    )
   })
 
   it('publish only sends to connected AND subscribed clients', async () => {

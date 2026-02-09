@@ -126,6 +126,9 @@ const HEARTBEAT_TIMEOUT = 15000
 // Message deduplication settings
 const MESSAGE_DEDUP_WINDOW_SIZE = 500      // Max messages to track
 const MESSAGE_DEDUP_TTL_MS = 30000         // 30 seconds TTL for dedup entries
+const DUPLICATE_LOG_FLUSH_INTERVAL_MS = 15000
+const DUPLICATE_LOG_EARLY_FLUSH_THRESHOLD = 200
+const DUPLICATE_LOG_TOP_IDS_LIMIT = 5
 
 // Reconnection settings
 const RECONNECT_BASE_DELAY = 2000
@@ -740,6 +743,10 @@ export class MultiBrokerMQTT {
   private reconnectTimers: Map<string, NodeJS.Timeout> = new Map()
   private isShuttingDown = false
   private onReconnect: ((brokerUrl: string) => void) | null = null
+  private duplicateLogCounts: Map<string, number> = new Map()
+  private duplicateLogTotal = 0
+  private duplicateLogWindowStart: number | null = null
+  private duplicateLogFlushTimer: NodeJS.Timeout | null = null
 
   /**
    * Set callback for broker reconnection events
@@ -879,12 +886,75 @@ export class MultiBrokerMQTT {
     this.reconnectTimers.set(brokerUrl, timer)
   }
 
+  private clearDuplicateLogTimer() {
+    if (this.duplicateLogFlushTimer) {
+      clearTimeout(this.duplicateLogFlushTimer)
+      this.duplicateLogFlushTimer = null
+    }
+  }
+
+  private resetDuplicateLogState() {
+    this.clearDuplicateLogTimer()
+    this.duplicateLogCounts.clear()
+    this.duplicateLogTotal = 0
+    this.duplicateLogWindowStart = null
+  }
+
+  private flushDuplicateLogSummary(reason: 'interval' | 'threshold' | 'shutdown' | 'resubscribe') {
+    if (this.duplicateLogTotal === 0) {
+      this.clearDuplicateLogTimer()
+      return
+    }
+
+    const now = Date.now()
+    const windowMs = this.duplicateLogWindowStart ? now - this.duplicateLogWindowStart : 0
+    const topMsgIds = Array
+      .from(this.duplicateLogCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, DUPLICATE_LOG_TOP_IDS_LIMIT)
+      .map(([msgId, count]) => ({ msgId, count }))
+
+    SignalingLog.debug('Duplicate messages filtered (throttled)', {
+      reason,
+      filteredCount: this.duplicateLogTotal,
+      uniqueMsgIds: this.duplicateLogCounts.size,
+      windowMs,
+      topMsgIds
+    })
+
+    this.resetDuplicateLogState()
+  }
+
+  private recordDuplicateMessage(msgId: string) {
+    const shortMsgId = msgId.substring(0, 20)
+    this.duplicateLogTotal++
+    this.duplicateLogCounts.set(shortMsgId, (this.duplicateLogCounts.get(shortMsgId) || 0) + 1)
+
+    // Keep one immediate breadcrumb so the log still shows that throttling kicked in.
+    if (!this.duplicateLogWindowStart) {
+      this.duplicateLogWindowStart = Date.now()
+      SignalingLog.debug('Duplicate message detected (throttling enabled)', { msgId: shortMsgId })
+    }
+
+    if (this.duplicateLogTotal >= DUPLICATE_LOG_EARLY_FLUSH_THRESHOLD) {
+      this.flushDuplicateLogSummary('threshold')
+      return
+    }
+
+    if (!this.duplicateLogFlushTimer) {
+      this.duplicateLogFlushTimer = setTimeout(() => {
+        this.flushDuplicateLogSummary('interval')
+      }, DUPLICATE_LOG_FLUSH_INTERVAL_MS)
+    }
+  }
+
   /**
    * Subscribe to a topic on all connected brokers
    * @returns Number of successful subscriptions
    */
   async subscribeAll(topic: string, callback: (message: string) => void): Promise<number> {
     this.topic = topic
+    this.flushDuplicateLogSummary('resubscribe')
 
     // Wrap callback with deduplication
     this.onMessage = (payload: string) => {
@@ -894,7 +964,7 @@ export class MultiBrokerMQTT {
 
         // Check for duplicates
         if (msgId && this.deduplicator.isDuplicate(msgId)) {
-          SignalingLog.debug('Duplicate message filtered', { msgId: msgId.substring(0, 20) })
+          this.recordDuplicateMessage(msgId)
           return
         }
 
@@ -955,6 +1025,7 @@ export class MultiBrokerMQTT {
    */
   disconnect() {
     this.isShuttingDown = true
+    this.flushDuplicateLogSummary('shutdown')
 
     // Clear all reconnect timers
     this.reconnectTimers.forEach((timer) => {
@@ -972,6 +1043,7 @@ export class MultiBrokerMQTT {
     // Clean up deduplicator
     this.deduplicator.destroy()
     this.deduplicator = new MessageDeduplicator()  // Create fresh instance for next use
+    this.resetDuplicateLogState()
 
     this.topic = ''
     this.onMessage = null
