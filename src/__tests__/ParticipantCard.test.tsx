@@ -59,7 +59,7 @@ describe('ParticipantCard - Coverage Tests', () => {
         }
       }
       createMediaStreamSource() {
-        return { connect: vi.fn() }
+        return { connect: vi.fn(), disconnect: vi.fn() }
       }
       createGain() {
         return {
@@ -68,6 +68,7 @@ describe('ParticipantCard - Coverage Tests', () => {
           disconnect: vi.fn()
         }
       }
+      close = vi.fn()
     }
     global.AudioContext = MockAudioContext as any
 

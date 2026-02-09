@@ -22,7 +22,7 @@ if (typeof window !== 'undefined') {
         writable: true,
         configurable: true,
         value: vi.fn().mockImplementation(() => ({
-            createMediaStreamSource: vi.fn(() => ({ connect: vi.fn() })),
+            createMediaStreamSource: vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() })),
             createAnalyser: vi.fn(() => ({
                 connect: vi.fn(),
                 disconnect: vi.fn(),

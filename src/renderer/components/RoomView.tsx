@@ -3,7 +3,7 @@
  * Main conference room interface showing participants and controls
  */
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { ParticipantCard } from './ParticipantCard'
 import { AudioMeter } from './AudioMeter'
 import { DeviceSelector } from './DeviceSelector'
@@ -111,20 +111,55 @@ export const RoomView: React.FC<RoomViewProps> = ({
   }>({ isOnline: true, isReconnecting: false, reconnectAttempts: 0 })
 
   const startTimeRef = useRef(Date.now())
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const peerVolumeHandlersRef = useRef<Map<string, (volume: number) => void>>(new Map())
 
   // Get volume for a peer (default 100%)
-  const getPeerVolume = (peerId: string): number => {
+  const getPeerVolume = useCallback((peerId: string): number => {
     return peerVolumes.get(peerId) ?? 100
-  }
+  }, [peerVolumes])
 
   // Handle per-participant volume change
-  const handlePeerVolumeChange = (peerId: string, volume: number) => {
+  const handlePeerVolumeChange = useCallback((peerId: string, volume: number) => {
     setPeerVolumes(prev => {
       const updated = new Map(prev)
       updated.set(peerId, volume)
       return updated
     })
-  }
+  }, [])
+
+  // Get a stable callback per peer to keep memoized ParticipantCard updates predictable.
+  const getPeerVolumeChangeHandler = useCallback((peerId: string) => {
+    const existing = peerVolumeHandlersRef.current.get(peerId)
+    if (existing) return existing
+
+    const handler = (volume: number) => handlePeerVolumeChange(peerId, volume)
+    peerVolumeHandlersRef.current.set(peerId, handler)
+    return handler
+  }, [handlePeerVolumeChange])
+
+  // Clean up per-peer volume state/callbacks for peers that left.
+  useEffect(() => {
+    const activePeerIds = new Set(peers.keys())
+
+    peerVolumeHandlersRef.current.forEach((_, peerId) => {
+      if (!activePeerIds.has(peerId)) {
+        peerVolumeHandlersRef.current.delete(peerId)
+      }
+    })
+
+    setPeerVolumes(prev => {
+      let changed = false
+      const updated = new Map(prev)
+      prev.forEach((_, peerId) => {
+        if (!activePeerIds.has(peerId)) {
+          updated.delete(peerId)
+          changed = true
+        }
+      })
+      return changed ? updated : prev
+    })
+  }, [peers])
 
   // Timer for call duration
   useEffect(() => {
@@ -141,7 +176,21 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
     const updateStats = async () => {
       const stats = await p2pManager.getConnectionStats()
-      setConnectionStats(stats)
+      setConnectionStats(prev => {
+        // Only update if stats actually changed to avoid unnecessary re-renders
+        if (prev.size !== stats.size) return stats
+        for (const [peerId, quality] of stats) {
+          const prevQuality = prev.get(peerId)
+          if (!prevQuality ||
+            prevQuality.quality !== quality.quality ||
+            prevQuality.rtt !== quality.rtt ||
+            prevQuality.packetLoss !== quality.packetLoss ||
+            prevQuality.jitter !== quality.jitter) {
+            return stats
+          }
+        }
+        return prev
+      })
     }
 
     // Initial update
@@ -224,8 +273,20 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const handleCopy = () => {
     onCopyRoomId()
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (copyTimeoutRef.current) {
+      clearTimeout(copyTimeoutRef.current)
+    }
+    copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000)
   }
+
+  // Cleanup copy timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // Handle download logs
   const handleDownloadLogs = () => {
@@ -374,7 +435,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                   outputDeviceId={selectedOutputDevice}
                   localSpeakerMuted={isSpeakerMuted}
                   volume={getPeerVolume(peer.id)}
-                  onVolumeChange={(vol) => handlePeerVolumeChange(peer.id, vol)}
+                  onVolumeChange={getPeerVolumeChangeHandler(peer.id)}
                   platform={peer.platform}
                   connectionQuality={connectionStats.get(peer.id)}
                 />

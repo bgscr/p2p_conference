@@ -93,8 +93,15 @@ export function useMediaStream(): UseMediaStreamResult {
     // Note: Do NOT connect to destination (would cause feedback)
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount)
+    const AUDIO_LEVEL_UPDATE_INTERVAL = 100 // ms (~10fps, sufficient for audio meters)
+    let lastUpdateTime = 0
 
     const updateLevel = () => {
+      animationFrameRef.current = requestAnimationFrame(updateLevel)
+      const now = performance.now()
+      if (now - lastUpdateTime < AUDIO_LEVEL_UPDATE_INTERVAL) return
+      lastUpdateTime = now
+
       analyser.getByteFrequencyData(dataArray)
 
       // Calculate average volume level (0-100)
@@ -102,7 +109,6 @@ export function useMediaStream(): UseMediaStreamResult {
       const normalizedLevel = Math.min(100, (average / 128) * 100)
 
       setAudioLevel(normalizedLevel)
-      animationFrameRef.current = requestAnimationFrame(updateLevel)
     }
 
     updateLevel()

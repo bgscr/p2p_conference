@@ -16,7 +16,8 @@
       "Bash(npm run test:*)",
       "Bash(npx eslint:*)",
       "Bash(dir:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(npx electron-vite:*)"
     ]
   }
 }

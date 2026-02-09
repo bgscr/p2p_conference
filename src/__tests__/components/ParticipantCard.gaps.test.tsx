@@ -78,7 +78,7 @@ describe('ParticipantCard - coverage gaps', () => {
         }
       }
       createMediaStreamSource() {
-        return { connect: vi.fn() }
+        return { connect: vi.fn(), disconnect: vi.fn() }
       }
       createGain() {
         return {
@@ -87,6 +87,7 @@ describe('ParticipantCard - coverage gaps', () => {
           disconnect: vi.fn(),
         }
       }
+      close = vi.fn()
     }
     global.AudioContext = MockAudioContext as any
 
@@ -184,6 +185,7 @@ describe('ParticipantCard - coverage gaps', () => {
       createMediaStreamSource() {
         throw new Error('No audio tracks')
       }
+      close = vi.fn()
     } as any
 
     const stream = createMockStream([createAudioTrack()])

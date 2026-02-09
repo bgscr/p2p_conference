@@ -97,7 +97,7 @@ describe('useMediaStream - additional gaps', () => {
         frequencyBinCount: 128,
         getByteFrequencyData: vi.fn(),
       })
-      createMediaStreamSource = vi.fn().mockReturnValue({ connect: vi.fn() })
+      createMediaStreamSource = vi.fn().mockReturnValue({ connect: vi.fn(), disconnect: vi.fn() })
       close = vi.fn()
     })
 

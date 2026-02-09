@@ -8,6 +8,79 @@ import { AudioMeter } from './AudioMeter'
 import { useI18n } from '../hooks/useI18n'
 import { AudioLog } from '../utils/Logger'
 
+type QualityLevel = 'excellent' | 'good' | 'fair' | 'poor'
+
+function getStatusColor(connectionState: RTCPeerConnectionState | 'connected'): string {
+  switch (connectionState) {
+    case 'connected':
+      return 'bg-green-500'
+    case 'connecting':
+      return 'bg-yellow-500'
+    case 'disconnected':
+    case 'failed':
+      return 'bg-red-500'
+    default:
+      return 'bg-gray-400'
+  }
+}
+
+function getQualityColor(quality?: QualityLevel): string {
+  if (!quality) return 'text-gray-400'
+  switch (quality) {
+    case 'excellent':
+      return 'text-green-500'
+    case 'good':
+      return 'text-green-400'
+    case 'fair':
+      return 'text-yellow-500'
+    case 'poor':
+      return 'text-red-500'
+    default:
+      return 'text-gray-400'
+  }
+}
+
+function getQualityBars(quality?: QualityLevel): number {
+  if (!quality) return 0
+  switch (quality) {
+    case 'excellent':
+      return 4
+    case 'good':
+      return 3
+    case 'fair':
+      return 2
+    case 'poor':
+      return 1
+    default:
+      return 0
+  }
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(' ')
+    .map(n => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2)
+}
+
+const AVATAR_COLORS = [
+  'bg-blue-500',
+  'bg-green-500',
+  'bg-purple-500',
+  'bg-pink-500',
+  'bg-indigo-500',
+  'bg-teal-500',
+  'bg-orange-500',
+  'bg-cyan-500'
+]
+
+function getAvatarColor(id: string): string {
+  const hash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length]
+}
+
 interface ParticipantCardProps {
   name: string
   peerId: string
@@ -32,7 +105,7 @@ interface ParticipantCardProps {
   }
 }
 
-export const ParticipantCard: React.FC<ParticipantCardProps> = ({
+const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
   name,
   peerId,
   isMicMuted,
@@ -57,6 +130,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
   const audioContextRef = useRef<AudioContext | null>(null)
   const animationRef = useRef<number | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const [showVolumeSlider, setShowVolumeSlider] = useState(false)
 
   // Set up video playback
@@ -154,18 +228,25 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     try {
       const source = ctx.createMediaStreamSource(stream)
       source.connect(analyser)
+      sourceNodeRef.current = source
     } catch (err) {
       // Might fail if stream has no audio tracks
       AudioLog.debug('Could not create MediaStreamSource (maybe no audio tracks?)', err)
     }
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount)
+    const AUDIO_LEVEL_UPDATE_INTERVAL = 100 // ms (~10fps, sufficient for audio meters)
+    let lastUpdateTime = 0
 
     const updateLevel = () => {
+      animationRef.current = requestAnimationFrame(updateLevel)
+      const now = performance.now()
+      if (now - lastUpdateTime < AUDIO_LEVEL_UPDATE_INTERVAL) return
+      lastUpdateTime = now
+
       analyser.getByteFrequencyData(dataArray)
       const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
       setRemoteAudioLevel(Math.min(100, (avg / 128) * 100))
-      animationRef.current = requestAnimationFrame(updateLevel)
     }
 
     updateLevel()
@@ -174,10 +255,23 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
       autoplayAbort.abort()
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current)
+        animationRef.current = null
+      }
+      if (sourceNodeRef.current) {
+        sourceNodeRef.current.disconnect()
+        sourceNodeRef.current = null
+      }
+      if (analyserRef.current) {
+        analyserRef.current.disconnect()
+        analyserRef.current = null
       }
       if (gainNodeRef.current) {
         gainNodeRef.current.disconnect()
         gainNodeRef.current = null
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close()
+        audioContextRef.current = null
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -199,85 +293,10 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
   const hasVideoTrack = (stream?.getVideoTracks().length ?? 0) > 0
   const showVideo = hasVideoTrack && (Boolean(isScreenSharing) || !isVideoMuted)
 
-  // Get connection status color
-  const getStatusColor = (): string => {
-    switch (connectionState) {
-      case 'connected':
-        return 'bg-green-500'
-      case 'connecting':
-        return 'bg-yellow-500'
-      case 'disconnected':
-      case 'failed':
-        return 'bg-red-500'
-      default:
-        return 'bg-gray-400'
-    }
-  }
-
-  // Get quality indicator color
-  const getQualityColor = (): string => {
-    if (!connectionQuality) return 'text-gray-400'
-    switch (connectionQuality.quality) {
-      case 'excellent':
-        return 'text-green-500'
-      case 'good':
-        return 'text-green-400'
-      case 'fair':
-        return 'text-yellow-500'
-      case 'poor':
-        return 'text-red-500'
-      default:
-        return 'text-gray-400'
-    }
-  }
-
-  // Get quality signal bars count (1-4)
-  const getQualityBars = (): number => {
-    if (!connectionQuality) return 0
-    switch (connectionQuality.quality) {
-      case 'excellent':
-        return 4
-      case 'good':
-        return 3
-      case 'fair':
-        return 2
-      case 'poor':
-        return 1
-      default:
-        return 0
-    }
-  }
-
-  // Generate avatar initials
-  const getInitials = (name: string): string => {
-    return name
-      .split(' ')
-      .map(n => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2)
-  }
-
-  // Generate avatar color based on peer ID
-  const getAvatarColor = (id: string): string => {
-    const colors = [
-      'bg-blue-500',
-      'bg-green-500',
-      'bg-purple-500',
-      'bg-pink-500',
-      'bg-indigo-500',
-      'bg-teal-500',
-      'bg-orange-500',
-      'bg-cyan-500'
-    ]
-    const hash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
-    return colors[hash % colors.length]
-  }
-
   const displayLevel = isLocal ? audioLevel : remoteAudioLevel
   const showMicIndicator = isMicMuted
   const showSpeakerIndicator = isSpeakerMuted
-  const qualityBars = getQualityBars()
+  const qualityBars = getQualityBars(connectionQuality?.quality)
 
   return (
     <div className={`
@@ -349,7 +368,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
         {/* Connection status dot / quality indicator */}
         {connectionQuality && !isLocal ? (
           <div
-            className={`absolute top-0 right-0 flex items-end gap-0.5 ${getQualityColor()}`}
+            className={`absolute top-0 right-0 flex items-end gap-0.5 ${getQualityColor(connectionQuality?.quality)}`}
             title={`${t('room.connectionQuality')}: ${connectionQuality.quality}\nRTT: ${connectionQuality.rtt}ms\nPacket Loss: ${connectionQuality.packetLoss.toFixed(1)}%\nJitter: ${connectionQuality.jitter.toFixed(1)}ms`}
           >
             {/* Signal bars */}
@@ -362,7 +381,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
             ))}
           </div>
         ) : (
-          <div className={`absolute top-0 right-0 w-3 h-3 rounded-full border-2 border-white ${getStatusColor()}`} />
+          <div className={`absolute top-0 right-0 w-3 h-3 rounded-full border-2 border-white ${getStatusColor(connectionState)}`} />
         )}
       </div>
 
@@ -438,3 +457,25 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
     </div>
   )
 }
+
+// Custom comparison to avoid re-rendering unchanged participant cards.
+export const ParticipantCard = React.memo(ParticipantCardComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.name === nextProps.name &&
+    prevProps.peerId === nextProps.peerId &&
+    prevProps.isMicMuted === nextProps.isMicMuted &&
+    prevProps.isVideoMuted === nextProps.isVideoMuted &&
+    prevProps.isSpeakerMuted === nextProps.isSpeakerMuted &&
+    prevProps.isScreenSharing === nextProps.isScreenSharing &&
+    prevProps.isLocal === nextProps.isLocal &&
+    prevProps.audioLevel === nextProps.audioLevel &&
+    prevProps.connectionState === nextProps.connectionState &&
+    prevProps.stream === nextProps.stream &&
+    prevProps.outputDeviceId === nextProps.outputDeviceId &&
+    prevProps.localSpeakerMuted === nextProps.localSpeakerMuted &&
+    prevProps.volume === nextProps.volume &&
+    prevProps.onVolumeChange === nextProps.onVolumeChange &&
+    prevProps.platform === nextProps.platform &&
+    prevProps.connectionQuality === nextProps.connectionQuality
+  )
+})

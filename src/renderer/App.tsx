@@ -52,6 +52,7 @@ export default function App() {
   const [globalError, setGlobalError] = useState<string | null>(null)
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const toastTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false)
@@ -79,9 +80,11 @@ export default function App() {
     const id = Math.random().toString(36).slice(2)
     setToasts(prev => [...prev, { id, message, type }])
 
-    setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id))
+      toastTimeoutsRef.current.delete(id)
     }, 3000)
+    toastTimeoutsRef.current.set(id, timeoutId)
   }, [])
 
   const {
@@ -103,6 +106,11 @@ export default function App() {
    */
   const dismissToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id))
+    const timeoutId = toastTimeoutsRef.current.get(id)
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+      toastTimeoutsRef.current.delete(id)
+    }
   }, [])
 
   /**
@@ -264,11 +272,14 @@ export default function App() {
 
     // Capture the current pipeline reference for cleanup
     const pipeline = audioPipelineRef.current
+    const toastTimeouts = toastTimeoutsRef.current
 
     return () => {
       unsubscribeDownloadLogs?.()
       unsubscribeTrayMute?.()
       unsubscribeTrayLeave?.()
+      toastTimeouts.forEach(timeoutId => clearTimeout(timeoutId))
+      toastTimeouts.clear()
       pipeline.destroy()
       soundManager.destroy()
       AppLog.info('Application cleanup')
