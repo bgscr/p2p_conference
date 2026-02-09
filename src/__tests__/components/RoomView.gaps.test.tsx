@@ -34,6 +34,10 @@ vi.mock('../../renderer/components/DeviceSelector', () => ({
   ),
 }))
 
+vi.mock('../../renderer/components/ChatPanel', () => ({
+  ChatPanel: () => <div data-testid="chat-panel" />,
+}))
+
 vi.mock('../../renderer/hooks/useI18n', () => ({
   useI18n: vi.fn().mockReturnValue({
     t: (key: string, params?: Record<string, any>) => {
@@ -135,6 +139,14 @@ describe('RoomView - coverage gaps', () => {
     onOutputDeviceChange: vi.fn(),
     onCopyRoomId: vi.fn(),
     onToggleSound: vi.fn(),
+    chatMessages: [] as any[],
+    onSendChatMessage: vi.fn(),
+    chatUnreadCount: 0,
+    isChatOpen: false,
+    onToggleChat: vi.fn(),
+    onMarkChatRead: vi.fn(),
+    isScreenSharing: false,
+    onToggleScreenShare: vi.fn(),
     settings: {
       noiseSuppressionEnabled: true,
       echoCancellationEnabled: true,
@@ -240,5 +252,38 @@ describe('RoomView - coverage gaps', () => {
     expect(screen.getByTestId('room-mute-btn')).toBeInTheDocument()
     expect(screen.getByTestId('room-leave-btn')).toBeInTheDocument()
     expect(screen.getByTestId('room-copy-btn')).toBeInTheDocument()
+  })
+
+  it('renders screen share button', () => {
+    const peers = new Map([
+      ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, isSpeakerMuted: false, audioLevel: 0, connectionState: 'connected' }],
+    ])
+    render(<RoomView {...(defaultProps as any)} peers={peers} />)
+    expect(screen.getByTestId('room-screenshare-btn')).toBeInTheDocument()
+  })
+
+  it('clicking screen share button triggers callback', () => {
+    const onToggleScreenShare = vi.fn()
+    const peers = new Map([
+      ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, isSpeakerMuted: false, audioLevel: 0, connectionState: 'connected' }],
+    ])
+    render(
+      <RoomView
+        {...(defaultProps as any)}
+        peers={peers}
+        onToggleScreenShare={onToggleScreenShare}
+      />
+    )
+    fireEvent.click(screen.getByTestId('room-screenshare-btn'))
+    expect(onToggleScreenShare).toHaveBeenCalled()
+  })
+
+  it('screen share button reflects active state', () => {
+    const peers = new Map([
+      ['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, isSpeakerMuted: false, audioLevel: 0, connectionState: 'connected' }],
+    ])
+    render(<RoomView {...(defaultProps as any)} peers={peers} isScreenSharing={true} />)
+    const button = screen.getByTestId('room-screenshare-btn')
+    expect(button.className).toContain('bg-green-100')
   })
 })

@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 let useRoomReturnOverrides: any = {}
+let onChatMessageCallback: ((msg: any) => void) | null = null
 
 vi.mock('../renderer/components/LobbyView', () => ({
   LobbyView: ({ onJoinRoom, onOpenSettings, onInputDeviceChange, onVideoDeviceChange, onOutputDeviceChange }: any) => (
@@ -67,17 +68,21 @@ vi.mock('../renderer/components/LobbyView', () => ({
 }))
 
 vi.mock('../renderer/components/RoomView', () => ({
-  RoomView: ({ onLeaveRoom, onToggleMute, onToggleVideo, onToggleSpeakerMute, onToggleSound, onCopyRoomId, onInputDeviceChange, onVideoDeviceChange, onSettingsChange, connectionState }: any) => (
+  RoomView: ({ onLeaveRoom, onToggleMute, onToggleVideo, onToggleSpeakerMute, onToggleSound, onCopyRoomId, onInputDeviceChange, onVideoDeviceChange, onSettingsChange, onToggleChat, isChatOpen, chatMessages, chatUnreadCount, connectionState }: any) => (
     <div data-testid="room-view" data-connstate={connectionState}>
       <button data-testid="leave-room-btn" onClick={onLeaveRoom}>Leave</button>
       <button data-testid="toggle-mute-btn" onClick={onToggleMute}>Mute</button>
       <button data-testid="toggle-video-btn" onClick={onToggleVideo}>Video</button>
       <button data-testid="toggle-speaker-btn" onClick={onToggleSpeakerMute}>Speaker</button>
       <button data-testid="toggle-sound-btn" onClick={onToggleSound}>Sound</button>
+      <button data-testid="toggle-chat-btn" onClick={onToggleChat}>Chat</button>
       <button data-testid="copy-id-btn" onClick={onCopyRoomId}>Copy</button>
       <button data-testid="room-input-btn" onClick={() => onInputDeviceChange('room-mic')}>RoomInput</button>
       <button data-testid="room-video-btn" onClick={() => onVideoDeviceChange('room-vid')}>RoomVideo</button>
       <button data-testid="room-ns-btn" onClick={() => onSettingsChange({ noiseSuppressionEnabled: false })}>NS</button>
+      <div data-testid="chat-open-state">{String(isChatOpen)}</div>
+      <div data-testid="chat-message-count">{String(chatMessages?.length ?? 0)}</div>
+      <div data-testid="chat-unread-count">{String(chatUnreadCount ?? 0)}</div>
     </div>
   )
 }))
@@ -167,11 +172,16 @@ vi.mock('../renderer/hooks/useI18n', () => ({
 vi.mock('../renderer/signaling/SimplePeerManager', () => ({
   peerManager: {
     setCallbacks: vi.fn(),
+    setOnChatMessage: vi.fn((cb: ((msg: any) => void) | null) => {
+      onChatMessageCallback = cb
+    }),
+    sendChatMessage: vi.fn(),
     setLocalStream: vi.fn(),
     replaceTrack: vi.fn(),
     broadcastMuteStatus: vi.fn(),
     getDebugInfo: vi.fn().mockReturnValue({ selfId: 'test-self-id' })
-  }
+  },
+  selfId: 'test-self-id'
 }))
 
 vi.mock('../renderer/audio-processor/AudioPipeline', () => ({
@@ -198,7 +208,11 @@ vi.mock('../renderer/audio-processor/SoundManager', () => ({
 }))
 
 vi.mock('../renderer/utils/Logger', () => ({
-  logger: { logSystemInfo: vi.fn(), downloadLogs: mocks.downloadLogs },
+  logger: {
+    logSystemInfo: vi.fn(),
+    downloadLogs: mocks.downloadLogs,
+    createModuleLogger: vi.fn(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
+  },
   AppLog: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }))
 
@@ -209,6 +223,7 @@ describe('App - additional coverage gaps', () => {
     vi.clearAllMocks()
     electronCallbacks = {}
     useRoomReturnOverrides = {}
+    onChatMessageCallback = null
 
     const mockStream = {
       getAudioTracks: () => [{ id: 'track-1', kind: 'audio', label: 'Test', enabled: true, muted: false }],
@@ -421,5 +436,32 @@ describe('App - additional coverage gaps', () => {
       expect(overlay).toBeInTheDocument()
       expect(overlay.dataset.state).toBe('signaling')
     })
+  })
+
+  it('keyboard T toggles chat panel state', async () => {
+    await goToRoom()
+    expect(screen.getByTestId('chat-open-state')).toHaveTextContent('false')
+
+    fireEvent.keyDown(window, { key: 't' })
+    await waitFor(() => expect(screen.getByTestId('chat-open-state')).toHaveTextContent('true'))
+  })
+
+  it('chat message state updates on receive', async () => {
+    await goToRoom()
+    expect(onChatMessageCallback).toBeDefined()
+
+    act(() => {
+      onChatMessageCallback?.({
+        id: 'msg-1',
+        senderId: 'peer-1',
+        senderName: 'Bob',
+        content: 'hello',
+        timestamp: Date.now(),
+        type: 'text'
+      })
+    })
+
+    expect(screen.getByTestId('chat-message-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('chat-unread-count')).toHaveTextContent('1')
   })
 })

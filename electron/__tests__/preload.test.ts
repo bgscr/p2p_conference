@@ -60,6 +60,7 @@ describe('Preload Script', () => {
         'flashWindow',
         'onTrayToggleMute',
         'onTrayLeaveCall',
+        'getScreenSources',
         'getICEServers',
         'getMQTTBrokers',
       ]
@@ -108,6 +109,11 @@ describe('Preload Script', () => {
     it('getICEServers invokes "get-ice-servers"', () => {
       exposedApi.getICEServers()
       expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-ice-servers')
+    })
+
+    it('getScreenSources invokes "get-screen-sources"', () => {
+      exposedApi.getScreenSources()
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-screen-sources')
     })
 
     it('getMQTTBrokers invokes "get-mqtt-brokers"', () => {

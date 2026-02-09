@@ -14,6 +14,7 @@ interface ParticipantCardProps {
   isMicMuted: boolean
   isVideoMuted?: boolean
   isSpeakerMuted: boolean
+  isScreenSharing?: boolean
   isLocal: boolean
   audioLevel: number
   connectionState: RTCPeerConnectionState | 'connected'
@@ -37,6 +38,7 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
   isMicMuted,
   isVideoMuted,
   isSpeakerMuted,
+  isScreenSharing,
   isLocal,
   audioLevel,
   connectionState,
@@ -193,7 +195,9 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
 
   // ... (lines 161-271 same)
 
-  const showVideo = stream && !isVideoMuted && (stream.getVideoTracks().length > 0)
+  // Keep showing the incoming video while screen sharing even if camera is muted.
+  const hasVideoTrack = (stream?.getVideoTracks().length ?? 0) > 0
+  const showVideo = hasVideoTrack && (Boolean(isScreenSharing) || !isVideoMuted)
 
   // Get connection status color
   const getStatusColor = (): string => {
@@ -291,6 +295,17 @@ export const ParticipantCard: React.FC<ParticipantCardProps> = ({
         muted
         className={`absolute inset-0 w-full h-full object-cover z-0 transition-opacity duration-300 ${showVideo ? 'opacity-100' : 'opacity-0'}`}
       />
+
+      {/* Screen sharing indicator */}
+      {isScreenSharing && (
+        <div className="absolute top-2 left-2 z-20 px-2 py-0.5 bg-green-500 text-white text-xs rounded-full flex items-center gap-1" data-testid="screen-sharing-badge">
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+          {t('room.screenSharing')}
+        </div>
+      )}
 
       {/* Avatar (shown when video is hidden) */}
       <div className={`relative z-10 transition-opacity duration-300 ${showVideo ? 'opacity-0' : 'opacity-100'}`}>

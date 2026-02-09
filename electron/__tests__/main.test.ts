@@ -98,6 +98,20 @@ const {
       getMediaAccessStatus: vi.fn().mockReturnValue('granted'),
       askForMediaAccess: vi.fn().mockResolvedValue(true),
     },
+    screen: {
+      getCursorScreenPoint: vi.fn().mockReturnValue({ x: 100, y: 100 }),
+      getDisplayNearestPoint: vi.fn().mockReturnValue({ id: 1 }),
+    },
+    session: {
+      defaultSession: {
+        setDisplayMediaRequestHandler: vi.fn(),
+      }
+    },
+    desktopCapturer: {
+      getSources: vi.fn().mockResolvedValue([
+        { id: 'screen:0:0', name: 'Screen 1' }
+      ])
+    }
   }
 
   const loggerMock = {
@@ -154,7 +168,7 @@ vi.mock('../credentials', () => credentialsMock)
 /*  Import module under test (runs top-level side-effects)             */
 /* ------------------------------------------------------------------ */
 import { __testing } from '../main'
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, systemPreferences, session, desktopCapturer, screen } from 'electron'
 import { fileLogger } from '../logger'
 
 /* ------------------------------------------------------------------ */
@@ -267,7 +281,11 @@ beforeEach(() => {
   electronMock.nativeImage.createFromDataURL.mockReturnValue(mockFallbackIcon)
   electronMock.systemPreferences.getMediaAccessStatus.mockReturnValue('granted')
   electronMock.systemPreferences.askForMediaAccess.mockResolvedValue(true)
+  electronMock.screen.getCursorScreenPoint.mockReturnValue({ x: 100, y: 100 })
+  electronMock.screen.getDisplayNearestPoint.mockReturnValue({ id: 1 })
   electronMock.BrowserWindow.getAllWindows.mockReturnValue([])
+  electronMock.session.defaultSession.setDisplayMediaRequestHandler.mockImplementation(() => undefined)
+  electronMock.desktopCapturer.getSources.mockResolvedValue([{ id: 'screen:0:0', name: 'Screen 1', display_id: '1' }])
   mockBrowserWindowInstance.isVisible.mockReturnValue(true)
 
     // Reset BrowserWindow & Tray constructors (use function for constructor compatibility)
@@ -1410,6 +1428,95 @@ describe('requestMicrophonePermission', () => {
   })
 })
 
+/* ------------------------------------------------------------------ */
+
+describe('setupDisplayMediaHandler', () => {
+  it('registers display media request handler when supported', () => {
+    __testing.setupDisplayMediaHandler()
+
+    expect(session.defaultSession.setDisplayMediaRequestHandler).toHaveBeenCalledTimes(1)
+    const options = (session.defaultSession.setDisplayMediaRequestHandler as Mock).mock.calls[0][1]
+    expect(options).toEqual({ useSystemPicker: true })
+  })
+
+  it('falls back to handler without options when system picker option throws', () => {
+    ;(session.defaultSession.setDisplayMediaRequestHandler as Mock)
+      .mockImplementationOnce(() => {
+        throw new Error('unsupported options')
+      })
+      .mockImplementationOnce(() => undefined)
+
+    __testing.setupDisplayMediaHandler()
+
+    expect(session.defaultSession.setDisplayMediaRequestHandler).toHaveBeenCalledTimes(2)
+    expect((session.defaultSession.setDisplayMediaRequestHandler as Mock).mock.calls[0][1]).toEqual({ useSystemPicker: true })
+    expect((session.defaultSession.setDisplayMediaRequestHandler as Mock).mock.calls[1][1]).toBeUndefined()
+  })
+
+  it('grants preferred screen source to callback', async () => {
+    ;(desktopCapturer.getSources as Mock).mockResolvedValueOnce([
+      { id: 'screen:1:0', name: 'Screen 1', display_id: '2' },
+      { id: 'screen:2:0', name: 'Screen 2', display_id: '1' }
+    ])
+
+    __testing.setupDisplayMediaHandler()
+    const handler = (session.defaultSession.setDisplayMediaRequestHandler as Mock).mock.calls[0][0]
+    const callback = vi.fn()
+
+    await handler({}, callback)
+
+    expect(desktopCapturer.getSources).toHaveBeenCalledWith({ types: ['screen', 'window'] })
+    expect(callback).toHaveBeenCalledWith({
+      video: expect.objectContaining({ id: 'screen:2:0' })
+    })
+  })
+
+  it('falls back to first screen source when display match is unavailable', async () => {
+    ;(screen.getDisplayNearestPoint as Mock).mockImplementationOnce(() => {
+      throw new Error('screen api error')
+    })
+    ;(desktopCapturer.getSources as Mock).mockResolvedValueOnce([
+      { id: 'screen:3:0', name: 'Screen 3', display_id: '3' }
+    ])
+
+    __testing.setupDisplayMediaHandler()
+    const handler = (session.defaultSession.setDisplayMediaRequestHandler as Mock).mock.calls[0][0]
+    const callback = vi.fn()
+    await handler({}, callback)
+
+    expect(callback).toHaveBeenCalledWith({
+      video: expect.objectContaining({ id: 'screen:3:0' })
+    })
+  })
+
+  it('returns undefined video when no sources or getSources fails', async () => {
+    __testing.setupDisplayMediaHandler()
+    const handler = (session.defaultSession.setDisplayMediaRequestHandler as Mock).mock.calls[0][0]
+
+    const noSourceCallback = vi.fn()
+    ;(desktopCapturer.getSources as Mock).mockResolvedValueOnce([])
+    await handler({}, noSourceCallback)
+    expect(noSourceCallback).toHaveBeenCalledWith({ video: undefined })
+
+    const failedCallback = vi.fn()
+    ;(desktopCapturer.getSources as Mock).mockRejectedValueOnce(new Error('capture failed'))
+    await handler({}, failedCallback)
+    expect(failedCallback).toHaveBeenCalledWith({ video: undefined })
+  })
+
+  it('logs warning and exits when API is unavailable', () => {
+    const defaultSessionAny = session.defaultSession as any
+    const originalHandler = defaultSessionAny.setDisplayMediaRequestHandler
+    defaultSessionAny.setDisplayMediaRequestHandler = undefined
+
+    __testing.setupDisplayMediaHandler()
+
+    expect(loggerMock.MainLog.warn).toHaveBeenCalledWith('Display media request handler not available')
+
+    defaultSessionAny.setDisplayMediaRequestHandler = originalHandler
+  })
+})
+
 /* ================================================================== */
 /*  IPC Handlers                                                       */
 /* ================================================================== */
@@ -1487,6 +1594,35 @@ describe('IPC handlers', () => {
       expect(result).toHaveProperty('platform')
       expect(result).toHaveProperty('arch')
       expect(result).toHaveProperty('version')
+    })
+  })
+
+  describe('get-screen-sources', () => {
+    it('is registered', () => {
+      expect(ipcHandleMap.has('get-screen-sources')).toBe(true)
+    })
+
+    it('returns prioritized capture sources (current screen first, then fallbacks)', async () => {
+      ;(desktopCapturer.getSources as Mock).mockResolvedValueOnce([
+        { id: 'screen:1:0', name: 'Screen 1', display_id: '1' },
+        { id: 'screen:2:0', name: 'Screen 2', display_id: '2' },
+        { id: 'window:3:0', name: 'Window 3' }
+      ])
+      const handler = getIpcHandler('get-screen-sources')!
+      const result = await handler()
+      expect(result).toEqual([
+        { id: 'screen:1:0', name: 'Screen 1' },
+        { id: 'screen:2:0', name: 'Screen 2' },
+        { id: 'window:3:0', name: 'Window 3' }
+      ])
+      expect(desktopCapturer.getSources).toHaveBeenCalledWith({ types: ['screen', 'window'] })
+    })
+
+    it('returns empty array when desktopCapturer throws', async () => {
+      ;(desktopCapturer.getSources as Mock).mockRejectedValueOnce(new Error('boom'))
+      const handler = getIpcHandler('get-screen-sources')!
+      const result = await handler()
+      expect(result).toEqual([])
     })
   })
 
@@ -1821,6 +1957,7 @@ describe('All expected IPC channels are registered', () => {
     'request-mic-permission',
     'get-app-version',
     'get-platform',
+    'get-screen-sources',
     'get-logs-dir',
     'open-logs-folder',
     'get-ice-servers',

@@ -865,3 +865,16 @@ The P2P Conference application is feature-complete for core functionality:
 - `setOnNetworkStatusChange()` - UI callback registration
 - `getNetworkStatus()` - Get current network state
 - `manualReconnect()` - Trigger reconnection from UI
+
+### Session 16 - Text Chat + Screen Sharing (2026-02-08)
+- **Status:** IN PROGRESS
+- **Scope Implemented:**
+  - Added WebRTC DataChannel chat support in `SimplePeerManager` (`chat` channel, send/receive APIs, lifecycle cleanup)
+  - Added `ChatMessage` type and chat UI panel (`ChatPanel`) integration in room controls
+  - Added `useDataChannel` hook for chat state/unread tracking/validation
+  - Added screen sharing state plumbing (`isScreenSharing`) across signaling, room state, and participant UI
+  - Added `useScreenShare` lifecycle improvements (idempotent start/stop, track end handling)
+  - Added keyboard shortcuts: `T` (chat toggle), `S` (screen share toggle)
+  - Added i18n keys for chat and screen sharing (en + zh-CN)
+  - Added unit tests for chat hook/panel/screen share and updated component/app gap tests
+  - Added E2E specs for chat and screen sharing UI flows

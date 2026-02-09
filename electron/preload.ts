@@ -111,6 +111,14 @@ const electronAPI = {
       ipcRenderer.removeAllListeners('tray-leave-call')
     }
   },
+
+  /**
+   * Get available desktop capture sources for screen sharing fallback.
+   */
+  getScreenSources: (): Promise<Array<{
+    id: string
+    name: string
+  }>> => ipcRenderer.invoke('get-screen-sources'),
   
   // ============================================
   // Credentials API (kept in main process for security)

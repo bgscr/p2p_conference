@@ -17,6 +17,9 @@ vi.mock('../../renderer/components/AudioMeter', () => ({
 vi.mock('../../renderer/components/DeviceSelector', () => ({
     DeviceSelector: ({ label }: { label: string }) => <div data-testid="device-selector">{label}</div>
 }))
+vi.mock('../../renderer/components/ChatPanel', () => ({
+    ChatPanel: () => <div data-testid="chat-panel" />
+}))
 vi.mock('../../renderer/hooks/useI18n', () => ({
     useI18n: () => ({ t: (key: string) => key })
 }))
@@ -51,6 +54,14 @@ describe('RoomView', () => {
         onOutputDeviceChange: vi.fn(),
         onCopyRoomId: vi.fn(),
         onToggleSound: vi.fn(),
+        chatMessages: [],
+        onSendChatMessage: vi.fn(),
+        chatUnreadCount: 0,
+        isChatOpen: false,
+        onToggleChat: vi.fn(),
+        onMarkChatRead: vi.fn(),
+        isScreenSharing: false,
+        onToggleScreenShare: vi.fn(),
         settings: {
             noiseSuppressionEnabled: true,
             echoCancellationEnabled: true,
@@ -100,5 +111,13 @@ describe('RoomView', () => {
 
         expect(screen.getByText('common.microphone')).toBeInTheDocument()
         expect(screen.getByText('common.speaker')).toBeInTheDocument()
+    })
+
+    it('renders screen share button and triggers toggle', () => {
+        const peers = new Map([['p1', { id: 'p1', name: 'Peer 1', isMuted: false, isSpeakerMuted: false, audioLevel: 0, connectionState: 'connected' as const }]])
+        render(<RoomView {...defaultProps} peers={peers} />)
+        const button = screen.getByTestId('room-screenshare-btn')
+        fireEvent.click(button)
+        expect(defaultProps.onToggleScreenShare).toHaveBeenCalled()
     })
 })

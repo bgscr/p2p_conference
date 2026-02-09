@@ -38,6 +38,12 @@ const mocks = vi.hoisted(() => ({
   showWindow: vi.fn()
 }))
 
+const screenShareMock = vi.hoisted(() => ({
+  isScreenSharing: false,
+  startScreenShare: vi.fn().mockResolvedValue(true),
+  stopScreenShare: vi.fn()
+}))
+
 // Track useRoom callbacks
 let roomCallbacksCapture: any = {}
 
@@ -158,14 +164,26 @@ vi.mock('../renderer/hooks/useI18n', () => ({
   })
 }))
 
+vi.mock('../renderer/hooks/useScreenShare', () => ({
+  useScreenShare: vi.fn().mockImplementation(() => ({
+    isScreenSharing: screenShareMock.isScreenSharing,
+    screenStream: null,
+    startScreenShare: screenShareMock.startScreenShare,
+    stopScreenShare: screenShareMock.stopScreenShare
+  }))
+}))
+
 vi.mock('../renderer/signaling/SimplePeerManager', () => ({
   peerManager: {
     setCallbacks: vi.fn(),
+    setOnChatMessage: vi.fn(),
+    sendChatMessage: vi.fn(),
     setLocalStream: vi.fn(),
     replaceTrack: vi.fn(),
     broadcastMuteStatus: vi.fn(),
     getDebugInfo: vi.fn().mockReturnValue({ selfId: 'test-self-id' })
-  }
+  },
+  selfId: 'test-self-id'
 }))
 
 vi.mock('../renderer/audio-processor/AudioPipeline', () => ({
@@ -192,7 +210,11 @@ vi.mock('../renderer/audio-processor/SoundManager', () => ({
 }))
 
 vi.mock('../renderer/utils/Logger', () => ({
-  logger: { logSystemInfo: vi.fn(), downloadLogs: vi.fn() },
+  logger: {
+    logSystemInfo: vi.fn(),
+    downloadLogs: vi.fn(),
+    createModuleLogger: vi.fn(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
+  },
   AppLog: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }))
 
@@ -205,6 +227,10 @@ describe('App Coverage Tests', () => {
     user = userEvent.setup()
     electronCallbacks = {}
     roomCallbacksCapture = {}
+    screenShareMock.isScreenSharing = false
+    screenShareMock.startScreenShare.mockReset()
+    screenShareMock.startScreenShare.mockResolvedValue(true)
+    screenShareMock.stopScreenShare.mockReset()
 
     const mockStream = {
       getAudioTracks: () => [{ id: 'track-1', kind: 'audio', label: 'Test', enabled: true, muted: false }],
@@ -322,6 +348,25 @@ describe('App Coverage Tests', () => {
 
     expect(mocks.playClick).toHaveBeenCalled()
     expect(peerManager.broadcastMuteStatus).toHaveBeenCalled()
+  })
+
+  it('keeps screen sharing status when toggling mute, speaker, and video', async () => {
+    screenShareMock.isScreenSharing = true
+    await goToRoom()
+    ;(peerManager.broadcastMuteStatus as any).mockClear()
+
+    await user.click(screen.getByTestId('toggle-mute-btn'))
+    await user.click(screen.getByTestId('toggle-speaker-btn'))
+    await user.click(screen.getByTestId('toggle-video-btn'))
+
+    const calls = (peerManager.broadcastMuteStatus as any).mock.calls
+    expect(calls).toHaveLength(3)
+    expect(calls[0][2]).toBe(true)
+    expect(calls[0][3]).toBe(true)
+    expect(calls[1][2]).toBe(true)
+    expect(calls[1][3]).toBe(true)
+    expect(calls[2][2]).toBe(true)
+    expect(calls[2][3]).toBe(true)
   })
 
   it('handles copy room ID', async () => {

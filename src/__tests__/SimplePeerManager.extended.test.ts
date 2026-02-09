@@ -447,7 +447,13 @@ describe('SimplePeerManager Extended Tests', () => {
       manager.broadcastMuteStatus(true, true, false)
 
       const debugInfo = manager.getDebugInfo() as any
-      expect(debugInfo.localMuteStatus).toEqual({ micMuted: true, speakerMuted: true, videoMuted: true, videoEnabled: false })
+      expect(debugInfo.localMuteStatus).toEqual({
+        micMuted: true,
+        speakerMuted: true,
+        videoMuted: true,
+        videoEnabled: false,
+        isScreenSharing: false
+      })
     })
   })
 

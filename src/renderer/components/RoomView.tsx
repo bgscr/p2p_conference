@@ -7,9 +7,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import { ParticipantCard } from './ParticipantCard'
 import { AudioMeter } from './AudioMeter'
 import { DeviceSelector } from './DeviceSelector'
+import { ChatPanel } from './ChatPanel'
 import { useI18n } from '../hooks/useI18n'
 import { logger } from '../utils/Logger'
-import type { Peer, AudioDevice, ConnectionState, AppSettings, ConnectionQuality } from '@/types'
+import type { Peer, AudioDevice, ConnectionState, AppSettings, ConnectionQuality, ChatMessage } from '@/types'
 import { SimplePeerManager } from '../signaling/SimplePeerManager'
 
 interface RoomViewProps {
@@ -44,6 +45,16 @@ interface RoomViewProps {
   settings: AppSettings
   onSettingsChange: (settings: Partial<AppSettings>) => void
   p2pManager?: SimplePeerManager
+  // Chat props
+  chatMessages: ChatMessage[]
+  onSendChatMessage: (content: string) => void
+  chatUnreadCount: number
+  isChatOpen: boolean
+  onToggleChat: () => void
+  onMarkChatRead: () => void
+  // Screen share props
+  isScreenSharing: boolean
+  onToggleScreenShare: () => void
 }
 
 export const RoomView: React.FC<RoomViewProps> = ({
@@ -77,7 +88,15 @@ export const RoomView: React.FC<RoomViewProps> = ({
   onToggleSound,
   settings,
   onSettingsChange,
-  p2pManager
+  p2pManager,
+  chatMessages,
+  onSendChatMessage,
+  chatUnreadCount,
+  isChatOpen,
+  onToggleChat,
+  onMarkChatRead,
+  isScreenSharing,
+  onToggleScreenShare
 }) => {
   const { t } = useI18n()
   const [showDevicePanel, setShowDevicePanel] = useState(false)
@@ -215,12 +234,14 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   const peersArray = Array.from(peers.values())
   const participantCount = peersArray.length + 1
+  const canToggleScreenShare = isScreenSharing || peersArray.length > 0
 
   // Show warning if approaching limit
   const showParticipantWarning = participantCount >= 8
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full">
+    <div className="flex flex-col flex-1 min-w-0">
       {/* Network Status Banner */}
       {(!networkStatus.isOnline || networkStatus.isReconnecting) && (
         <div className={`px-4 py-2 flex items-center justify-between ${!networkStatus.isOnline ? 'bg-red-500' : 'bg-yellow-500'
@@ -327,6 +348,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
               isMicMuted={isMuted}
               isVideoMuted={!isVideoEnabled}
               isSpeakerMuted={isSpeakerMuted}
+              isScreenSharing={isScreenSharing}
               isLocal={true}
               audioLevel={audioLevel}
               connectionState="connected"
@@ -344,6 +366,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                   isMicMuted={peer.isMuted}
                   isVideoMuted={peer.isVideoMuted === true}
                   isSpeakerMuted={peer.isSpeakerMuted || false}
+                  isScreenSharing={peer.isScreenSharing}
                   isLocal={false}
                   audioLevel={peer.audioLevel}
                   connectionState={peer.connectionState}
@@ -432,6 +455,28 @@ export const RoomView: React.FC<RoomViewProps> = ({
               )}
             </button>
 
+            {/* Screen Share Button */}
+            <button
+              onClick={onToggleScreenShare}
+              disabled={!canToggleScreenShare}
+              className={`
+                w-12 h-12 rounded-full flex items-center justify-center transition-all
+                ${!canToggleScreenShare
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : isScreenSharing
+                  ? 'bg-green-100 text-green-600 hover:bg-green-200'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }
+              `}
+              title={isScreenSharing ? t('room.stopScreenShare') : t('room.screenShareHint')}
+              data-testid="room-screenshare-btn"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </button>
+
             {/* Mute Microphone Button */}
             <button
               onClick={onToggleMute}
@@ -508,6 +553,33 @@ export const RoomView: React.FC<RoomViewProps> = ({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
                 )}
               </svg>
+            </button>
+
+            {/* Chat Toggle */}
+            <button
+              onClick={() => {
+                onToggleChat()
+                if (!isChatOpen) onMarkChatRead()
+              }}
+              className={`
+                w-12 h-12 rounded-full flex items-center justify-center transition-all relative
+                ${isChatOpen
+                  ? 'bg-blue-100 text-blue-600'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }
+              `}
+              title={t('room.toggleChat')}
+              data-testid="room-chat-btn"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              {chatUnreadCount > 0 && !isChatOpen && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center" data-testid="chat-unread-badge">
+                  {chatUnreadCount > 9 ? '9+' : chatUnreadCount}
+                </span>
+              )}
             </button>
 
             {/* Device Settings */}
@@ -610,6 +682,16 @@ export const RoomView: React.FC<RoomViewProps> = ({
           </div>
         )}
       </footer>
+    </div>
+
+    {/* Chat Panel */}
+    {isChatOpen && (
+      <ChatPanel
+        messages={chatMessages}
+        onSendMessage={onSendChatMessage}
+        onClose={onToggleChat}
+      />
+    )}
     </div>
   )
 }

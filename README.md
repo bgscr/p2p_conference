@@ -14,6 +14,8 @@ A serverless, peer-to-peer audio conferencing application built with Electron, R
 - **Per-Participant Volume Control**: Adjust volume individually for each participant
 - **System Tray Integration**: Minimize to tray during calls, with mute/leave controls
 - **Internationalization**: English and Chinese language support
+- **Text Chat**: Real-time chat over WebRTC DataChannels (no extra server)
+- **Screen Sharing**: Share your screen with peers during calls
 
 ## Architecture
 
@@ -130,6 +132,8 @@ npm run lint:fix
 | Key | Action |
 |-----|--------|
 | `M` | Toggle microphone mute |
+| `T` | Toggle chat panel |
+| `S` | Toggle screen sharing |
 | `Esc` | Leave call / Cancel search |
 | `Ctrl+Shift+L` | Download debug logs |
 

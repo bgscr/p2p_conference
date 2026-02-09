@@ -34,6 +34,7 @@ describe('Barrel exports - components/index.ts', () => {
     expect(components.ErrorBanner).toBeDefined()
     expect(components.Toast).toBeDefined()
     expect(components.LeaveConfirmDialog).toBeDefined()
+    expect(components.ChatPanel).toBeDefined()
   })
 })
 
@@ -50,6 +51,12 @@ describe('Barrel exports - hooks/index.ts', () => {
 
     expect(hooks.useI18n).toBeDefined()
     expect(typeof hooks.useI18n).toBe('function')
+
+    expect(hooks.useScreenShare).toBeDefined()
+    expect(typeof hooks.useScreenShare).toBe('function')
+
+    expect(hooks.useDataChannel).toBeDefined()
+    expect(typeof hooks.useDataChannel).toBe('function')
   })
 
   it('exports selfId constant', () => {

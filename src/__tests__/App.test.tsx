@@ -144,11 +144,14 @@ vi.mock('../renderer/hooks/useI18n', () => ({
 vi.mock('../renderer/signaling/SimplePeerManager', () => ({
   peerManager: {
     setCallbacks: vi.fn(),
+    setOnChatMessage: vi.fn(),
+    sendChatMessage: vi.fn(),
     setLocalStream: vi.fn(),
     replaceTrack: vi.fn(),
     broadcastMuteStatus: vi.fn(),
     getDebugInfo: vi.fn().mockReturnValue({ selfId: 'test-self-id' })
-  }
+  },
+  selfId: 'test-self-id'
 }))
 
 vi.mock('../renderer/audio-processor/AudioPipeline', () => ({
@@ -177,7 +180,8 @@ vi.mock('../renderer/audio-processor/SoundManager', () => ({
 vi.mock('../renderer/utils/Logger', () => ({
   logger: {
     logSystemInfo: vi.fn(),
-    downloadLogs: vi.fn()
+    downloadLogs: vi.fn(),
+    createModuleLogger: vi.fn(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
   },
   AppLog: {
     debug: vi.fn(),

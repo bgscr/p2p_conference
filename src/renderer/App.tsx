@@ -21,6 +21,8 @@ import { LeaveConfirmDialog } from './components/LeaveConfirmDialog'
 import { Toast } from './components/Toast'
 
 import type { ConnectionState, AppSettings } from '@/types'
+import { useScreenShare } from './hooks/useScreenShare'
+import { useDataChannel } from './hooks/useDataChannel'
 
 // App states
 type AppView = 'lobby' | 'room' | 'settings'
@@ -54,6 +56,9 @@ export default function App() {
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false)
 
+  // Chat state
+  const [isChatOpen, setIsChatOpen] = useState(false)
+
   // Audio pipeline
   const audioPipelineRef = useRef(getAudioPipeline())
   const [pipelineReady, setPipelineReady] = useState(false)
@@ -79,6 +84,20 @@ export default function App() {
     }, 3000)
   }, [])
 
+  const {
+    messages: chatMessages,
+    unreadCount: chatUnreadCount,
+    sendMessage: sendChatMessage,
+    addSystemMessage,
+    markAsRead: markChatAsRead,
+    reset: resetChat
+  } = useDataChannel({
+    p2pManager: peerManager,
+    userName,
+    isChatOpen,
+    onMessageTooLong: () => showToast(t('chat.messageTooLong'), 'warning')
+  })
+
   /**
    * Dismiss a toast
    */
@@ -95,7 +114,8 @@ export default function App() {
       soundManager.playJoin()
     }
     showToast(t('room.participantJoined', { name: peerName }), 'success')
-  }, [soundEnabled, showToast, t])
+    addSystemMessage(t('chat.joined', { name: peerName }))
+  }, [soundEnabled, showToast, t, addSystemMessage])
 
   const onPeerLeaveCallback = useCallback((peerId: string, peerName: string) => {
     AppLog.info('Peer left', { peerId, peerName })
@@ -109,7 +129,8 @@ export default function App() {
       updated.delete(peerId)
       return updated
     })
-  }, [soundEnabled, showToast, t])
+    addSystemMessage(t('chat.left', { name: peerName }))
+  }, [soundEnabled, showToast, t, addSystemMessage])
 
   const onConnectionStateChangeCallback = useCallback((state: ConnectionState) => {
     AppLog.info('Connection state changed', { state })
@@ -161,6 +182,32 @@ export default function App() {
     refreshDevices
     // Note: setOnStreamChange is available but we use the direct return value from switchInputDevice instead
   } = useMediaStream()
+
+  // Screen sharing
+  const {
+    isScreenSharing,
+    startScreenShare,
+    stopScreenShare
+  } = useScreenShare(
+    // onTrackReady: replace video track in peer connections
+    useCallback((stream: MediaStream) => {
+      const videoTrack = stream.getVideoTracks()[0]
+      if (videoTrack) {
+        peerManager.replaceTrack(videoTrack)
+        peerManager.broadcastMuteStatus(isMuted, isSpeakerMuted, true, true)
+      }
+    }, [isMuted, isSpeakerMuted]),
+    // onTrackStopped: revert to camera and broadcast status
+    useCallback(() => {
+      if (localStream) {
+        const cameraTrack = localStream.getVideoTracks()[0]
+        if (cameraTrack) {
+          peerManager.replaceTrack(cameraTrack)
+        }
+      }
+      peerManager.broadcastMuteStatus(isMuted, isSpeakerMuted, isVideoEnabled, false)
+    }, [localStream, isMuted, isSpeakerMuted, isVideoEnabled])
+  )
 
   /**
    * Initialize audio pipeline and log system info
@@ -291,36 +338,85 @@ export default function App() {
    */
   const handleToggleMute = useCallback(() => {
     const newMuted = !isMuted
+    const effectiveVideoEnabled = isScreenSharing ? true : isVideoEnabled
     toggleMute()
     if (soundEnabled) {
       soundManager.playClick()
     }
     // Broadcast mute status to all peers (including video state)
-    peerManager.broadcastMuteStatus(newMuted, isSpeakerMuted, isVideoEnabled)
-  }, [toggleMute, soundEnabled, isMuted, isSpeakerMuted, isVideoEnabled])
+    peerManager.broadcastMuteStatus(newMuted, isSpeakerMuted, effectiveVideoEnabled, isScreenSharing)
+  }, [toggleMute, soundEnabled, isMuted, isSpeakerMuted, isVideoEnabled, isScreenSharing])
 
   /**
    * Handle speaker mute toggle
    */
   const handleToggleSpeakerMute = useCallback(() => {
     const newSpeakerMuted = !isSpeakerMuted
+    const effectiveVideoEnabled = isScreenSharing ? true : isVideoEnabled
     setIsSpeakerMuted(newSpeakerMuted)
     if (soundEnabled) {
       soundManager.playClick()
     }
     // Broadcast mute status to all peers (including video state)
-    peerManager.broadcastMuteStatus(isMuted, newSpeakerMuted, isVideoEnabled)
-  }, [soundEnabled, isMuted, isSpeakerMuted, isVideoEnabled])
+    peerManager.broadcastMuteStatus(isMuted, newSpeakerMuted, effectiveVideoEnabled, isScreenSharing)
+  }, [soundEnabled, isMuted, isSpeakerMuted, isVideoEnabled, isScreenSharing])
 
   /**
    * Handle video toggle with broadcast to peers
    */
   const handleToggleVideo = useCallback(() => {
     const newVideoEnabled = !isVideoEnabled
+    const effectiveVideoEnabled = isScreenSharing ? true : newVideoEnabled
     toggleVideo()
     // Broadcast mute status including video state to all peers
-    peerManager.broadcastMuteStatus(isMuted, isSpeakerMuted, newVideoEnabled)
-  }, [toggleVideo, isVideoEnabled, isMuted, isSpeakerMuted])
+    peerManager.broadcastMuteStatus(isMuted, isSpeakerMuted, effectiveVideoEnabled, isScreenSharing)
+  }, [toggleVideo, isVideoEnabled, isMuted, isSpeakerMuted, isScreenSharing])
+
+  /**
+   * Handle screen share toggle
+   */
+  const handleToggleScreenShare = useCallback(async () => {
+    if (isScreenSharing) {
+      stopScreenShare()
+    } else {
+      const hasNativeScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+      const hasElectronFallback = typeof (window as any).electronAPI?.getScreenSources === 'function'
+      if (!hasNativeScreenShare && !hasElectronFallback) {
+        showToast(t('errors.screenShareNotSupported'), 'error')
+        return
+      }
+      const success = await startScreenShare()
+      if (!success) {
+        showToast(t('errors.screenShareFailed'), 'error')
+      }
+    }
+  }, [isScreenSharing, startScreenShare, stopScreenShare, showToast, t])
+
+  /**
+   * Handle sending a chat message
+   */
+  const handleSendChatMessage = useCallback((content: string) => {
+    sendChatMessage(content)
+  }, [sendChatMessage])
+
+  /**
+   * Toggle chat panel
+   */
+  const handleToggleChat = useCallback(() => {
+    setIsChatOpen(prev => {
+      if (!prev) {
+        markChatAsRead()
+      }
+      return !prev
+    })
+  }, [markChatAsRead])
+
+  /**
+   * Mark chat as read
+   */
+  const handleMarkChatRead = useCallback(() => {
+    markChatAsRead()
+  }, [markChatAsRead])
 
   /**
    * Cancel search and return to lobby
@@ -329,10 +425,13 @@ export default function App() {
     AppLog.info('User cancelled search')
     leaveRoom()
     stopCapture()
+    if (isScreenSharing) stopScreenShare()
     audioPipelineRef.current.disconnect()
     setRemoteStreams(new Map())
+    setIsChatOpen(false)
+    resetChat()
     setAppView('lobby')
-  }, [leaveRoom, stopCapture])
+  }, [leaveRoom, stopCapture, isScreenSharing, stopScreenShare, resetChat])
 
   /**
    * Keyboard shortcuts
@@ -363,6 +462,12 @@ export default function App() {
           case 'v':
             handleToggleVideo()
             break
+          case 't':
+            handleToggleChat()
+            break
+          case 's':
+            handleToggleScreenShare()
+            break
           case 'escape':
             if (connectionState === 'signaling' || connectionState === 'connecting') {
               handleCancelSearch()
@@ -377,7 +482,7 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
      
-  }, [appView, connectionState, showToast, t, handleToggleMute, handleToggleSpeakerMute, handleToggleVideo, handleCancelSearch])
+  }, [appView, connectionState, showToast, t, handleToggleMute, handleToggleSpeakerMute, handleToggleVideo, handleToggleChat, handleToggleScreenShare, handleCancelSearch])
 
   /**
    * Join room handler - switch to room view IMMEDIATELY, then start capture
@@ -469,11 +574,14 @@ export default function App() {
     setShowLeaveConfirm(false)
     leaveRoom()
     stopCapture()
+    if (isScreenSharing) stopScreenShare()
     audioPipelineRef.current.disconnect()
     setRemoteStreams(new Map())
     setIsSpeakerMuted(false)
+    setIsChatOpen(false)
+    resetChat()
     setAppView('lobby')
-  }, [leaveRoom, stopCapture, roomId])
+  }, [leaveRoom, stopCapture, roomId, isScreenSharing, stopScreenShare, resetChat])
 
   /**
    * Handle input device change
@@ -687,6 +795,14 @@ export default function App() {
           settings={settings}
           onSettingsChange={handleSettingsChange}
           p2pManager={peerManager}
+          chatMessages={chatMessages}
+          onSendChatMessage={handleSendChatMessage}
+          chatUnreadCount={chatUnreadCount}
+          isChatOpen={isChatOpen}
+          onToggleChat={handleToggleChat}
+          onMarkChatRead={handleMarkChatRead}
+          isScreenSharing={isScreenSharing}
+          onToggleScreenShare={handleToggleScreenShare}
         />
       )}
 

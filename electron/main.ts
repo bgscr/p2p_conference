@@ -3,7 +3,7 @@
  * Handles window management, system permissions, tray, and IPC communication
  */
 
-import { app, BrowserWindow, ipcMain, systemPreferences, Menu, shell, Tray, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, systemPreferences, Menu, shell, Tray, nativeImage, desktopCapturer, session, screen } from 'electron'
 
 // Suppress security warnings in development (CSP unsafe-eval is required by Vite HMR)
 // This warning will not appear in production builds
@@ -31,6 +31,101 @@ let tray: Tray | null = null
 let isQuitting = false
 let isMuted = false
 let isInCall = false
+
+function pickCurrentScreenSource(sources: Electron.DesktopCapturerSource[]): Electron.DesktopCapturerSource | undefined {
+  const screenSources = sources.filter(source => source.id.startsWith('screen:'))
+  if (screenSources.length === 0) {
+    return undefined
+  }
+
+  try {
+    const cursorPoint = screen.getCursorScreenPoint()
+    const currentDisplay = screen.getDisplayNearestPoint(cursorPoint)
+    const currentDisplayId = String(currentDisplay.id)
+    const matched = screenSources.find(source => source.display_id === currentDisplayId)
+    return matched ?? screenSources[0]
+  } catch {
+    return screenSources[0]
+  }
+}
+
+function prioritizeCaptureSources(sources: Electron.DesktopCapturerSource[]): Electron.DesktopCapturerSource[] {
+  const screenSources = sources.filter(source => source.id.startsWith('screen:'))
+  const windowSources = sources.filter(source => source.id.startsWith('window:'))
+  const currentScreen = pickCurrentScreenSource(screenSources)
+
+  const orderedScreens = currentScreen
+    ? [currentScreen, ...screenSources.filter(source => source.id !== currentScreen.id)]
+    : screenSources
+
+  // Keep windows as a fallback when screen capture fails on some environments.
+  return [...orderedScreens, ...windowSources]
+}
+
+/**
+ * Configure display media (screen sharing) handler for Electron.
+ * Without this, renderer getDisplayMedia may reject with NotSupportedError.
+ */
+function setupDisplayMediaHandler(): void {
+  try {
+    const currentSession = session.defaultSession
+    if (!currentSession || typeof (currentSession as any).setDisplayMediaRequestHandler !== 'function') {
+      MainLog.warn('Display media request handler not available')
+      return
+    }
+
+    const requestHandler = async (
+      request: { securityOrigin?: string; videoRequested?: boolean; audioRequested?: boolean; userGesture?: boolean },
+      callback: (streams: { video?: Electron.DesktopCapturerSource; audio?: any }) => void
+    ) => {
+      try {
+        MainLog.debug('Display media request received', {
+          origin: request.securityOrigin,
+          videoRequested: request.videoRequested,
+          audioRequested: request.audioRequested,
+          userGesture: request.userGesture
+        })
+
+        // Prefer current screen, but keep windows as fallback for remote-control environments.
+        const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] })
+        const prioritizedSources = prioritizeCaptureSources(sources)
+
+        if (!prioritizedSources || prioritizedSources.length === 0) {
+          MainLog.warn('No display capture sources available')
+          callback({ video: undefined })
+          return
+        }
+
+        const preferred = prioritizedSources[0]
+
+        MainLog.info('Display capture source granted', {
+          sourceCount: prioritizedSources.length,
+          sourceId: preferred.id,
+          sourceName: preferred.name,
+          sourceType: preferred.id.startsWith('screen:') ? 'screen' : 'window'
+        })
+        callback({ video: preferred })
+      } catch (err) {
+        MainLog.error('Failed to provide display capture source', { error: String(err) })
+        callback({ video: undefined })
+      }
+    }
+
+    try {
+      currentSession.setDisplayMediaRequestHandler(requestHandler, { useSystemPicker: true })
+      MainLog.info('Display media request handler configured', { useSystemPicker: true })
+    } catch (err) {
+      MainLog.warn('Failed to enable system picker for display media, retrying without it', {
+        error: String(err)
+      })
+      currentSession.setDisplayMediaRequestHandler(requestHandler)
+      MainLog.info('Display media request handler configured', { useSystemPicker: false })
+    }
+
+  } catch (err) {
+    MainLog.error('Failed to configure display media handler', { error: String(err) })
+  }
+}
 
 /**
  * Get the application icon path - checks both development and production locations
@@ -556,6 +651,9 @@ app.whenReady().then(async () => {
   const micPermission = await requestMicrophonePermission()
   MainLog.info('Microphone permission', { granted: micPermission })
 
+  // Configure screen capture support before creating windows.
+  setupDisplayMediaHandler()
+
   createWindow()
   createTray()
 
@@ -613,6 +711,25 @@ ipcMain.handle('get-platform', () => {
     platform: process.platform,
     arch: process.arch,
     version: process.getSystemVersion()
+  }
+})
+
+ipcMain.handle('get-screen-sources', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] })
+    const prioritizedSources = prioritizeCaptureSources(sources)
+    const serializableSources = prioritizedSources.map(source => ({
+      id: source.id,
+      name: source.name
+    }))
+    IPCLog.debug('Screen sources requested', {
+      count: serializableSources.length,
+      firstSourceId: serializableSources[0]?.id
+    })
+    return serializableSources
+  } catch (err) {
+    IPCLog.error('Failed to get screen sources', { error: String(err) })
+    return []
   }
 })
 
@@ -704,6 +821,7 @@ export const __testing = {
   updateTrayIcon,
   createMenu,
   createWindow,
+  setupDisplayMediaHandler,
   requestMicrophonePermission,
   // State getters/setters for test assertions
   get mainWindow() { return mainWindow },

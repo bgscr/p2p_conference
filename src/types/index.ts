@@ -34,6 +34,7 @@ export interface Peer {
   isMuted: boolean
   isVideoMuted?: boolean
   isSpeakerMuted?: boolean
+  isScreenSharing?: boolean
   audioLevel: number
   connectionState: RTCPeerConnectionState
   platform?: 'win' | 'mac' | 'linux'
@@ -92,6 +93,18 @@ export interface AudioProcessingConfig {
   echoCancellation: boolean
   noiseSuppression: boolean
   autoGainControl: boolean
+}
+
+/**
+ * Chat message
+ */
+export interface ChatMessage {
+  id: string
+  senderId: string
+  senderName: string
+  content: string
+  timestamp: number
+  type: 'text' | 'system'
 }
 
 export { }

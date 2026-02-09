@@ -96,6 +96,12 @@ const en: Translations = {
     reconnectFailed: 'Reconnection failed',
     startVideo: 'Start Video',
     stopVideo: 'Stop Video',
+    toggleChat: 'Chat (T)',
+    startScreenShare: 'Share Screen',
+    stopScreenShare: 'Stop Sharing',
+    screenSharing: 'Sharing Screen',
+    screenShareHint: 'Share Screen (S)',
+    peerScreenSharing: '{name} is sharing their screen',
   },
   leaveConfirm: {
     title: 'Leave Call?',
@@ -135,6 +141,8 @@ const en: Translations = {
     switchDeviceFailed: 'Failed to switch microphone',
     webSocketFailed: 'WebSocket connection failed, using local mode only',
     peerConnectionFailed: 'Peer connection failed',
+    screenShareFailed: 'Failed to start screen sharing',
+    screenShareNotSupported: 'Screen sharing is not supported',
   },
   common: {
     cancel: 'Cancel',
@@ -196,6 +204,15 @@ const en: Translations = {
     quit: 'Quit',
     minimizedTitle: 'P2P Conference',
     minimizedContent: 'App minimized to tray. Call is still active.',
+  },
+  chat: {
+    title: 'Chat',
+    placeholder: 'Type a message...',
+    send: 'Send',
+    noMessages: 'No messages yet',
+    joined: '{name} joined',
+    left: '{name} left',
+    messageTooLong: 'Message is too long (max 5000 characters)',
   },
 }
 
@@ -286,6 +303,12 @@ const zhCN: Translations = {
     reconnectFailed: '重连失败',
     startVideo: '开启视频',
     stopVideo: '关闭视频',
+    toggleChat: '聊天 (T)',
+    startScreenShare: '共享屏幕',
+    stopScreenShare: '停止共享',
+    screenSharing: '正在共享屏幕',
+    screenShareHint: '共享屏幕 (S)',
+    peerScreenSharing: '{name} 正在共享屏幕',
   },
   leaveConfirm: {
     title: '离开通话？',
@@ -325,6 +348,8 @@ const zhCN: Translations = {
     switchDeviceFailed: '切换麦克风失败',
     webSocketFailed: 'WebSocket 连接失败，仅使用本地模式',
     peerConnectionFailed: '对等连接失败',
+    screenShareFailed: '启动屏幕共享失败',
+    screenShareNotSupported: '不支持屏幕共享',
   },
   common: {
     cancel: '取消',
@@ -386,6 +411,15 @@ const zhCN: Translations = {
     quit: '退出',
     minimizedTitle: 'P2P 会议',
     minimizedContent: '应用已最小化到托盘，通话仍在进行中。',
+  },
+  chat: {
+    title: '聊天',
+    placeholder: '输入消息...',
+    send: '发送',
+    noMessages: '暂无消息',
+    joined: '{name} 加入了',
+    left: '{name} 离开了',
+    messageTooLong: '消息过长（最多5000字符）',
   },
 }
 

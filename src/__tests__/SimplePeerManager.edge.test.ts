@@ -67,12 +67,33 @@ class MockBroadcastChannel {
 }
 
 // Mock RTCPeerConnection
+class MockRTCDataChannel {
+    label: string
+    readyState: 'connecting' | 'open' | 'closing' | 'closed' = 'open'
+    onopen: ((event: Event) => void) | null = null
+    onclose: ((event: Event) => void) | null = null
+    onerror: ((event: Event) => void) | null = null
+    onmessage: ((event: MessageEvent) => void) | null = null
+
+    constructor(label: string) {
+        this.label = label
+    }
+
+    send = vi.fn()
+    close = vi.fn(() => {
+        this.readyState = 'closed'
+        this.onclose?.(new Event('close'))
+    })
+}
+
 class MockRTCPeerConnection {
     iceConnectionState = 'new'
     connectionState = 'new'
+    ondatachannel: ((event: { channel: MockRTCDataChannel }) => void) | null = null
     close = vi.fn()
     getSenders = vi.fn().mockReturnValue([])
     addTrack = vi.fn()
+    createDataChannel = vi.fn().mockImplementation((label: string) => new MockRTCDataChannel(label))
     createOffer = vi.fn().mockResolvedValue({ type: 'offer', sdp: 'mock-sdp' })
     setLocalDescription = vi.fn()
 }

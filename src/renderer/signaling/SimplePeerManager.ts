@@ -20,7 +20,7 @@
  */
 
 import { SignalingLog, PeerLog } from '../utils/Logger'
-import type { ConnectionQuality } from '@/types'
+import type { ConnectionQuality, ChatMessage } from '@/types'
 import { calculateConnectionStats, type PreviousStats } from './connectionStats'
 import { configureOpusSdp } from './opus'
 
@@ -167,6 +167,7 @@ interface MuteStatus {
   speakerMuted: boolean
   videoMuted?: boolean
   videoEnabled?: boolean
+  isScreenSharing?: boolean
 }
 
 interface PeerConnection {
@@ -181,6 +182,7 @@ interface PeerConnection {
   iceRestartInProgress: boolean
   disconnectTimer: NodeJS.Timeout | null
   reconnectTimer: NodeJS.Timeout | null
+  dataChannel: RTCDataChannel | null
 }
 
 type PeerEventCallback = (peerId: string, userName: string, platform: 'win' | 'mac' | 'linux') => void
@@ -1076,6 +1078,7 @@ export class SimplePeerManager {
   private onRemoteStream: StreamCallback = () => { }
   private onError: ErrorCallback = () => { }
   private onPeerMuteChange: MuteStatusCallback = () => { }
+  private onChatMessage: ((msg: ChatMessage) => void) | null = null
 
   // Network status monitoring for auto-reconnect
   private isOnline: boolean = typeof navigator !== 'undefined' ? navigator.onLine : true
@@ -1366,19 +1369,19 @@ export class SimplePeerManager {
   /**
    * Broadcast local mute status to all peers
    */
-  broadcastMuteStatus(micMuted: boolean, speakerMuted: boolean, videoEnabled: boolean = true) {
+  broadcastMuteStatus(micMuted: boolean, speakerMuted: boolean, videoEnabled: boolean = true, isScreenSharing: boolean = false) {
     // Note: 'videoEnabled' in hook serves as 'videoMuted' inverted logic + device availability
     const videoMuted = !videoEnabled
-    this.localMuteStatus = { micMuted, speakerMuted, videoMuted, videoEnabled }
+    this.localMuteStatus = { micMuted, speakerMuted, videoMuted, videoEnabled, isScreenSharing }
 
     if (this.peers.size === 0) return
 
-    SignalingLog.debug('Broadcasting mute status', { micMuted, speakerMuted, videoMuted })
+    SignalingLog.debug('Broadcasting mute status', { micMuted, speakerMuted, videoMuted, isScreenSharing })
     this.broadcast({
       v: 1,
       type: 'mute-status',
       from: selfId,
-      data: { micMuted, speakerMuted, videoMuted, videoEnabled },
+      data: { micMuted, speakerMuted, videoMuted, videoEnabled, isScreenSharing },
       sessionId: this.sessionId,
       msgId: generateMessageId()
     })
@@ -1400,6 +1403,95 @@ export class SimplePeerManager {
       result.set(id, peer.muteStatus)
     })
     return result
+  }
+
+  /**
+   * Set up DataChannel event handlers for chat messaging
+   */
+  private setupDataChannel(dc: RTCDataChannel, peerId: string, peerConn: PeerConnection) {
+    dc.onopen = () => {
+      PeerLog.info('DataChannel opened', { peerId, label: dc.label })
+    }
+    dc.onclose = () => {
+      PeerLog.info('DataChannel closed', { peerId, label: dc.label })
+      if (peerConn.dataChannel === dc) {
+        peerConn.dataChannel = null
+      }
+    }
+    dc.onerror = (event) => {
+      PeerLog.error('DataChannel error', { peerId, error: String(event) })
+    }
+    dc.onmessage = (event) => {
+      try {
+        if (typeof event.data !== 'string') {
+          return
+        }
+
+        const data = JSON.parse(event.data)
+        if (
+          data.type === 'chat' &&
+          typeof data.id === 'string' &&
+          typeof data.senderId === 'string' &&
+          typeof data.senderName === 'string' &&
+          typeof data.content === 'string' &&
+          typeof data.timestamp === 'number' &&
+          this.onChatMessage
+        ) {
+          this.onChatMessage({
+            id: data.id,
+            senderId: data.senderId,
+            senderName: data.senderName,
+            content: data.content,
+            timestamp: data.timestamp,
+            type: 'text'
+          })
+        }
+      } catch (err) {
+        PeerLog.warn('Failed to parse DataChannel message', { peerId, error: String(err) })
+      }
+    }
+  }
+
+  /**
+   * Register callback for incoming chat messages
+   */
+  setOnChatMessage(callback: ((msg: ChatMessage) => void) | null) {
+    this.onChatMessage = callback
+  }
+
+  /**
+   * Send a chat message to all connected peers via DataChannels
+   */
+  sendChatMessage(content: string, senderName: string) {
+    if (content.length > 5000) {
+      PeerLog.warn('Chat message too long, truncating', { length: content.length })
+      content = content.substring(0, 5000)
+    }
+
+    const message = {
+      type: 'chat',
+      id: generateMessageId(),
+      senderId: selfId,
+      senderName,
+      content,
+      timestamp: Date.now()
+    }
+
+    const jsonStr = JSON.stringify(message)
+    let sentCount = 0
+
+    this.peers.forEach((peer, peerId) => {
+      if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
+        try {
+          peer.dataChannel.send(jsonStr)
+          sentCount++
+        } catch (err) {
+          PeerLog.error('Failed to send chat message', { peerId, error: String(err) })
+        }
+      }
+    })
+
+    PeerLog.debug('Chat message sent', { sentCount, totalPeers: this.peers.size })
   }
 
   async joinRoom(roomId: string, userName: string): Promise<void> {
@@ -1790,13 +1882,14 @@ export class SimplePeerManager {
     this.peerLastPing.set(peerId, now)
   }
 
-  private handleMuteStatus(peerId: string, data: { micMuted?: boolean; speakerMuted?: boolean; videoMuted?: boolean }) {
+  private handleMuteStatus(peerId: string, data: { micMuted?: boolean; speakerMuted?: boolean; videoMuted?: boolean; isScreenSharing?: boolean }) {
     const peer = this.peers.get(peerId)
     if (peer) {
       peer.muteStatus = {
         micMuted: data.micMuted ?? peer.muteStatus.micMuted,
         speakerMuted: data.speakerMuted ?? peer.muteStatus.speakerMuted,
-        videoMuted: data.videoMuted ?? peer.muteStatus?.videoMuted
+        videoMuted: data.videoMuted ?? peer.muteStatus?.videoMuted,
+        isScreenSharing: data.isScreenSharing ?? peer.muteStatus?.isScreenSharing
       }
       SignalingLog.debug('Peer mute status changed', { peerId, ...peer.muteStatus })
       this.onPeerMuteChange(peerId, peer.muteStatus)
@@ -1845,7 +1938,7 @@ export class SimplePeerManager {
     PeerLog.info('Creating offer', { peerId })
 
     try {
-      const pc = this.createPeerConnection(peerId, userName, platform)
+      const pc = this.createPeerConnection(peerId, userName, platform, true)
       const offer = await pc.createOffer()
 
       const configuredSdp = this.configureOpusCodec(offer.sdp || '')
@@ -1884,7 +1977,7 @@ export class SimplePeerManager {
     }
 
     try {
-      const pc = this.createPeerConnection(peerId, userName, platform)
+      const pc = this.createPeerConnection(peerId, userName, platform, false)
       await pc.setRemoteDescription(new RTCSessionDescription(offer))
 
       const pending = this.pendingCandidates.get(peerId) || []
@@ -1964,7 +2057,7 @@ export class SimplePeerManager {
     }
   }
 
-  private createPeerConnection(peerId: string, userName: string, platform: 'win' | 'mac' | 'linux'): RTCPeerConnection {
+  private createPeerConnection(peerId: string, userName: string, platform: 'win' | 'mac' | 'linux', isInitiator: boolean = false): RTCPeerConnection {
     PeerLog.info('Creating RTCPeerConnection', { peerId, userName, platform })
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
@@ -1977,7 +2070,8 @@ export class SimplePeerManager {
       iceRestartAttempts: 0,
       iceRestartInProgress: false,
       disconnectTimer: null,
-      reconnectTimer: null
+      reconnectTimer: null,
+      dataChannel: null
     }
 
     this.peers.set(peerId, peerConn)
@@ -1986,6 +2080,21 @@ export class SimplePeerManager {
       this.localStream.getTracks().forEach(track => {
         pc.addTrack(track, this.localStream!)
       })
+    }
+
+    // Set up DataChannel for chat - initiator creates, responder receives via ondatachannel
+    if (isInitiator) {
+      const dc = pc.createDataChannel('chat', { ordered: true })
+      this.setupDataChannel(dc, peerId, peerConn)
+      peerConn.dataChannel = dc
+    }
+
+    pc.ondatachannel = (event) => {
+      PeerLog.info('Received data channel from peer', { peerId, label: event.channel.label })
+      if (event.channel.label === 'chat') {
+        peerConn.dataChannel = event.channel
+        this.setupDataChannel(event.channel, peerId, peerConn)
+      }
     }
 
     pc.onicecandidate = (event) => {
@@ -2147,6 +2256,16 @@ export class SimplePeerManager {
     if (peer.reconnectTimer) {
       clearTimeout(peer.reconnectTimer)
       peer.reconnectTimer = null
+    }
+
+    // Close DataChannel
+    if (peer.dataChannel) {
+      try {
+        peer.dataChannel.close()
+      } catch {
+        // DataChannel may already be closed
+      }
+      peer.dataChannel = null
     }
 
     // Close the peer connection
@@ -2376,8 +2495,8 @@ export class SimplePeerManager {
   }
 
   /**
-   * Replace audio track in all peer connections (for device switching)
-   * This is the critical method for microphone switching while in a call
+   * Replace a media track in all peer connections.
+   * Used for microphone/camera switching and screen share track replacement.
    */
   replaceTrack(newTrack: MediaStreamTrack) {
     if (!newTrack) {
@@ -2385,7 +2504,10 @@ export class SimplePeerManager {
       return
     }
 
-    PeerLog.info('Replacing audio track in all peers', {
+    const trackKind = newTrack.kind
+
+    PeerLog.info('Replacing track in all peers', {
+      trackKind,
       trackId: newTrack.id,
       label: newTrack.label,
       peerCount: this.peers.size,
@@ -2410,43 +2532,42 @@ export class SimplePeerManager {
         }))
       })
 
-      // Find audio sender - check for kind 'audio' or sender with null track (empty slot)
-      let audioSender = senders.find(s => s.track?.kind === 'audio')
+      // Prefer replacing an existing sender with the same media kind.
+      let matchingSender = senders.find(s => s.track?.kind === trackKind)
 
-      // If no audio sender with track, look for one that could accept an audio track
-      if (!audioSender) {
-        // Look for a sender that was created for audio but has no track
-        audioSender = senders.find(s => {
-          // Senders created for audio transceivers will have appropriate capabilities
+      // If no active sender, look for an idle sender that can accept this kind.
+      if (!matchingSender) {
+        matchingSender = senders.find(s => {
           const params = s.getParameters()
-          return params.codecs?.some(c => c.mimeType.toLowerCase().includes('audio'))
+          return params.codecs?.some(c => c.mimeType.toLowerCase().includes(trackKind))
         })
       }
 
-      if (audioSender) {
+      if (matchingSender) {
         PeerLog.info('Replacing track for peer', {
           peerId,
-          oldTrackId: audioSender.track?.id,
+          kind: trackKind,
+          oldTrackId: matchingSender.track?.id,
           newTrackId: newTrack.id
         })
 
-        audioSender.replaceTrack(newTrack)
+        matchingSender.replaceTrack(newTrack)
           .then(() => {
-            PeerLog.info('Track replaced successfully', { peerId, trackId: newTrack.id })
+            PeerLog.info('Track replaced successfully', { peerId, kind: trackKind, trackId: newTrack.id })
           })
           .catch((err) => {
-            PeerLog.error('Replace track failed', { peerId, error: String(err) })
+            PeerLog.error('Replace track failed', { peerId, kind: trackKind, error: String(err) })
           })
       } else {
-        PeerLog.warn('No audio sender found for peer, attempting to add track', { peerId })
-        // If no audio sender exists, add the track
+        PeerLog.warn('No matching sender found for peer, attempting to add track', { peerId, kind: trackKind })
+        // If no sender exists for this kind, add the track as a fallback.
         try {
           if (this.localStream) {
             peer.pc.addTrack(newTrack, this.localStream)
-            PeerLog.info('Track added to peer (no existing sender)', { peerId })
+            PeerLog.info('Track added to peer (no existing sender)', { peerId, kind: trackKind })
           }
         } catch (err) {
-          PeerLog.error('Failed to add track to peer', { peerId, error: String(err) })
+          PeerLog.error('Failed to add track to peer', { peerId, kind: trackKind, error: String(err) })
         }
       }
     })

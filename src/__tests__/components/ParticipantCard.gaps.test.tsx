@@ -217,6 +217,20 @@ describe('ParticipantCard - coverage gaps', () => {
     expect(videoContainer).toBeDefined()
   })
 
+  it('shows video when screen sharing is active even if isVideoMuted is true', () => {
+    const stream = createMockStream([createAudioTrack()], [createVideoTrack()])
+    const { container } = render(
+      <ParticipantCard
+        {...defaultProps}
+        stream={stream as any}
+        isVideoMuted={true}
+        isScreenSharing={true}
+      />
+    )
+    const video = container.querySelector('video')
+    expect(video?.className).toContain('opacity-100')
+  })
+
   it('displays connection state: disconnected', () => {
     render(<ParticipantCard {...defaultProps} connectionState="disconnected" />)
     expect(screen.getByText('Test User')).toBeInTheDocument()
@@ -325,5 +339,15 @@ describe('ParticipantCard - coverage gaps', () => {
   it('audio level capped at 100', () => {
     render(<ParticipantCard {...defaultProps} audioLevel={150} />)
     expect(screen.getByText('Test User')).toBeInTheDocument()
+  })
+
+  it('shows screen sharing badge when isScreenSharing is true', () => {
+    render(<ParticipantCard {...defaultProps} isScreenSharing={true} />)
+    expect(screen.getByTestId('screen-sharing-badge')).toBeInTheDocument()
+  })
+
+  it('does not show screen sharing badge when isScreenSharing is false', () => {
+    render(<ParticipantCard {...defaultProps} isScreenSharing={false} />)
+    expect(screen.queryByTestId('screen-sharing-badge')).not.toBeInTheDocument()
   })
 })
