@@ -7,7 +7,7 @@ import React from 'react'
 import { DeviceSelector } from './DeviceSelector'
 import { useI18n } from '../hooks/useI18n'
 import { logger } from '../utils/Logger'
-import type { AudioDevice, AppSettings } from '@/types'
+import type { AudioDevice, AppSettings, VirtualMicDeviceStatus } from '@/types'
 
 interface SettingsPanelProps {
   settings: AppSettings
@@ -24,6 +24,16 @@ interface SettingsPanelProps {
   onVideoDeviceChange: (deviceId: string) => void
   onClose: () => void
   onShowToast?: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void
+  virtualMicDeviceStatus?: VirtualMicDeviceStatus
+  virtualAudioInstallerState?: {
+    inProgress: boolean
+    platformSupported: boolean
+    bundleReady?: boolean
+    bundleMessage?: string
+  }
+  onInstallRemoteMicDriver?: () => void
+  onRecheckRemoteMicDevice?: () => void
+  onOpenRemoteMicSetup?: () => void
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -41,6 +51,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onVideoDeviceChange,
   onClose,
   onShowToast,
+  virtualMicDeviceStatus,
+  virtualAudioInstallerState,
+  onInstallRemoteMicDriver,
+  onRecheckRemoteMicDevice,
+  onOpenRemoteMicSetup,
 }) => {
   const { t, currentLanguage, setLanguage, getAvailableLanguages } = useI18n()
 
@@ -55,6 +70,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       onShowToast(t('settings.logsCleared', { count: count.toString() }), 'success')
     }
   }
+
+  const installerBundleReady = virtualAudioInstallerState?.bundleReady !== false
+  const canAutoInstallVirtualDevice = Boolean(virtualAudioInstallerState?.platformSupported) && installerBundleReady
+  const showInstallerBundleWarning = Boolean(
+    (virtualMicDeviceStatus?.platform === 'win' || virtualMicDeviceStatus?.platform === 'mac') &&
+    virtualMicDeviceStatus?.ready === false &&
+    !installerBundleReady
+  )
+  const installerPrecheckReason = virtualAudioInstallerState?.bundleMessage || t('remoteMic.installBundleMissingReasonDefault')
 
   return (
     <div className="flex-1 flex flex-col">
@@ -140,6 +164,72 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               </div>
             </div>
           </section>
+
+          {/* Remote Mic Mapping */}
+          {virtualMicDeviceStatus && (
+            <section className="card p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                {t('remoteMic.title')}
+              </h2>
+
+              <div className="space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-600">{t('remoteMic.expectedDevice')}</span>
+                  <span className="font-medium text-gray-900">{virtualMicDeviceStatus.expectedDeviceHint}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-600">{t('remoteMic.detectedDevice')}</span>
+                  <span className={virtualMicDeviceStatus.ready ? 'text-green-700 font-medium' : 'text-amber-700 font-medium'}>
+                    {virtualMicDeviceStatus.outputDeviceLabel || t('remoteMic.notDetected')}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-600">{t('remoteMic.status')}</span>
+                  <span className={virtualMicDeviceStatus.ready ? 'text-green-700 font-medium' : 'text-red-700 font-medium'}>
+                    {virtualMicDeviceStatus.ready ? t('remoteMic.ready') : t('remoteMic.notReady')}
+                  </span>
+                </div>
+
+                {!virtualMicDeviceStatus.ready && (
+                  <div className="flex flex-wrap gap-2">
+                    {showInstallerBundleWarning && (
+                      <div className="w-full rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                        {t('remoteMic.installBundleMissing', { reason: installerPrecheckReason })}
+                      </div>
+                    )}
+                    {(virtualMicDeviceStatus.platform === 'win' || virtualMicDeviceStatus.platform === 'mac') && (
+                      <button
+                        onClick={onInstallRemoteMicDriver}
+                        disabled={virtualAudioInstallerState?.inProgress || !canAutoInstallVirtualDevice}
+                        className="btn btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {virtualAudioInstallerState?.inProgress
+                          ? t('remoteMic.installing')
+                          : t('remoteMic.installButton')}
+                      </button>
+                    )}
+                    <button
+                      onClick={onOpenRemoteMicSetup}
+                      className="btn btn-secondary"
+                    >
+                      {t('remoteMic.openSetup')}
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  onClick={onRecheckRemoteMicDevice}
+                  className="btn btn-secondary"
+                >
+                  {t('remoteMic.recheckDevice')}
+                </button>
+              </div>
+            </section>
+          )}
 
           {/* Video Devices */}
           <section className="card p-6">

@@ -82,9 +82,12 @@ describe('SimplePeerManager DataChannel', () => {
     const responderPc = managerAny.createPeerConnection('peer-2', 'Bob', 'win', false) as any
 
     expect(initiatorPc.createDataChannel).toHaveBeenCalledWith('chat', { ordered: true })
+    expect(initiatorPc.createDataChannel).toHaveBeenCalledWith('control', { ordered: true })
     expect(responderPc.createDataChannel).not.toHaveBeenCalled()
-    expect(managerAny.peers.get('peer-1').dataChannel).toBeTruthy()
-    expect(managerAny.peers.get('peer-2').dataChannel).toBeNull()
+    expect(managerAny.peers.get('peer-1').chatDataChannel).toBeTruthy()
+    expect(managerAny.peers.get('peer-1').controlDataChannel).toBeTruthy()
+    expect(managerAny.peers.get('peer-2').chatDataChannel).toBeNull()
+    expect(managerAny.peers.get('peer-2').controlDataChannel).toBeNull()
   })
 
   it('handles ondatachannel on responder side', () => {
@@ -96,7 +99,7 @@ describe('SimplePeerManager DataChannel', () => {
 
     responderPc.ondatachannel?.({ channel: incomingChannel })
 
-    expect(managerAny.peers.get('peer-r').dataChannel).toBe(incomingChannel)
+    expect(managerAny.peers.get('peer-r').chatDataChannel).toBe(incomingChannel)
   })
 
   it('sendChatMessage broadcasts to all connected data channels', () => {
@@ -106,8 +109,8 @@ describe('SimplePeerManager DataChannel', () => {
     managerAny.createPeerConnection('p1', 'P1', 'win', true)
     managerAny.createPeerConnection('p2', 'P2', 'win', true)
 
-    const channel1 = managerAny.peers.get('p1').dataChannel as MockRTCDataChannel
-    const channel2 = managerAny.peers.get('p2').dataChannel as MockRTCDataChannel
+    const channel1 = managerAny.peers.get('p1').chatDataChannel as MockRTCDataChannel
+    const channel2 = managerAny.peers.get('p2').chatDataChannel as MockRTCDataChannel
 
     manager.sendChatMessage('hello', 'Alice')
 
@@ -123,7 +126,7 @@ describe('SimplePeerManager DataChannel', () => {
 
     managerAny.createPeerConnection('p1', 'P1', 'win', true)
     const peer = managerAny.peers.get('p1')
-    const channel = peer.dataChannel as MockRTCDataChannel
+    const channel = peer.chatDataChannel as MockRTCDataChannel
 
     manager.sendChatMessage('x'.repeat(MAX_CHAT_MESSAGE_LENGTH + 20), 'Alice')
     const sentPayload = JSON.parse(channel.send.mock.calls[0][0])
@@ -160,7 +163,7 @@ describe('SimplePeerManager DataChannel', () => {
 
     // Channel closes mid-conversation
     channel.close()
-    expect(peer.dataChannel).toBeNull()
+    expect(peer.chatDataChannel).toBeNull()
     expect(onMessage).toHaveBeenCalledTimes(6)
 
     // No peers connected should not throw

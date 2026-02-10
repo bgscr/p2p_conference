@@ -96,6 +96,9 @@ interface ParticipantCardProps {
   localSpeakerMuted?: boolean  // Whether local user has muted their speaker
   volume?: number  // Per-participant volume (0-150, 100 = normal)
   onVolumeChange?: (volume: number) => void  // Callback for volume change
+  routeRole?: 'speaker' | 'virtualMic'
+  isRemoteMicMapped?: boolean
+  onSinkRoutingError?: (peerId: string, error: string) => void
   platform?: 'win' | 'mac' | 'linux'
   connectionQuality?: {  // Connection quality stats
     rtt: number
@@ -116,9 +119,13 @@ const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
   audioLevel,
   connectionState,
   stream,
+  outputDeviceId,
   localSpeakerMuted = false,
   volume = 100,
   onVolumeChange,
+  routeRole = 'speaker',
+  isRemoteMicMapped = false,
+  onSinkRoutingError,
   platform,
   connectionQuality
 }) => {
@@ -287,6 +294,39 @@ const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
     }
   }, [localSpeakerMuted, isLocal, peerId])
 
+  // Route remote audio to a specific output device (normal speaker or virtual mic output).
+  useEffect(() => {
+    if (isLocal || !outputDeviceId) return
+    const audioElement = audioRef.current
+    if (!audioElement) return
+
+    const setSink = async () => {
+      const setSinkId = (audioElement as any).setSinkId
+      if (typeof setSinkId !== 'function') {
+        if (routeRole === 'virtualMic') {
+          onSinkRoutingError?.(peerId, 'setSinkId is not supported in this environment')
+        }
+        return
+      }
+
+      try {
+        await setSinkId.call(audioElement, outputDeviceId)
+        AudioLog.info('Audio sink updated', {
+          peerId,
+          outputDeviceId,
+          routeRole
+        })
+      } catch (err: any) {
+        AudioLog.error('Failed to set audio sink', { peerId, outputDeviceId, routeRole, error: err?.message || err })
+        if (routeRole === 'virtualMic') {
+          onSinkRoutingError?.(peerId, err?.message || String(err))
+        }
+      }
+    }
+
+    setSink()
+  }, [isLocal, onSinkRoutingError, outputDeviceId, peerId, routeRole])
+
   // ... (lines 161-271 same)
 
   // Keep showing the incoming video while screen sharing even if camera is muted.
@@ -323,6 +363,12 @@ const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
               d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
           {t('room.screenSharing')}
+        </div>
+      )}
+
+      {isRemoteMicMapped && (
+        <div className="absolute top-2 right-2 z-20 px-2 py-0.5 bg-blue-500 text-white text-xs rounded-full">
+          {routeRole === 'virtualMic' ? t('remoteMic.virtualMicRoute') : t('remoteMic.mapped')}
         </div>
       )}
 
@@ -424,7 +470,7 @@ const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
       </div>
 
       {/* Per-participant Volume Control (for remote participants only) */}
-      {!isLocal && onVolumeChange && (
+      {!isLocal && onVolumeChange && routeRole !== 'virtualMic' && (
         <div className="w-full mt-2">
           <button
             onClick={() => setShowVolumeSlider(!showVolumeSlider)}
@@ -475,6 +521,9 @@ export const ParticipantCard = React.memo(ParticipantCardComponent, (prevProps, 
     prevProps.localSpeakerMuted === nextProps.localSpeakerMuted &&
     prevProps.volume === nextProps.volume &&
     prevProps.onVolumeChange === nextProps.onVolumeChange &&
+    prevProps.routeRole === nextProps.routeRole &&
+    prevProps.isRemoteMicMapped === nextProps.isRemoteMicMapped &&
+    prevProps.onSinkRoutingError === nextProps.onSinkRoutingError &&
     prevProps.platform === nextProps.platform &&
     prevProps.connectionQuality === nextProps.connectionQuality
   )

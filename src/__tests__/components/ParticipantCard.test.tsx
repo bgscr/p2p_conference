@@ -164,4 +164,32 @@ describe('ParticipantCard', () => {
         // Verify play was called
         expect(HTMLMediaElement.prototype.play).toHaveBeenCalled()
     })
+
+    it('routes remote audio to selected output device via setSinkId', async () => {
+        const mockTrack = { id: 't1', enabled: true, kind: 'audio', muted: false, readyState: 'live' }
+        const mockStream = {
+            id: 'stream2',
+            getTracks: vi.fn().mockReturnValue([mockTrack]),
+            getAudioTracks: vi.fn().mockReturnValue([mockTrack]),
+            getVideoTracks: vi.fn().mockReturnValue([])
+        } as any
+
+        render(
+            <ParticipantCard
+                name="Routed Peer"
+                peerId="p3"
+                isMicMuted={false}
+                isSpeakerMuted={false}
+                isLocal={false}
+                audioLevel={0}
+                connectionState="connected"
+                stream={mockStream}
+                outputDeviceId="virtual-device-id"
+                routeRole="virtualMic"
+            />
+        )
+
+        await Promise.resolve()
+        expect((HTMLMediaElement.prototype as any).setSinkId).toHaveBeenCalledWith('virtual-device-id')
+    })
 })

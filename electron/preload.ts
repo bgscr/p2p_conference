@@ -7,6 +7,33 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
+export type VirtualAudioProvider = 'vb-cable' | 'blackhole'
+
+export type VirtualAudioInstallState =
+  | 'installed'
+  | 'already-installed'
+  | 'reboot-required'
+  | 'user-cancelled'
+  | 'failed'
+  | 'unsupported'
+
+export interface VirtualAudioInstallResult {
+  provider: VirtualAudioProvider
+  state: VirtualAudioInstallState
+  code?: number
+  requiresRestart?: boolean
+  message?: string
+  correlationId?: string
+}
+
+export interface VirtualAudioInstallerState {
+  inProgress: boolean
+  platformSupported: boolean
+  activeProvider?: VirtualAudioProvider
+  bundleReady: boolean
+  bundleMessage?: string
+}
+
 /**
  * Exposed API for renderer process
  */
@@ -119,6 +146,36 @@ const electronAPI = {
     id: string
     name: string
   }>> => ipcRenderer.invoke('get-screen-sources'),
+
+  /**
+   * Open remote microphone mapping setup guide.
+   */
+  openRemoteMicSetupDoc: (): Promise<boolean> => ipcRenderer.invoke('open-remote-mic-setup-doc'),
+
+  /**
+   * Get basic platform diagnostics for remote audio routing.
+   */
+  getAudioRoutingDiagnostics: (): Promise<{
+    platform: NodeJS.Platform
+    osVersion: string
+    appVersion: string
+    electronVersion: string
+    nodeVersion: string
+  }> => ipcRenderer.invoke('get-audio-routing-diagnostics'),
+
+  /**
+   * Install a bundled virtual audio driver on supported platforms.
+   */
+  installVirtualAudioDriver: (
+    provider: VirtualAudioProvider,
+    correlationId?: string
+  ): Promise<VirtualAudioInstallResult> => ipcRenderer.invoke('install-virtual-audio-driver', provider, correlationId),
+
+  /**
+   * Get current installer state (single-flight guard + support).
+   */
+  getVirtualAudioInstallerState: (): Promise<VirtualAudioInstallerState> =>
+    ipcRenderer.invoke('get-virtual-audio-installer-state'),
   
   // ============================================
   // Credentials API (kept in main process for security)

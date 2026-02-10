@@ -300,4 +300,98 @@ describe('SettingsPanel', () => {
         expect(screen.getByText('My Microphone')).toBeInTheDocument()
         expect(screen.getByText('External Mic')).toBeInTheDocument()
     })
+
+    it('shows virtual mic install and re-check actions when not ready on Windows', () => {
+        const onInstallRemoteMicDriver = vi.fn()
+        const onRecheckRemoteMicDevice = vi.fn()
+
+        render(
+            <SettingsPanel
+                {...defaultProps}
+                virtualMicDeviceStatus={{
+                    platform: 'win',
+                    supported: true,
+                    detected: false,
+                    ready: false,
+                    outputDeviceId: null,
+                    outputDeviceLabel: null,
+                    expectedDeviceHint: 'CABLE Input (VB-CABLE)'
+                }}
+                virtualAudioInstallerState={{
+                    inProgress: false,
+                    platformSupported: true
+                }}
+                onInstallRemoteMicDriver={onInstallRemoteMicDriver}
+                onRecheckRemoteMicDevice={onRecheckRemoteMicDevice}
+                onOpenRemoteMicSetup={vi.fn()}
+            />
+        )
+
+        fireEvent.click(screen.getByText('remoteMic.installButton'))
+        expect(onInstallRemoteMicDriver).toHaveBeenCalledTimes(1)
+
+        fireEvent.click(screen.getByText('remoteMic.recheckDevice'))
+        expect(onRecheckRemoteMicDevice).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows virtual mic install action when not ready on macOS', () => {
+        const onInstallRemoteMicDriver = vi.fn()
+
+        render(
+            <SettingsPanel
+                {...defaultProps}
+                virtualMicDeviceStatus={{
+                    platform: 'mac',
+                    supported: true,
+                    detected: false,
+                    ready: false,
+                    outputDeviceId: null,
+                    outputDeviceLabel: null,
+                    expectedDeviceHint: 'BlackHole 2ch'
+                }}
+                virtualAudioInstallerState={{
+                    inProgress: false,
+                    platformSupported: true
+                }}
+                onInstallRemoteMicDriver={onInstallRemoteMicDriver}
+                onOpenRemoteMicSetup={vi.fn()}
+            />
+        )
+
+        fireEvent.click(screen.getByText('remoteMic.installButton'))
+        expect(onInstallRemoteMicDriver).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows installer pre-check warning and disables install when bundled installer is missing', () => {
+        const onInstallRemoteMicDriver = vi.fn()
+
+        render(
+            <SettingsPanel
+                {...defaultProps}
+                virtualMicDeviceStatus={{
+                    platform: 'win',
+                    supported: true,
+                    detected: false,
+                    ready: false,
+                    outputDeviceId: null,
+                    outputDeviceLabel: null,
+                    expectedDeviceHint: 'CABLE Input (VB-CABLE)'
+                }}
+                virtualAudioInstallerState={{
+                    inProgress: false,
+                    platformSupported: true,
+                    bundleReady: false,
+                    bundleMessage: 'VB-CABLE installer binary missing.'
+                }}
+                onInstallRemoteMicDriver={onInstallRemoteMicDriver}
+                onOpenRemoteMicSetup={vi.fn()}
+            />
+        )
+
+        expect(screen.getByText('remoteMic.installBundleMissing')).toBeInTheDocument()
+        const installButton = screen.getByText('remoteMic.installButton') as HTMLButtonElement
+        expect(installButton.disabled).toBe(true)
+        fireEvent.click(installButton)
+        expect(onInstallRemoteMicDriver).not.toHaveBeenCalled()
+    })
 })

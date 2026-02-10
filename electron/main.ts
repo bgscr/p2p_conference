@@ -15,6 +15,12 @@ import { existsSync } from 'fs'
 import { fileLogger, MainLog, TrayLog, IPCLog } from './logger'
 import type { LogLevel } from './logger'
 import { getICEServers, getMQTTBrokers } from './credentials'
+import {
+  installVirtualAudioDriver,
+  getVirtualAudioInstallerState,
+  validateBundledVirtualAudioAssets,
+  type VirtualAudioProvider
+} from './services/virtualAudioInstaller'
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
 try {
@@ -651,6 +657,25 @@ app.whenReady().then(async () => {
   const micPermission = await requestMicrophonePermission()
   MainLog.info('Microphone permission', { granted: micPermission })
 
+  const defaultVirtualAudioProvider: VirtualAudioProvider | null =
+    process.platform === 'win32' ? 'vb-cable' : process.platform === 'darwin' ? 'blackhole' : null
+  const bundleValidation = defaultVirtualAudioProvider
+    ? validateBundledVirtualAudioAssets(defaultVirtualAudioProvider)
+    : { ok: false, message: 'No virtual audio installer is supported on this platform.' }
+  if (bundleValidation.ok) {
+    MainLog.info('Virtual audio installer assets verified', {
+      provider: defaultVirtualAudioProvider,
+      platform: process.platform,
+      message: bundleValidation.message
+    })
+  } else {
+    MainLog.warn('Virtual audio installer assets unavailable', {
+      provider: defaultVirtualAudioProvider,
+      platform: process.platform,
+      message: bundleValidation.message
+    })
+  }
+
   // Configure screen capture support before creating windows.
   setupDisplayMediaHandler()
 
@@ -731,6 +756,55 @@ ipcMain.handle('get-screen-sources', async () => {
     IPCLog.error('Failed to get screen sources', { error: String(err) })
     return []
   }
+})
+
+ipcMain.handle('open-remote-mic-setup-doc', async () => {
+  try {
+    const candidates = [
+      join(app.getAppPath(), 'docs', 'REMOTE_MIC_SETUP.md'),
+      join(process.cwd(), 'docs', 'REMOTE_MIC_SETUP.md')
+    ]
+
+    const docPath = candidates.find(candidate => existsSync(candidate))
+    if (docPath) {
+      await shell.openPath(docPath)
+      IPCLog.info('Opened remote mic setup doc', { path: docPath })
+      return true
+    }
+
+    IPCLog.warn('Remote mic setup doc not found', { searched: candidates })
+    return false
+  } catch (err) {
+    IPCLog.error('Failed to open remote mic setup doc', { error: String(err) })
+    return false
+  }
+})
+
+ipcMain.handle('get-audio-routing-diagnostics', () => {
+  return {
+    platform: process.platform,
+    osVersion: process.getSystemVersion(),
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node
+  }
+})
+
+ipcMain.handle('install-virtual-audio-driver', async (_, provider: VirtualAudioProvider, correlationId?: string) => {
+  const result = await installVirtualAudioDriver(provider, correlationId)
+  IPCLog.info('Virtual audio driver installation result', {
+    provider,
+    state: result.state,
+    code: result.code,
+    message: result.message,
+    platform: process.platform,
+    correlationId: correlationId || null
+  })
+  return result
+})
+
+ipcMain.handle('get-virtual-audio-installer-state', () => {
+  return getVirtualAudioInstallerState()
 })
 
 /**

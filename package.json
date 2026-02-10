@@ -86,6 +86,20 @@
           "*.png",
           "*.ico"
         ]
+      },
+      {
+        "from": "build/drivers/vb-cable",
+        "to": "drivers/vb-cable",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/drivers/blackhole",
+        "to": "drivers/blackhole",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "asarUnpack": [

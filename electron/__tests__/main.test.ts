@@ -19,6 +19,7 @@ const {
   loggerMock,
   credentialsMock,
   lastMenuTemplateRef,
+  virtualAudioInstallerMock,
 } = vi.hoisted(() => {
   const existsSyncMock = vi.fn().mockReturnValue(false)
 
@@ -133,6 +134,22 @@ const {
     getMQTTBrokers: vi.fn().mockReturnValue([{ url: 'ws://broker' }]),
   }
 
+  const virtualAudioInstallerMock = {
+    installVirtualAudioDriver: vi.fn().mockResolvedValue({
+      provider: 'vb-cable',
+      state: 'installed',
+      code: 0
+    }),
+    getVirtualAudioInstallerState: vi.fn().mockReturnValue({
+      inProgress: false,
+      platformSupported: true
+    }),
+    validateBundledVirtualAudioAssets: vi.fn().mockReturnValue({
+      ok: true,
+      message: 'ok'
+    })
+  }
+
   return {
     existsSyncMock,
     mockResizedImage,
@@ -145,6 +162,7 @@ const {
     loggerMock,
     credentialsMock,
     lastMenuTemplateRef,
+    virtualAudioInstallerMock,
   }
 })
 
@@ -163,6 +181,7 @@ vi.mock('fs', () => {
 vi.mock('electron', () => electronMock)
 vi.mock('../logger', () => loggerMock)
 vi.mock('../credentials', () => credentialsMock)
+vi.mock('../services/virtualAudioInstaller', () => virtualAudioInstallerMock)
 
 /* ------------------------------------------------------------------ */
 /*  Import module under test (runs top-level side-effects)             */
@@ -286,6 +305,19 @@ beforeEach(() => {
   electronMock.BrowserWindow.getAllWindows.mockReturnValue([])
   electronMock.session.defaultSession.setDisplayMediaRequestHandler.mockImplementation(() => undefined)
   electronMock.desktopCapturer.getSources.mockResolvedValue([{ id: 'screen:0:0', name: 'Screen 1', display_id: '1' }])
+  virtualAudioInstallerMock.installVirtualAudioDriver.mockResolvedValue({
+    provider: 'vb-cable',
+    state: 'installed',
+    code: 0
+  })
+  virtualAudioInstallerMock.getVirtualAudioInstallerState.mockReturnValue({
+    inProgress: false,
+    platformSupported: true
+  })
+  virtualAudioInstallerMock.validateBundledVirtualAudioAssets.mockReturnValue({
+    ok: true,
+    message: 'ok'
+  })
   mockBrowserWindowInstance.isVisible.mockReturnValue(true)
 
     // Reset BrowserWindow & Tray constructors (use function for constructor compatibility)
@@ -1802,6 +1834,82 @@ describe('IPC handlers', () => {
       expect(credentialsMock.getMQTTBrokers).toHaveBeenCalled()
     })
   })
+
+  describe('open-remote-mic-setup-doc', () => {
+    it('is registered', () => {
+      expect(ipcHandleMap.has('open-remote-mic-setup-doc')).toBe(true)
+    })
+
+    it('opens setup doc when local docs file exists', async () => {
+      existsSyncMock.mockImplementation((path: string) => path.includes('REMOTE_MIC_SETUP.md'))
+      const handler = getIpcHandler('open-remote-mic-setup-doc')!
+      const result = await handler()
+      expect(result).toBe(true)
+      expect(shell.openPath).toHaveBeenCalled()
+    })
+  })
+
+  describe('get-audio-routing-diagnostics', () => {
+    it('is registered', () => {
+      expect(ipcHandleMap.has('get-audio-routing-diagnostics')).toBe(true)
+    })
+
+    it('returns diagnostics payload', () => {
+      const handler = getIpcHandler('get-audio-routing-diagnostics')!
+      const result = handler()
+      expect(result).toMatchObject({
+        platform: process.platform,
+        appVersion: '1.2.3',
+      })
+    })
+  })
+
+  describe('install-virtual-audio-driver', () => {
+    it('is registered', () => {
+      expect(ipcHandleMap.has('install-virtual-audio-driver')).toBe(true)
+    })
+
+    it('delegates to virtual audio installer service', async () => {
+      const handler = getIpcHandler('install-virtual-audio-driver')!
+      const result = await handler({}, 'vb-cable', 'req-123')
+      expect(virtualAudioInstallerMock.installVirtualAudioDriver).toHaveBeenCalledWith('vb-cable', 'req-123')
+      expect(result).toMatchObject({ provider: 'vb-cable', state: 'installed' })
+    })
+
+    it('passes through blackhole provider', async () => {
+      virtualAudioInstallerMock.installVirtualAudioDriver.mockResolvedValueOnce({
+        provider: 'blackhole',
+        state: 'installed',
+        code: 0
+      })
+      const handler = getIpcHandler('install-virtual-audio-driver')!
+      const result = await handler({}, 'blackhole', 'req-456')
+      expect(virtualAudioInstallerMock.installVirtualAudioDriver).toHaveBeenCalledWith('blackhole', 'req-456')
+      expect(result).toMatchObject({ provider: 'blackhole', state: 'installed' })
+    })
+  })
+
+  describe('get-virtual-audio-installer-state', () => {
+    it('is registered', () => {
+      expect(ipcHandleMap.has('get-virtual-audio-installer-state')).toBe(true)
+    })
+
+    it('returns installer state from service', () => {
+      virtualAudioInstallerMock.getVirtualAudioInstallerState.mockReturnValueOnce({
+        inProgress: true,
+        platformSupported: true,
+        activeProvider: 'vb-cable'
+      })
+      const handler = getIpcHandler('get-virtual-audio-installer-state')!
+      const result = handler()
+      expect(virtualAudioInstallerMock.getVirtualAudioInstallerState).toHaveBeenCalled()
+      expect(result).toEqual({
+        inProgress: true,
+        platformSupported: true,
+        activeProvider: 'vb-cable'
+      })
+    })
+  })
 })
 
 /* ================================================================== */
@@ -1958,6 +2066,10 @@ describe('All expected IPC channels are registered', () => {
     'get-app-version',
     'get-platform',
     'get-screen-sources',
+    'open-remote-mic-setup-doc',
+    'get-audio-routing-diagnostics',
+    'install-virtual-audio-driver',
+    'get-virtual-audio-installer-state',
     'get-logs-dir',
     'open-logs-folder',
     'get-ice-servers',

@@ -5,13 +5,14 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { MediaLog } from '../utils/Logger'
-import type { AudioDevice, AudioProcessingConfig } from '@/types'
+import type { AudioDevice, AudioProcessingConfig, VirtualMicDeviceStatus } from '@/types'
 
 interface UseMediaStreamResult {
   localStream: MediaStream | null
   inputDevices: AudioDevice[]
   videoInputDevices: AudioDevice[]
   outputDevices: AudioDevice[]
+  virtualMicDeviceStatus: VirtualMicDeviceStatus
   selectedInputDevice: string | null
   selectedVideoDevice: string | null
   selectedOutputDevice: string | null
@@ -41,11 +42,34 @@ const DEFAULT_CONFIG: AudioProcessingConfig = {
   autoGainControl: true
 }
 
+function getLocalPlatform(): 'win' | 'mac' | 'linux' {
+  const ua = navigator.userAgent.toLowerCase()
+  if (ua.includes('win')) return 'win'
+  if (ua.includes('mac')) return 'mac'
+  return 'linux'
+}
+
+function getExpectedVirtualMicHint(platform: 'win' | 'mac' | 'linux'): string {
+  if (platform === 'win') return 'CABLE Input (VB-CABLE)'
+  if (platform === 'mac') return 'BlackHole 2ch'
+  return 'Unsupported platform for remote mic mapping'
+}
+
 export function useMediaStream(): UseMediaStreamResult {
+  const platform = getLocalPlatform()
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [inputDevices, setInputDevices] = useState<AudioDevice[]>([])
   const [videoInputDevices, setVideoInputDevices] = useState<AudioDevice[]>([])
   const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([])
+  const [virtualMicDeviceStatus, setVirtualMicDeviceStatus] = useState<VirtualMicDeviceStatus>({
+    platform,
+    supported: platform === 'win' || platform === 'mac',
+    detected: false,
+    ready: false,
+    outputDeviceId: null,
+    outputDeviceLabel: null,
+    expectedDeviceHint: getExpectedVirtualMicHint(platform)
+  })
   const [selectedInputDevice, setSelectedInputDevice] = useState<string | null>(null)
   const [selectedVideoDevice, setSelectedVideoDevice] = useState<string | null>(null)
   const [selectedOutputDevice, setSelectedOutputDevice] = useState<string | null>(null)
@@ -59,6 +83,30 @@ export function useMediaStream(): UseMediaStreamResult {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
+
+  const updateVirtualMicDeviceStatus = useCallback((outputs: AudioDevice[]) => {
+    const supported = platform === 'win' || platform === 'mac'
+    const matcher = platform === 'win'
+      ? /cable input/i
+      : platform === 'mac'
+        ? /blackhole/i
+        : null
+
+    const matched = matcher
+      ? outputs.find(device => matcher.test(device.label))
+      : undefined
+
+    setVirtualMicDeviceStatus({
+      platform,
+      supported,
+      detected: Boolean(matched),
+      ready: supported && Boolean(matched),
+      outputDeviceId: matched?.deviceId ?? null,
+      outputDeviceLabel: matched?.label ?? null,
+      expectedDeviceHint: getExpectedVirtualMicHint(platform),
+      lastError: supported && !matched ? 'Virtual microphone output device not found' : undefined
+    })
+  }, [platform])
 
   // Keep ref in sync with state for use in callbacks
   useEffect(() => {
@@ -156,6 +204,7 @@ export function useMediaStream(): UseMediaStreamResult {
       setInputDevices(inputs)
       setVideoInputDevices(videoInputs)
       setOutputDevices(outputs)
+      updateVirtualMicDeviceStatus(outputs)
 
       // Set default devices if not selected
       if (!selectedInputDevice && inputs.length > 0) {
@@ -177,7 +226,7 @@ export function useMediaStream(): UseMediaStreamResult {
       MediaLog.error('Failed to enumerate devices', { error: err })
       setError('Failed to enumerate devices')
     }
-  }, [selectedInputDevice, selectedVideoDevice, selectedOutputDevice])
+  }, [selectedInputDevice, selectedVideoDevice, selectedOutputDevice, updateVirtualMicDeviceStatus])
 
   /**
    * Start audio/video capture
@@ -515,6 +564,7 @@ export function useMediaStream(): UseMediaStreamResult {
     inputDevices,
     videoInputDevices,
     outputDevices,
+    virtualMicDeviceStatus,
     selectedInputDevice,
     selectedVideoDevice,
     selectedOutputDevice,

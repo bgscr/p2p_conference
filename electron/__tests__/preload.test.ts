@@ -61,6 +61,10 @@ describe('Preload Script', () => {
         'onTrayToggleMute',
         'onTrayLeaveCall',
         'getScreenSources',
+        'openRemoteMicSetupDoc',
+        'getAudioRoutingDiagnostics',
+        'installVirtualAudioDriver',
+        'getVirtualAudioInstallerState',
         'getICEServers',
         'getMQTTBrokers',
       ]
@@ -119,6 +123,31 @@ describe('Preload Script', () => {
     it('getMQTTBrokers invokes "get-mqtt-brokers"', () => {
       exposedApi.getMQTTBrokers()
       expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-mqtt-brokers')
+    })
+
+    it('openRemoteMicSetupDoc invokes "open-remote-mic-setup-doc"', () => {
+      exposedApi.openRemoteMicSetupDoc()
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('open-remote-mic-setup-doc')
+    })
+
+    it('getAudioRoutingDiagnostics invokes "get-audio-routing-diagnostics"', () => {
+      exposedApi.getAudioRoutingDiagnostics()
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-audio-routing-diagnostics')
+    })
+
+    it('installVirtualAudioDriver invokes "install-virtual-audio-driver"', () => {
+      exposedApi.installVirtualAudioDriver('vb-cable', 'cid-1')
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('install-virtual-audio-driver', 'vb-cable', 'cid-1')
+    })
+
+    it('installVirtualAudioDriver supports blackhole provider', () => {
+      exposedApi.installVirtualAudioDriver('blackhole', 'cid-2')
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('install-virtual-audio-driver', 'blackhole', 'cid-2')
+    })
+
+    it('getVirtualAudioInstallerState invokes "get-virtual-audio-installer-state"', () => {
+      exposedApi.getVirtualAudioInstallerState()
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-virtual-audio-installer-state')
     })
   })
 

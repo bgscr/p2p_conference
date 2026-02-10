@@ -20,7 +20,13 @@
  */
 
 import { SignalingLog, PeerLog } from '../utils/Logger'
-import type { ConnectionQuality, ChatMessage } from '@/types'
+import type {
+  ConnectionQuality,
+  ChatMessage,
+  RemoteMicControlMessage,
+  AudioRoutingMode,
+  RemoteMicStopReason
+} from '@/types'
 import { calculateConnectionStats, type PreviousStats } from './connectionStats'
 import { configureOpusSdp } from './opus'
 
@@ -185,13 +191,15 @@ interface PeerConnection {
   iceRestartInProgress: boolean
   disconnectTimer: NodeJS.Timeout | null
   reconnectTimer: NodeJS.Timeout | null
-  dataChannel: RTCDataChannel | null
+  chatDataChannel: RTCDataChannel | null
+  controlDataChannel: RTCDataChannel | null
 }
 
 type PeerEventCallback = (peerId: string, userName: string, platform: 'win' | 'mac' | 'linux') => void
 type StreamCallback = (peerId: string, stream: MediaStream) => void
 type ErrorCallback = (error: Error, context: string) => void
 type MuteStatusCallback = (peerId: string, muteStatus: MuteStatus) => void
+type RemoteMicControlCallback = (peerId: string, message: RemoteMicControlMessage) => void
 
 export type SignalingState = 'idle' | 'connecting' | 'connected' | 'failed'
 
@@ -200,6 +208,22 @@ export type SignalingState = 'idle' | 'connecting' | 'connected' | 'failed'
  */
 function generateMessageId(): string {
   return `${selfId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
+}
+
+const REMOTE_MIC_MESSAGE_TYPES = new Set([
+  'rm_request',
+  'rm_response',
+  'rm_start',
+  'rm_stop',
+  'rm_heartbeat'
+])
+
+function isRemoteMicControlMessage(data: any): data is RemoteMicControlMessage {
+  return data &&
+    typeof data === 'object' &&
+    typeof data.type === 'string' &&
+    REMOTE_MIC_MESSAGE_TYPES.has(data.type) &&
+    typeof data.requestId === 'string'
 }
 
 /**
@@ -1151,6 +1175,16 @@ export class SimplePeerManager {
   private onError: ErrorCallback = () => { }
   private onPeerMuteChange: MuteStatusCallback = () => { }
   private onChatMessage: ((msg: ChatMessage) => void) | null = null
+  private onRemoteMicControl: RemoteMicControlCallback | null = null
+
+  // Remote microphone control + routing state
+  private pendingRemoteMicRequests: Map<string, string> = new Map() // requestId -> sourcePeerId
+  private pendingOutgoingRemoteMicRequestId: string | null = null
+  private activeRemoteMicTargetPeerId: string | null = null
+  private activeRemoteMicSourcePeerId: string | null = null
+  private activeRemoteMicRequestId: string | null = null
+  private audioRoutingMode: AudioRoutingMode = 'broadcast'
+  private audioRoutingTargetPeerId: string | null = null
 
   // Network status monitoring for auto-reconnect
   private isOnline: boolean = typeof navigator !== 'undefined' ? navigator.onLine : true
@@ -1406,18 +1440,32 @@ export class SimplePeerManager {
       // Add all tracks from the local stream
       const tracks = stream.getTracks()
       tracks.forEach(track => {
+        const shouldRouteAudio = track.kind === 'audio'
+        const trackToSend = shouldRouteAudio ? this.getRoutedAudioTrackForPeer(peerId, track) : track
+
         // Check if this track ID is already being sent (exact match)
-        const existingSenderExact = senders.find(s => s.track?.id === track.id)
+        const existingSenderExact = trackToSend
+          ? senders.find(s => s.track?.id === trackToSend.id)
+          : undefined
         if (existingSenderExact) {
           SignalingLog.debug('Track already being sent', { peerId, trackKind: track.kind, trackId: track.id })
           return
         }
 
         // Check if we have a sender for this kind of track already (to replace)
-        const existingSenderKind = senders.find(s => s.track?.kind === track.kind)
+        const existingSenderKind = senders.find(s => s.track?.kind === track.kind) ||
+          senders.find(s => {
+            const params = s.getParameters()
+            return params.codecs?.some(c => c.mimeType.toLowerCase().includes(track.kind))
+          })
         if (existingSenderKind) {
-          SignalingLog.info('Replacing existing track of same kind', { peerId, kind: track.kind })
-          existingSenderKind.replaceTrack(track)
+          SignalingLog.info('Replacing existing track of same kind', {
+            peerId,
+            kind: track.kind,
+            routeMode: shouldRouteAudio ? this.audioRoutingMode : 'n/a',
+            routed: Boolean(trackToSend)
+          })
+          existingSenderKind.replaceTrack(trackToSend ?? null)
             .catch(err => SignalingLog.error('Failed to replace track', { peerId, error: String(err) }))
           return
         }
@@ -1428,14 +1476,104 @@ export class SimplePeerManager {
         // We'll skip empty sender reuse for now to avoid kind mismatch errors unless we are sure.
         // Instead, just addTrack which creates a new transceiver.
 
+        if (!trackToSend) {
+          SignalingLog.debug('Skipping addTrack due to routing policy', { peerId, trackKind: track.kind })
+          return
+        }
+
         SignalingLog.info('Adding new track to peer', { peerId, trackKind: track.kind })
         try {
-          peer.pc.addTrack(track, stream)
+          peer.pc.addTrack(trackToSend, stream)
         } catch (err) {
           SignalingLog.error('Failed to add track', { peerId, error: String(err) })
         }
       })
     })
+  }
+
+  private shouldSendAudioToPeer(peerId: string): boolean {
+    if (this.audioRoutingMode === 'broadcast') return true
+    return this.audioRoutingTargetPeerId === peerId
+  }
+
+  private getRoutedAudioTrackForPeer(peerId: string, fallbackTrack?: MediaStreamTrack): MediaStreamTrack | null {
+    const localAudioTrack = fallbackTrack && fallbackTrack.kind === 'audio'
+      ? fallbackTrack
+      : this.localStream?.getAudioTracks()[0] ?? null
+
+    if (!localAudioTrack) return null
+    if (!this.shouldSendAudioToPeer(peerId)) return null
+    return localAudioTrack
+  }
+
+  private applyAudioRoutingToPeer(peerId: string) {
+    const peer = this.peers.get(peerId)
+    if (!peer) return
+
+    const routedTrack = this.getRoutedAudioTrackForPeer(peerId)
+    const senders = peer.pc.getSenders()
+
+    const audioSender = senders.find(s => s.track?.kind === 'audio') ||
+      senders.find(s => {
+        const params = s.getParameters()
+        return params.codecs?.some(c => c.mimeType.toLowerCase().includes('audio'))
+      })
+
+    if (audioSender) {
+      audioSender.replaceTrack(routedTrack ?? null)
+        .then(() => {
+          PeerLog.debug('Applied audio routing to sender', {
+            peerId,
+            mode: this.audioRoutingMode,
+            routed: Boolean(routedTrack)
+          })
+        })
+        .catch((err) => {
+          PeerLog.error('Failed to apply audio routing to sender', { peerId, error: String(err) })
+        })
+      return
+    }
+
+    if (routedTrack && this.localStream) {
+      try {
+        peer.pc.addTrack(routedTrack, this.localStream)
+        PeerLog.debug('Added routed audio track for peer', { peerId })
+      } catch (err) {
+        PeerLog.error('Failed to add routed audio track', { peerId, error: String(err) })
+      }
+    }
+  }
+
+  private applyAudioRouting() {
+    this.peers.forEach((_peer, peerId) => this.applyAudioRoutingToPeer(peerId))
+  }
+
+  setAudioRoutingMode(mode: AudioRoutingMode, targetPeerId?: string): boolean {
+    if (mode === 'exclusive') {
+      if (!targetPeerId) {
+        PeerLog.warn('Exclusive audio routing requires a target peer')
+        return false
+      }
+
+      if (!this.peers.has(targetPeerId)) {
+        PeerLog.warn('Exclusive audio routing target not found', { targetPeerId })
+        return false
+      }
+
+      this.audioRoutingMode = 'exclusive'
+      this.audioRoutingTargetPeerId = targetPeerId
+    } else {
+      this.audioRoutingMode = 'broadcast'
+      this.audioRoutingTargetPeerId = null
+    }
+
+    PeerLog.info('Audio routing mode updated', {
+      mode: this.audioRoutingMode,
+      targetPeerId: this.audioRoutingTargetPeerId
+    })
+
+    this.applyAudioRouting()
+    return true
   }
 
   /**
@@ -1478,20 +1616,28 @@ export class SimplePeerManager {
   }
 
   /**
-   * Set up DataChannel event handlers for chat messaging
+   * Set up DataChannel event handlers.
    */
-  private setupDataChannel(dc: RTCDataChannel, peerId: string, peerConn: PeerConnection) {
+  private setupDataChannel(
+    dc: RTCDataChannel,
+    peerId: string,
+    peerConn: PeerConnection,
+    channelType: 'chat' | 'control'
+  ) {
     dc.onopen = () => {
-      PeerLog.info('DataChannel opened', { peerId, label: dc.label })
+      PeerLog.info('DataChannel opened', { peerId, label: dc.label, channelType })
     }
     dc.onclose = () => {
-      PeerLog.info('DataChannel closed', { peerId, label: dc.label })
-      if (peerConn.dataChannel === dc) {
-        peerConn.dataChannel = null
+      PeerLog.info('DataChannel closed', { peerId, label: dc.label, channelType })
+      if (channelType === 'chat' && peerConn.chatDataChannel === dc) {
+        peerConn.chatDataChannel = null
+      }
+      if (channelType === 'control' && peerConn.controlDataChannel === dc) {
+        peerConn.controlDataChannel = null
       }
     }
     dc.onerror = (event) => {
-      PeerLog.error('DataChannel error', { peerId, error: String(event) })
+      PeerLog.error('DataChannel error', { peerId, channelType, error: String(event) })
     }
     dc.onmessage = (event) => {
       try {
@@ -1500,27 +1646,101 @@ export class SimplePeerManager {
         }
 
         const data = JSON.parse(event.data)
-        if (
-          data.type === 'chat' &&
-          typeof data.id === 'string' &&
-          typeof data.senderId === 'string' &&
-          typeof data.senderName === 'string' &&
-          typeof data.content === 'string' &&
-          typeof data.timestamp === 'number' &&
-          this.onChatMessage
-        ) {
-          this.onChatMessage({
-            id: data.id,
-            senderId: data.senderId,
-            senderName: data.senderName,
-            content: data.content,
-            timestamp: data.timestamp,
-            type: 'text'
-          })
+
+        if (channelType === 'chat') {
+          if (
+            data.type === 'chat' &&
+            typeof data.id === 'string' &&
+            typeof data.senderId === 'string' &&
+            typeof data.senderName === 'string' &&
+            typeof data.content === 'string' &&
+            typeof data.timestamp === 'number' &&
+            this.onChatMessage
+          ) {
+            this.onChatMessage({
+              id: data.id,
+              senderId: data.senderId,
+              senderName: data.senderName,
+              content: data.content,
+              timestamp: data.timestamp,
+              type: 'text'
+            })
+          }
+          return
+        }
+
+        if (channelType === 'control') {
+          if (!isRemoteMicControlMessage(data)) {
+            PeerLog.warn('Invalid control message payload', { peerId, payload: data })
+            return
+          }
+
+          this.handleRemoteMicControlMessage(peerId, data)
         }
       } catch (err) {
-        PeerLog.warn('Failed to parse DataChannel message', { peerId, error: String(err) })
+        PeerLog.warn('Failed to parse DataChannel message', { peerId, channelType, error: String(err) })
       }
+    }
+  }
+
+  private handleRemoteMicControlMessage(peerId: string, message: RemoteMicControlMessage) {
+    switch (message.type) {
+      case 'rm_request':
+        this.pendingRemoteMicRequests.set(message.requestId, peerId)
+        break
+      case 'rm_response':
+        if (this.pendingOutgoingRemoteMicRequestId === message.requestId) {
+          this.pendingOutgoingRemoteMicRequestId = null
+        }
+        if (message.accepted) {
+          this.activeRemoteMicTargetPeerId = peerId
+          this.activeRemoteMicRequestId = message.requestId
+        } else {
+          if (this.activeRemoteMicTargetPeerId === peerId) {
+            this.activeRemoteMicTargetPeerId = null
+          }
+          if (this.activeRemoteMicRequestId === message.requestId) {
+            this.activeRemoteMicRequestId = null
+          }
+        }
+        break
+      case 'rm_start':
+        this.activeRemoteMicSourcePeerId = peerId
+        this.activeRemoteMicRequestId = message.requestId
+        break
+      case 'rm_stop':
+        this.pendingRemoteMicRequests.delete(message.requestId)
+        if (this.activeRemoteMicTargetPeerId === peerId) {
+          this.setAudioRoutingMode('broadcast')
+          this.activeRemoteMicTargetPeerId = null
+        }
+        if (this.activeRemoteMicSourcePeerId === peerId) {
+          this.activeRemoteMicSourcePeerId = null
+        }
+        if (this.activeRemoteMicRequestId === message.requestId) {
+          this.activeRemoteMicRequestId = null
+        }
+        break
+      case 'rm_heartbeat':
+        break
+    }
+
+    this.onRemoteMicControl?.(peerId, message)
+  }
+
+  private sendControlMessage(peerId: string, message: RemoteMicControlMessage): boolean {
+    const peer = this.peers.get(peerId)
+    if (!peer?.controlDataChannel || peer.controlDataChannel.readyState !== 'open') {
+      PeerLog.warn('Control channel not ready', { peerId, type: message.type })
+      return false
+    }
+
+    try {
+      peer.controlDataChannel.send(JSON.stringify(message))
+      return true
+    } catch (err) {
+      PeerLog.error('Failed to send control message', { peerId, type: message.type, error: String(err) })
+      return false
     }
   }
 
@@ -1529,6 +1749,150 @@ export class SimplePeerManager {
    */
   setOnChatMessage(callback: ((msg: ChatMessage) => void) | null) {
     this.onChatMessage = callback
+  }
+
+  /**
+   * Register callback for incoming remote mic control messages.
+   */
+  setOnRemoteMicControl(callback: RemoteMicControlCallback | null) {
+    this.onRemoteMicControl = callback
+  }
+
+  /**
+   * Send a remote microphone mapping request to a target peer.
+   * @returns requestId when sent successfully, otherwise null.
+   */
+  sendRemoteMicRequest(targetPeerId: string): string | null {
+    if (!this.peers.has(targetPeerId)) {
+      PeerLog.warn('Cannot request remote mic mapping, peer not found', { targetPeerId })
+      return null
+    }
+
+    const requestId = generateMessageId()
+    const message: RemoteMicControlMessage = {
+      type: 'rm_request',
+      requestId,
+      sourcePeerId: selfId,
+      sourceName: this.userName,
+      targetPeerId,
+      ts: Date.now()
+    }
+
+    if (!this.sendControlMessage(targetPeerId, message)) {
+      return null
+    }
+
+    this.pendingOutgoingRemoteMicRequestId = requestId
+    this.activeRemoteMicRequestId = requestId
+    this.activeRemoteMicTargetPeerId = targetPeerId
+
+    return requestId
+  }
+
+  /**
+   * Respond to a pending remote microphone mapping request.
+   */
+  respondRemoteMicRequest(
+    requestId: string,
+    accepted: boolean,
+    reason:
+      | 'accepted'
+      | 'rejected'
+      | 'busy'
+      | 'virtual-device-missing'
+      | 'virtual-device-install-failed'
+      | 'virtual-device-restart-required'
+      | 'user-cancelled'
+      | 'unknown' = accepted ? 'accepted' : 'rejected'
+  ): boolean {
+    const sourcePeerId = this.pendingRemoteMicRequests.get(requestId)
+    if (!sourcePeerId) {
+      PeerLog.warn('No pending remote mic request found', { requestId })
+      return false
+    }
+
+    const sent = this.sendControlMessage(sourcePeerId, {
+      type: 'rm_response',
+      requestId,
+      accepted,
+      reason,
+      ts: Date.now()
+    })
+
+    if (!sent) {
+      return false
+    }
+
+    if (accepted) {
+      this.activeRemoteMicSourcePeerId = sourcePeerId
+      this.activeRemoteMicRequestId = requestId
+    }
+
+    this.pendingRemoteMicRequests.delete(requestId)
+
+    return true
+  }
+
+  sendRemoteMicStart(peerId: string, requestId: string): boolean {
+    const sent = this.sendControlMessage(peerId, {
+      type: 'rm_start',
+      requestId,
+      ts: Date.now()
+    })
+
+    if (sent) {
+      this.activeRemoteMicTargetPeerId = peerId
+      this.activeRemoteMicRequestId = requestId
+    }
+
+    return sent
+  }
+
+  sendRemoteMicHeartbeat(peerId: string, requestId: string): boolean {
+    return this.sendControlMessage(peerId, {
+      type: 'rm_heartbeat',
+      requestId,
+      ts: Date.now()
+    })
+  }
+
+  sendRemoteMicStop(peerId: string, requestId: string, reason: RemoteMicStopReason = 'unknown'): boolean {
+    const sent = this.sendControlMessage(peerId, {
+      type: 'rm_stop',
+      requestId,
+      reason,
+      ts: Date.now()
+    })
+
+    if (sent && this.activeRemoteMicRequestId === requestId) {
+      this.activeRemoteMicRequestId = null
+      if (this.activeRemoteMicTargetPeerId === peerId) {
+        this.activeRemoteMicTargetPeerId = null
+      }
+      if (this.activeRemoteMicSourcePeerId === peerId) {
+        this.activeRemoteMicSourcePeerId = null
+      }
+    }
+
+    return sent
+  }
+
+  stopRemoteMicSession(reason: RemoteMicStopReason = 'unknown') {
+    const requestId = this.activeRemoteMicRequestId
+    if (requestId && this.activeRemoteMicTargetPeerId) {
+      this.sendRemoteMicStop(this.activeRemoteMicTargetPeerId, requestId, reason)
+    }
+
+    if (requestId && this.activeRemoteMicSourcePeerId) {
+      this.sendRemoteMicStop(this.activeRemoteMicSourcePeerId, requestId, reason)
+    }
+
+    this.setAudioRoutingMode('broadcast')
+    this.pendingOutgoingRemoteMicRequestId = null
+    this.activeRemoteMicRequestId = null
+    this.activeRemoteMicSourcePeerId = null
+    this.activeRemoteMicTargetPeerId = null
+    this.pendingRemoteMicRequests.clear()
   }
 
   /**
@@ -1553,9 +1917,9 @@ export class SimplePeerManager {
     let sentCount = 0
 
     this.peers.forEach((peer, peerId) => {
-      if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
+      if (peer.chatDataChannel && peer.chatDataChannel.readyState === 'open') {
         try {
-          peer.dataChannel.send(jsonStr)
+          peer.chatDataChannel.send(jsonStr)
           sentCount++
         } catch (err) {
           PeerLog.error('Failed to send chat message', { peerId, error: String(err) })
@@ -2143,7 +2507,8 @@ export class SimplePeerManager {
       iceRestartInProgress: false,
       disconnectTimer: null,
       reconnectTimer: null,
-      dataChannel: null
+      chatDataChannel: null,
+      controlDataChannel: null
     }
 
     this.peers.set(peerId, peerConn)
@@ -2152,20 +2517,28 @@ export class SimplePeerManager {
       this.localStream.getTracks().forEach(track => {
         pc.addTrack(track, this.localStream!)
       })
+      this.applyAudioRoutingToPeer(peerId)
     }
 
-    // Set up DataChannel for chat - initiator creates, responder receives via ondatachannel
+    // Set up DataChannels - initiator creates, responder receives via ondatachannel.
     if (isInitiator) {
-      const dc = pc.createDataChannel('chat', { ordered: true })
-      this.setupDataChannel(dc, peerId, peerConn)
-      peerConn.dataChannel = dc
+      const chatDc = pc.createDataChannel('chat', { ordered: true })
+      this.setupDataChannel(chatDc, peerId, peerConn, 'chat')
+      peerConn.chatDataChannel = chatDc
+
+      const controlDc = pc.createDataChannel('control', { ordered: true })
+      this.setupDataChannel(controlDc, peerId, peerConn, 'control')
+      peerConn.controlDataChannel = controlDc
     }
 
     pc.ondatachannel = (event) => {
       PeerLog.info('Received data channel from peer', { peerId, label: event.channel.label })
       if (event.channel.label === 'chat') {
-        peerConn.dataChannel = event.channel
-        this.setupDataChannel(event.channel, peerId, peerConn)
+        peerConn.chatDataChannel = event.channel
+        this.setupDataChannel(event.channel, peerId, peerConn, 'chat')
+      } else if (event.channel.label === 'control') {
+        peerConn.controlDataChannel = event.channel
+        this.setupDataChannel(event.channel, peerId, peerConn, 'control')
       }
     }
 
@@ -2330,14 +2703,24 @@ export class SimplePeerManager {
       peer.reconnectTimer = null
     }
 
-    // Close DataChannel
-    if (peer.dataChannel) {
+    // Close chat DataChannel
+    if (peer.chatDataChannel) {
       try {
-        peer.dataChannel.close()
+        peer.chatDataChannel.close()
       } catch {
         // DataChannel may already be closed
       }
-      peer.dataChannel = null
+      peer.chatDataChannel = null
+    }
+
+    // Close control DataChannel
+    if (peer.controlDataChannel) {
+      try {
+        peer.controlDataChannel.close()
+      } catch {
+        // DataChannel may already be closed
+      }
+      peer.controlDataChannel = null
     }
 
     // Close the peer connection
@@ -2353,6 +2736,7 @@ export class SimplePeerManager {
     this.previousStats.delete(peerId)  // Clean up stats tracking
     this.peerLastSeen.delete(peerId)
     this.peerLastPing.delete(peerId)
+    this.handleRemoteMicPeerDisconnect(peerId)
 
     // Notify listeners
     this.onPeerLeave(peerId, peer.userName, peer.platform)
@@ -2364,6 +2748,39 @@ export class SimplePeerManager {
       this.broadcastAnnounce()
       this.startAnnounceInterval()
     }
+  }
+
+  private handleRemoteMicPeerDisconnect(peerId: string) {
+    const disconnectedActiveTarget = this.activeRemoteMicTargetPeerId === peerId
+    const disconnectedActiveSource = this.activeRemoteMicSourcePeerId === peerId
+
+    if (disconnectedActiveTarget) {
+      this.activeRemoteMicTargetPeerId = null
+      this.pendingOutgoingRemoteMicRequestId = null
+      this.setAudioRoutingMode('broadcast')
+    }
+
+    if (disconnectedActiveSource) {
+      this.activeRemoteMicSourcePeerId = null
+    }
+
+    if (disconnectedActiveTarget || disconnectedActiveSource) {
+      const requestId = this.activeRemoteMicRequestId || generateMessageId()
+      this.activeRemoteMicRequestId = null
+      this.onRemoteMicControl?.(peerId, {
+        type: 'rm_stop',
+        requestId,
+        reason: 'peer-disconnected',
+        ts: Date.now()
+      })
+    }
+
+    // Drop any pending incoming requests from this peer.
+    this.pendingRemoteMicRequests.forEach((sourcePeerId, requestId) => {
+      if (sourcePeerId === peerId) {
+        this.pendingRemoteMicRequests.delete(requestId)
+      }
+    })
   }
 
   /**
@@ -2528,6 +2945,13 @@ export class SimplePeerManager {
       this.topic = ''
       this.localStream = null
       this.localMuteStatus = { micMuted: false, speakerMuted: false }
+      this.audioRoutingMode = 'broadcast'
+      this.audioRoutingTargetPeerId = null
+      this.pendingRemoteMicRequests.clear()
+      this.pendingOutgoingRemoteMicRequestId = null
+      this.activeRemoteMicTargetPeerId = null
+      this.activeRemoteMicSourcePeerId = null
+      this.activeRemoteMicRequestId = null
       this.previousStats.clear()  // Clear stats tracking on room leave
 
       // Reset network reconnect state
@@ -2594,9 +3018,12 @@ export class SimplePeerManager {
 
     this.peers.forEach((peer, peerId) => {
       const senders = peer.pc.getSenders()
+      const routedTrack = trackKind === 'audio' ? this.getRoutedAudioTrackForPeer(peerId, newTrack) : newTrack
       PeerLog.debug('Peer senders', {
         peerId,
         senderCount: senders.length,
+        routeMode: trackKind === 'audio' ? this.audioRoutingMode : undefined,
+        routed: Boolean(routedTrack),
         senderTracks: senders.map(s => ({
           kind: s.track?.kind,
           id: s.track?.id,
@@ -2620,22 +3047,32 @@ export class SimplePeerManager {
           peerId,
           kind: trackKind,
           oldTrackId: matchingSender.track?.id,
-          newTrackId: newTrack.id
+          newTrackId: routedTrack?.id
         })
 
-        matchingSender.replaceTrack(newTrack)
+        matchingSender.replaceTrack(routedTrack ?? null)
           .then(() => {
-            PeerLog.info('Track replaced successfully', { peerId, kind: trackKind, trackId: newTrack.id })
+            PeerLog.info('Track replaced successfully', {
+              peerId,
+              kind: trackKind,
+              trackId: routedTrack?.id,
+              routed: Boolean(routedTrack)
+            })
           })
           .catch((err) => {
             PeerLog.error('Replace track failed', { peerId, kind: trackKind, error: String(err) })
           })
       } else {
+        if (!routedTrack) {
+          PeerLog.debug('Skipping addTrack due to routing policy', { peerId, kind: trackKind })
+          return
+        }
+
         PeerLog.warn('No matching sender found for peer, attempting to add track', { peerId, kind: trackKind })
         // If no sender exists for this kind, add the track as a fallback.
         try {
           if (this.localStream) {
-            peer.pc.addTrack(newTrack, this.localStream)
+            peer.pc.addTrack(routedTrack, this.localStream)
             PeerLog.info('Track added to peer (no existing sender)', { peerId, kind: trackKind })
           }
         } catch (err) {
@@ -2698,6 +3135,13 @@ export class SimplePeerManager {
       peerCount: this.peers.size,
       peers: Array.from(this.peers.keys()),
       localMuteStatus: this.localMuteStatus,
+      audioRoutingMode: this.audioRoutingMode,
+      audioRoutingTargetPeerId: this.audioRoutingTargetPeerId,
+      pendingRemoteMicRequests: this.pendingRemoteMicRequests.size,
+      pendingOutgoingRemoteMicRequestId: this.pendingOutgoingRemoteMicRequestId,
+      activeRemoteMicTargetPeerId: this.activeRemoteMicTargetPeerId,
+      activeRemoteMicSourcePeerId: this.activeRemoteMicSourcePeerId,
+      activeRemoteMicRequestId: this.activeRemoteMicRequestId,
       isJoining: this.isJoining,
       isLeaving: this.isLeaving,
       // Network status

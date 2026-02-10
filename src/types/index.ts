@@ -38,6 +38,8 @@ export interface Peer {
   audioLevel: number
   connectionState: RTCPeerConnectionState
   platform?: 'win' | 'mac' | 'linux'
+  virtualMicReady?: boolean
+  virtualMicDeviceLabel?: string
 }
 
 /**
@@ -105,6 +107,138 @@ export interface ChatMessage {
   content: string
   timestamp: number
   type: 'text' | 'system'
+}
+
+/**
+ * Remote microphone mapping
+ */
+export type AudioRoutingMode = 'broadcast' | 'exclusive'
+
+export type RemoteMicSessionState =
+  | 'idle'
+  | 'pendingOutgoing'
+  | 'pendingIncoming'
+  | 'active'
+  | 'rejected'
+  | 'expired'
+  | 'error'
+
+export type RemoteMicStopReason =
+  | 'stopped-by-source'
+  | 'stopped-by-target'
+  | 'rejected'
+  | 'busy'
+  | 'request-timeout'
+  | 'heartbeat-timeout'
+  | 'peer-disconnected'
+  | 'virtual-device-missing'
+  | 'virtual-device-install-failed'
+  | 'virtual-device-restart-required'
+  | 'user-cancelled'
+  | 'routing-failed'
+  | 'unknown'
+
+export type VirtualAudioInstallState =
+  | 'installed'
+  | 'already-installed'
+  | 'reboot-required'
+  | 'user-cancelled'
+  | 'failed'
+  | 'unsupported'
+
+export interface VirtualAudioInstallResult {
+  provider: 'vb-cable' | 'blackhole'
+  state: VirtualAudioInstallState
+  code?: number
+  requiresRestart?: boolean
+  message?: string
+  correlationId?: string
+}
+
+export interface VirtualAudioInstallerState {
+  inProgress: boolean
+  platformSupported: boolean
+  activeProvider?: 'vb-cable' | 'blackhole'
+  bundleReady?: boolean
+  bundleMessage?: string
+}
+
+export interface RemoteMicRequest {
+  type: 'rm_request'
+  requestId: string
+  sourcePeerId: string
+  sourceName: string
+  targetPeerId: string
+  ts: number
+}
+
+export interface RemoteMicResponse {
+  type: 'rm_response'
+  requestId: string
+  accepted: boolean
+  reason?:
+    | 'accepted'
+    | 'rejected'
+    | 'busy'
+    | 'virtual-device-missing'
+    | 'virtual-device-install-failed'
+    | 'virtual-device-restart-required'
+    | 'user-cancelled'
+    | 'unknown'
+  ts: number
+}
+
+export interface RemoteMicStart {
+  type: 'rm_start'
+  requestId: string
+  ts: number
+}
+
+export interface RemoteMicStop {
+  type: 'rm_stop'
+  requestId: string
+  reason?: RemoteMicStopReason
+  ts: number
+}
+
+export interface RemoteMicHeartbeat {
+  type: 'rm_heartbeat'
+  requestId: string
+  ts: number
+}
+
+export type RemoteMicControlMessage =
+  | RemoteMicRequest
+  | RemoteMicResponse
+  | RemoteMicStart
+  | RemoteMicStop
+  | RemoteMicHeartbeat
+
+export interface RemoteMicSession {
+  state: RemoteMicSessionState
+  requestId?: string
+  sourcePeerId?: string
+  sourceName?: string
+  targetPeerId?: string
+  targetName?: string
+  role?: 'source' | 'target'
+  reason?: string
+  startedAt?: number
+  expiresAt?: number
+  needsVirtualDeviceSetup?: boolean
+  isInstallingVirtualDevice?: boolean
+  installError?: string
+}
+
+export interface VirtualMicDeviceStatus {
+  platform: 'win' | 'mac' | 'linux'
+  supported: boolean
+  detected: boolean
+  ready: boolean
+  outputDeviceId: string | null
+  outputDeviceLabel: string | null
+  expectedDeviceHint: string
+  lastError?: string
 }
 
 export { }
