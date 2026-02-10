@@ -1,0 +1,8 @@
+{
+  "provider": "blackhole",
+  "version": "0.6.1",
+  "installerFile": "0.6.1.pkg",
+  "sha256": "c829afa041a9f6e1b369c01953c8f079740dd1f02421109855829edc0d3c1988",
+  "verificationMode": "hash-only",
+  "timeoutMs": 180000
+}

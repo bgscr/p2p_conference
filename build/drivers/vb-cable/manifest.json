@@ -1,0 +1,12 @@
+{
+  "provider": "vb-cable",
+  "version": "6.2.1.0",
+  "installerFile": "VBCABLE_Setup_x64.exe",
+  "sha256": "734c35dfa6d98f48782a451633ceb471166ec70d60482fd89a1123d0ee3c4f41",
+  "expectedPublisher": "BUREL VINCENT Entrepreneur individuel",
+  "silentArgs": [
+    "-i",
+    "-h"
+  ],
+  "timeoutMs": 180000
+}

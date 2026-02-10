@@ -125,5 +125,7 @@ dist-electron/
 !build/icons/**/*.icns
 !build/icons/**/*.ico
 !build/icons/**/*.png-e 
+!build/drivers/
+!build/drivers/**
 # Log files
 logs/
