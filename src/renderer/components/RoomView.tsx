@@ -10,7 +10,16 @@ import { DeviceSelector } from './DeviceSelector'
 import { ChatPanel } from './ChatPanel'
 import { useI18n } from '../hooks/useI18n'
 import { logger } from '../utils/Logger'
-import type { Peer, AudioDevice, ConnectionState, AppSettings, ConnectionQuality, ChatMessage } from '@/types'
+import type {
+  Peer,
+  AudioDevice,
+  ConnectionState,
+  AppSettings,
+  ConnectionQuality,
+  ChatMessage,
+  RemoteMicSession,
+  VirtualMicDeviceStatus
+} from '@/types'
 import { SimplePeerManager } from '../signaling/SimplePeerManager'
 
 interface RoomViewProps {
@@ -55,6 +64,20 @@ interface RoomViewProps {
   // Screen share props
   isScreenSharing: boolean
   onToggleScreenShare: () => void
+  // Remote microphone mapping
+  remoteMicSession?: RemoteMicSession
+  virtualMicDeviceStatus?: VirtualMicDeviceStatus
+  virtualAudioInstallerState?: {
+    inProgress: boolean
+    platformSupported: boolean
+    bundleReady?: boolean
+    bundleMessage?: string
+  }
+  onRequestRemoteMic?: (targetPeerId: string) => void
+  onRespondRemoteMicRequest?: (accepted: boolean) => void
+  onStopRemoteMic?: () => void
+  onOpenRemoteMicSetup?: () => void
+  onRemoteMicRoutingError?: (peerId: string, error: string) => void
 }
 
 export const RoomView: React.FC<RoomViewProps> = ({
@@ -96,7 +119,15 @@ export const RoomView: React.FC<RoomViewProps> = ({
   onToggleChat,
   onMarkChatRead,
   isScreenSharing,
-  onToggleScreenShare
+  onToggleScreenShare,
+  remoteMicSession = { state: 'idle' },
+  virtualMicDeviceStatus,
+  virtualAudioInstallerState,
+  onRequestRemoteMic,
+  onRespondRemoteMicRequest,
+  onStopRemoteMic,
+  onOpenRemoteMicSetup,
+  onRemoteMicRoutingError
 }) => {
   const { t } = useI18n()
   const [showDevicePanel, setShowDevicePanel] = useState(false)
@@ -109,10 +140,26 @@ export const RoomView: React.FC<RoomViewProps> = ({
     isReconnecting: boolean
     reconnectAttempts: number
   }>({ isOnline: true, isReconnecting: false, reconnectAttempts: 0 })
+  const [remoteMicCountdownSec, setRemoteMicCountdownSec] = useState(0)
 
   const startTimeRef = useRef(Date.now())
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const peerVolumeHandlersRef = useRef<Map<string, (volume: number) => void>>(new Map())
+
+  const isRemoteMicActive = remoteMicSession.state === 'active'
+  const isRemoteMicSource = isRemoteMicActive && remoteMicSession.role === 'source'
+  const isRemoteMicTarget = isRemoteMicActive && remoteMicSession.role === 'target'
+  const remoteMicIsBusy = remoteMicSession.state === 'pendingIncoming' || remoteMicSession.state === 'pendingOutgoing' || remoteMicSession.state === 'active'
+  const isInstallingRemoteDriver = Boolean(remoteMicSession.isInstallingVirtualDevice || virtualAudioInstallerState?.inProgress)
+  const needsVirtualDeviceSetup = Boolean(remoteMicSession.needsVirtualDeviceSetup || !virtualMicDeviceStatus?.ready)
+  const installerBundleReady = virtualAudioInstallerState?.bundleReady !== false
+  const installerPrecheckReason = virtualAudioInstallerState?.bundleMessage || t('remoteMic.installBundleMissingReasonDefault')
+  const canInlineInstall =
+    (localPlatform === 'win' || localPlatform === 'mac') &&
+    (virtualAudioInstallerState?.platformSupported ?? true) &&
+    installerBundleReady
+  const canAcceptIncomingRequest = !isInstallingRemoteDriver &&
+    (virtualMicDeviceStatus?.ready || canInlineInstall)
 
   // Get volume for a peer (default 100%)
   const getPeerVolume = useCallback((peerId: string): number => {
@@ -169,6 +216,26 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
     return () => clearInterval(interval)
   }, [])
+
+  // Countdown for pending remote mic actions.
+  useEffect(() => {
+    if (
+      (remoteMicSession.state !== 'pendingIncoming' && remoteMicSession.state !== 'pendingOutgoing') ||
+      !remoteMicSession.expiresAt
+    ) {
+      setRemoteMicCountdownSec(0)
+      return
+    }
+
+    const updateCountdown = () => {
+      const remainingMs = Math.max(0, remoteMicSession.expiresAt! - Date.now())
+      setRemoteMicCountdownSec(Math.ceil(remainingMs / 1000))
+    }
+
+    updateCountdown()
+    const interval = setInterval(updateCountdown, 250)
+    return () => clearInterval(interval)
+  }, [remoteMicSession.expiresAt, remoteMicSession.state])
 
   // Periodic connection stats update
   useEffect(() => {
@@ -302,7 +369,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
   return (
     <div className="flex h-full">
-    <div className="flex flex-col flex-1 min-w-0">
+    <div className="relative flex flex-col flex-1 min-w-0">
       {/* Network Status Banner */}
       {(!networkStatus.isOnline || networkStatus.isReconnecting) && (
         <div className={`px-4 py-2 flex items-center justify-between ${!networkStatus.isOnline ? 'bg-red-500' : 'bg-yellow-500'
@@ -392,6 +459,47 @@ export const RoomView: React.FC<RoomViewProps> = ({
         )}
       </header>
 
+      {/* Remote Mic Status Banner */}
+      {(remoteMicSession.state === 'pendingOutgoing' || remoteMicSession.state === 'active') && (
+        <div className="mx-4 mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 flex items-center justify-between">
+          <div className="text-sm text-blue-900">
+            {remoteMicSession.state === 'pendingOutgoing'
+              ? t('remoteMic.waitingForApproval', { name: remoteMicSession.targetName || 'target' })
+              : isRemoteMicSource
+                ? t('remoteMic.activeAsSourceName', { name: remoteMicSession.targetName || 'target' })
+                : t('remoteMic.activeAsTarget')}
+            {(remoteMicSession.state === 'pendingOutgoing' && remoteMicCountdownSec > 0) && (
+              <span className="ml-2 text-blue-700">({remoteMicCountdownSec}s)</span>
+            )}
+          </div>
+          {onStopRemoteMic && (
+            <button
+              onClick={() => onStopRemoteMic?.()}
+              className="px-3 py-1 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+            >
+              {t('remoteMic.stop')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Virtual Mic Setup Hint (target role) */}
+      {!isRemoteMicSource && virtualMicDeviceStatus && !virtualMicDeviceStatus.ready && (
+        <div className="mx-4 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex items-center justify-between gap-3">
+          <p className="text-xs text-amber-900">
+            {t('remoteMic.virtualDeviceHint', { device: virtualMicDeviceStatus.expectedDeviceHint })}
+          </p>
+          {onOpenRemoteMicSetup && (
+            <button
+              onClick={onOpenRemoteMicSetup}
+              className="px-2 py-1 text-xs rounded bg-amber-600 text-white hover:bg-amber-700 transition-colors whitespace-nowrap"
+            >
+              {t('remoteMic.openSetup')}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Main Content - Participants Grid */}
       <main className="flex-1 p-4 overflow-y-auto">
         <div className="max-w-4xl mx-auto">
@@ -419,26 +527,57 @@ export const RoomView: React.FC<RoomViewProps> = ({
 
             {/* Remote Participants */}
             {peersArray.map(peer => {
+              const isMappedSourcePeer = isRemoteMicTarget && remoteMicSession.sourcePeerId === peer.id
+              const routeRole = isMappedSourcePeer ? 'virtualMic' : 'speaker'
+              const mappedOutputDeviceId = routeRole === 'virtualMic'
+                ? (virtualMicDeviceStatus?.outputDeviceId ?? null)
+                : selectedOutputDevice
+
+              const canRequestMap = !remoteMicIsBusy || (isRemoteMicSource && remoteMicSession.targetPeerId === peer.id)
+              const isMappedTarget = isRemoteMicSource && remoteMicSession.targetPeerId === peer.id
+
               return (
-                <ParticipantCard
-                  key={peer.id}
-                  name={peer.name}
-                  peerId={peer.id}
-                  isMicMuted={peer.isMuted}
-                  isVideoMuted={peer.isVideoMuted === true}
-                  isSpeakerMuted={peer.isSpeakerMuted || false}
-                  isScreenSharing={peer.isScreenSharing}
-                  isLocal={false}
-                  audioLevel={peer.audioLevel}
-                  connectionState={peer.connectionState}
-                  stream={remoteStreams.get(peer.id)}
-                  outputDeviceId={selectedOutputDevice}
-                  localSpeakerMuted={isSpeakerMuted}
-                  volume={getPeerVolume(peer.id)}
-                  onVolumeChange={getPeerVolumeChangeHandler(peer.id)}
-                  platform={peer.platform}
-                  connectionQuality={connectionStats.get(peer.id)}
-                />
+                <div key={peer.id} className="flex flex-col gap-2">
+                  <ParticipantCard
+                    name={peer.name}
+                    peerId={peer.id}
+                    isMicMuted={peer.isMuted}
+                    isVideoMuted={peer.isVideoMuted === true}
+                    isSpeakerMuted={peer.isSpeakerMuted || false}
+                    isScreenSharing={peer.isScreenSharing}
+                    isLocal={false}
+                    audioLevel={peer.audioLevel}
+                    connectionState={peer.connectionState}
+                    stream={remoteStreams.get(peer.id)}
+                    outputDeviceId={mappedOutputDeviceId}
+                    localSpeakerMuted={routeRole === 'virtualMic' ? false : isSpeakerMuted}
+                    volume={getPeerVolume(peer.id)}
+                    onVolumeChange={getPeerVolumeChangeHandler(peer.id)}
+                    platform={peer.platform}
+                    connectionQuality={connectionStats.get(peer.id)}
+                    routeRole={routeRole}
+                    isRemoteMicMapped={isMappedSourcePeer || isMappedTarget}
+                    onSinkRoutingError={onRemoteMicRoutingError}
+                  />
+
+                  {onRequestRemoteMic && (
+                    <button
+                      onClick={() => isMappedTarget ? onStopRemoteMic?.() : onRequestRemoteMic(peer.id)}
+                      disabled={!canRequestMap}
+                      className={`
+                        px-2 py-1 rounded text-xs font-medium transition-colors
+                        ${!canRequestMap
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          : isMappedTarget
+                            ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                            : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                        }
+                      `}
+                    >
+                      {isMappedTarget ? t('remoteMic.stop') : t('remoteMic.mapMic')}
+                    </button>
+                  )}
+                </div>
               )
             })}
           </div>
@@ -479,6 +618,72 @@ export const RoomView: React.FC<RoomViewProps> = ({
           )}
         </div>
       </main>
+
+      {/* Incoming Remote Mic Request Modal */}
+      {remoteMicSession.state === 'pendingIncoming' && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/30 px-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200 p-5 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-900">{t('remoteMic.incomingTitle')}</h3>
+            <p className="text-sm text-gray-600">
+              {t('remoteMic.incomingPrompt', { name: remoteMicSession.sourceName || 'Unknown' })}
+            </p>
+            {needsVirtualDeviceSetup && !isInstallingRemoteDriver && installerBundleReady && (
+              <p className="text-xs text-amber-700">
+                {t('remoteMic.installPrompt', {
+                  device: virtualMicDeviceStatus?.expectedDeviceHint ||
+                    (localPlatform === 'mac' ? 'BlackHole 2ch' : 'VB-CABLE')
+                })}
+              </p>
+            )}
+            {needsVirtualDeviceSetup && !isInstallingRemoteDriver && !installerBundleReady && (
+              <p className="text-xs text-red-700">
+                {t('remoteMic.installBundleMissing', { reason: installerPrecheckReason })}
+              </p>
+            )}
+            {isInstallingRemoteDriver && (
+              <div className="space-y-1">
+                <p className="text-xs text-blue-700">{t('remoteMic.installing')}</p>
+                <p className="text-xs text-gray-500">{t('remoteMic.installNoCancel')}</p>
+              </div>
+            )}
+            {remoteMicCountdownSec > 0 && (
+              <p className="text-xs text-gray-500">{t('remoteMic.expiresIn', { seconds: remoteMicCountdownSec })}</p>
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => onRespondRemoteMicRequest?.(false)}
+                disabled={isInstallingRemoteDriver}
+                className={`
+                  px-3 py-2 text-sm rounded border transition-colors
+                  ${isInstallingRemoteDriver
+                    ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                  }
+                `}
+              >
+                {t('remoteMic.reject')}
+              </button>
+              <button
+                onClick={() => onRespondRemoteMicRequest?.(true)}
+                disabled={!canAcceptIncomingRequest}
+                className={`
+                  px-3 py-2 text-sm rounded text-white transition-colors
+                  ${canAcceptIncomingRequest
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-gray-400 cursor-not-allowed'
+                  }
+                `}
+              >
+                {isInstallingRemoteDriver
+                  ? t('remoteMic.installing')
+                  : needsVirtualDeviceSetup
+                    ? t('remoteMic.installAndAccept')
+                    : t('remoteMic.accept')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Control Bar */}
       <footer className="bg-white border-t border-gray-200 px-4 py-4">

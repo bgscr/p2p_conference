@@ -20,7 +20,16 @@ import { ErrorBanner } from './components/ErrorBanner'
 import { LeaveConfirmDialog } from './components/LeaveConfirmDialog'
 import { Toast } from './components/Toast'
 
-import type { ConnectionState, AppSettings } from '@/types'
+import type {
+  ConnectionState,
+  AppSettings,
+  RemoteMicSession,
+  VirtualMicDeviceStatus,
+  RemoteMicControlMessage,
+  RemoteMicStopReason,
+  VirtualAudioInstallResult,
+  VirtualAudioInstallerState
+} from '@/types'
 import { useScreenShare } from './hooks/useScreenShare'
 import { useDataChannel } from './hooks/useDataChannel'
 
@@ -44,6 +53,60 @@ const DEFAULT_SETTINGS: AppSettings = {
   selectedOutputDevice: null
 }
 
+const REMOTE_MIC_REQUEST_TIMEOUT_MS = 30000
+const REMOTE_MIC_INSTALL_TIMEOUT_MS = 180000
+// Source waits through target approval (30s) + possible assisted install (180s).
+const REMOTE_MIC_OUTGOING_TIMEOUT_MS = REMOTE_MIC_REQUEST_TIMEOUT_MS + REMOTE_MIC_INSTALL_TIMEOUT_MS
+const REMOTE_MIC_HEARTBEAT_INTERVAL_MS = 5000
+const REMOTE_MIC_HEARTBEAT_TIMEOUT_MS = 15000
+
+const REMOTE_MIC_STOP_REASON_SET: ReadonlySet<RemoteMicStopReason> = new Set<RemoteMicStopReason>([
+  'stopped-by-source',
+  'stopped-by-target',
+  'rejected',
+  'busy',
+  'request-timeout',
+  'heartbeat-timeout',
+  'peer-disconnected',
+  'virtual-device-missing',
+  'virtual-device-install-failed',
+  'virtual-device-restart-required',
+  'user-cancelled',
+  'routing-failed',
+  'unknown'
+])
+
+function normalizeRemoteMicStopReason(reason: unknown): RemoteMicStopReason {
+  if (typeof reason !== 'string') return 'stopped-by-source'
+  return REMOTE_MIC_STOP_REASON_SET.has(reason as RemoteMicStopReason)
+    ? (reason as RemoteMicStopReason)
+    : 'stopped-by-source'
+}
+
+function isVirtualMicOutputReady(platform: 'win' | 'mac' | 'linux', devices: MediaDeviceInfo[]): boolean {
+  if (platform === 'win') {
+    return devices.some((device) => device.kind === 'audiooutput' && /cable input/i.test(device.label))
+  }
+  if (platform === 'mac') {
+    return devices.some((device) => device.kind === 'audiooutput' && /blackhole/i.test(device.label))
+  }
+  return false
+}
+
+function getVirtualAudioProviderForPlatform(
+  platform: 'win' | 'mac' | 'linux'
+): VirtualAudioInstallResult['provider'] | null {
+  if (platform === 'win') return 'vb-cable'
+  if (platform === 'mac') return 'blackhole'
+  return null
+}
+
+function getVirtualAudioDeviceName(platform: 'win' | 'mac' | 'linux'): string {
+  if (platform === 'win') return 'VB-CABLE'
+  if (platform === 'mac') return 'BlackHole 2ch'
+  return 'Virtual Audio Device'
+}
+
 export default function App() {
   const { t } = useI18n()
   const [appView, setAppView] = useState<AppView>('lobby')
@@ -56,6 +119,16 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false)
+  const [remoteMicSession, setRemoteMicSession] = useState<RemoteMicSession>({ state: 'idle' })
+  const [virtualAudioInstallerState, setVirtualAudioInstallerState] = useState<VirtualAudioInstallerState>({
+    inProgress: false,
+    platformSupported: false,
+    bundleReady: true
+  })
+  const remoteMicRequestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const remoteMicHeartbeatSendRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const remoteMicHeartbeatWatchRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const remoteMicLastHeartbeatAtRef = useRef<number>(0)
 
   // Chat state
   const [isChatOpen, setIsChatOpen] = useState(false)
@@ -101,6 +174,26 @@ export default function App() {
     onMessageTooLong: () => showToast(t('chat.messageTooLong'), 'warning')
   })
 
+  const clearRemoteMicTimers = useCallback(() => {
+    if (remoteMicRequestTimerRef.current) {
+      clearTimeout(remoteMicRequestTimerRef.current)
+      remoteMicRequestTimerRef.current = null
+    }
+    if (remoteMicHeartbeatSendRef.current) {
+      clearInterval(remoteMicHeartbeatSendRef.current)
+      remoteMicHeartbeatSendRef.current = null
+    }
+    if (remoteMicHeartbeatWatchRef.current) {
+      clearInterval(remoteMicHeartbeatWatchRef.current)
+      remoteMicHeartbeatWatchRef.current = null
+    }
+  }, [])
+
+  const resetRemoteMicSession = useCallback((nextState: RemoteMicSession = { state: 'idle' }) => {
+    clearRemoteMicTimers()
+    setRemoteMicSession(nextState)
+  }, [clearRemoteMicTimers])
+
   /**
    * Dismiss a toast
    */
@@ -132,13 +225,22 @@ export default function App() {
     }
     showToast(t('room.participantLeft', { name: peerName }), 'info')
 
+    if (
+      remoteMicSession.state !== 'idle' &&
+      (remoteMicSession.sourcePeerId === peerId || remoteMicSession.targetPeerId === peerId)
+    ) {
+      ; (peerManager as any).setAudioRoutingMode?.('broadcast')
+      resetRemoteMicSession({ state: 'idle' })
+      showToast(t('remoteMic.peerDisconnected'), 'info')
+    }
+
     setRemoteStreams(prev => {
       const updated = new Map(prev)
       updated.delete(peerId)
       return updated
     })
     addSystemMessage(t('chat.left', { name: peerName }))
-  }, [soundEnabled, showToast, t, addSystemMessage])
+  }, [soundEnabled, showToast, t, addSystemMessage, remoteMicSession, resetRemoteMicSession])
 
   const onConnectionStateChangeCallback = useCallback((state: ConnectionState) => {
     AppLog.info('Connection state changed', { state })
@@ -172,6 +274,15 @@ export default function App() {
     inputDevices,
     videoInputDevices,
     outputDevices,
+    virtualMicDeviceStatus = {
+      platform: localPlatform,
+      supported: localPlatform === 'win' || localPlatform === 'mac',
+      detected: false,
+      ready: false,
+      outputDeviceId: null,
+      outputDeviceLabel: null,
+      expectedDeviceHint: localPlatform === 'win' ? 'CABLE Input (VB-CABLE)' : 'BlackHole 2ch'
+    } as VirtualMicDeviceStatus,
     selectedInputDevice,
     selectedVideoDevice,
     selectedOutputDevice,
@@ -190,6 +301,310 @@ export default function App() {
     refreshDevices
     // Note: setOnStreamChange is available but we use the direct return value from switchInputDevice instead
   } = useMediaStream()
+
+  const syncVirtualAudioInstallerState = useCallback(async (): Promise<VirtualAudioInstallerState> => {
+    const fallbackState: VirtualAudioInstallerState = {
+      inProgress: false,
+      platformSupported: localPlatform === 'win' || localPlatform === 'mac',
+      bundleReady: true
+    }
+
+    try {
+      const state = await window.electronAPI?.getVirtualAudioInstallerState?.()
+      if (!state) {
+        setVirtualAudioInstallerState(fallbackState)
+        return fallbackState
+      }
+
+      const normalizedState: VirtualAudioInstallerState = {
+        inProgress: state.inProgress,
+        platformSupported: state.platformSupported,
+        activeProvider: state.activeProvider,
+        bundleReady: state.bundleReady !== false,
+        bundleMessage: state.bundleMessage
+      }
+      setVirtualAudioInstallerState(normalizedState)
+      return normalizedState
+    } catch {
+      setVirtualAudioInstallerState(fallbackState)
+      return fallbackState
+    }
+  }, [localPlatform])
+
+  const getInstallerPrecheckMessage = useCallback((reason?: string) => {
+    return t('remoteMic.installPrecheckFailed', {
+      reason: reason || t('remoteMic.installBundleMissingReasonDefault')
+    })
+  }, [t])
+
+  const getRemoteMicRejectMessage = useCallback((reason?: string): string => {
+    switch (reason) {
+      case 'busy':
+        return t('remoteMic.rejectedBusy')
+      case 'virtual-device-missing':
+        return t('remoteMic.rejectedVirtualDeviceMissing')
+      case 'virtual-device-install-failed':
+        return t('remoteMic.rejectedInstallFailed')
+      case 'virtual-device-restart-required':
+        return t('remoteMic.rejectedRestartRequired')
+      case 'user-cancelled':
+        return t('remoteMic.rejectedUserCancelled')
+      case 'rejected':
+        return t('remoteMic.requestRejected')
+      default:
+        return t('remoteMic.requestRejected')
+    }
+  }, [t])
+
+  const installVirtualAudioDriver = useCallback(async (requestId: string): Promise<VirtualAudioInstallResult | null> => {
+    const provider = getVirtualAudioProviderForPlatform(localPlatform)
+    if (!provider) {
+      return {
+        provider: 'vb-cable',
+        state: 'unsupported',
+        message: 'Unsupported platform',
+        correlationId: requestId
+      }
+    }
+
+    const installerState = await syncVirtualAudioInstallerState()
+    if (installerState.bundleReady === false) {
+      return {
+        provider,
+        state: 'failed',
+        message: installerState.bundleMessage || t('remoteMic.installBundleMissingReasonDefault'),
+        correlationId: requestId
+      }
+    }
+
+    setVirtualAudioInstallerState((prev) => ({
+      ...prev,
+      inProgress: true
+    }))
+    try {
+      const result = await window.electronAPI?.installVirtualAudioDriver?.(provider, requestId)
+      await syncVirtualAudioInstallerState()
+      return result || null
+    } catch (err: any) {
+      await syncVirtualAudioInstallerState()
+      return {
+        provider,
+        state: 'failed',
+        message: err?.message || String(err),
+        correlationId: requestId
+      }
+    }
+  }, [localPlatform, syncVirtualAudioInstallerState, t])
+
+  const finalizeRemoteMicSession = useCallback((reason?: string, notify: boolean = false) => {
+    ; (peerManager as any).setAudioRoutingMode?.('broadcast')
+    resetRemoteMicSession({ state: 'idle' })
+    if (notify && reason) {
+      showToast(reason, 'info')
+    }
+  }, [resetRemoteMicSession, showToast])
+
+  const handleRequestRemoteMic = useCallback((targetPeerId: string) => {
+    if (remoteMicSession.state === 'pendingOutgoing' || remoteMicSession.state === 'pendingIncoming' || remoteMicSession.state === 'active') {
+      showToast(t('remoteMic.busy'), 'warning')
+      return
+    }
+
+    const requestId = (peerManager as any).sendRemoteMicRequest?.(targetPeerId)
+    if (!requestId) {
+      showToast(t('remoteMic.requestFailed'), 'error')
+      return
+    }
+
+    const targetName = peers.get(targetPeerId)?.name || 'Unknown'
+    const expiresAt = Date.now() + REMOTE_MIC_OUTGOING_TIMEOUT_MS
+    setRemoteMicSession({
+      state: 'pendingOutgoing',
+      requestId,
+      sourcePeerId: localPeerId,
+      targetPeerId,
+      targetName,
+      role: 'source',
+      expiresAt
+    })
+
+    if (remoteMicRequestTimerRef.current) {
+      clearTimeout(remoteMicRequestTimerRef.current)
+    }
+    remoteMicRequestTimerRef.current = setTimeout(() => {
+      ; (peerManager as any).stopRemoteMicSession?.('request-timeout')
+      setRemoteMicSession({
+        state: 'expired',
+        requestId,
+        sourcePeerId: localPeerId,
+        targetPeerId,
+        targetName,
+        role: 'source',
+        reason: 'request-timeout'
+      })
+      showToast(t('remoteMic.requestTimeout'), 'warning')
+    }, REMOTE_MIC_OUTGOING_TIMEOUT_MS)
+  }, [remoteMicSession.state, showToast, t, peers, localPeerId])
+
+  const handleRespondRemoteMicRequest = useCallback(async (accept: boolean) => {
+    if (remoteMicSession.state !== 'pendingIncoming' || !remoteMicSession.requestId) {
+      return
+    }
+
+    if (!accept) {
+      const ok = (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'rejected')
+      if (!ok) {
+        showToast(t('remoteMic.responseFailed'), 'error')
+        finalizeRemoteMicSession()
+        return
+      }
+      showToast(t('remoteMic.rejectedByTarget'), 'info')
+      finalizeRemoteMicSession()
+      return
+    }
+
+    if (virtualMicDeviceStatus.ready) {
+      const ok = (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, true, 'accepted')
+      if (!ok) {
+        showToast(t('remoteMic.responseFailed'), 'error')
+        finalizeRemoteMicSession()
+      }
+      return
+    }
+
+    const installProvider = getVirtualAudioProviderForPlatform(localPlatform)
+    if (!installProvider) {
+      ; (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'virtual-device-install-failed')
+      showToast(t('remoteMic.installUnsupportedPlatform'), 'warning')
+      finalizeRemoteMicSession()
+      return
+    }
+
+    const installerState = await syncVirtualAudioInstallerState()
+    if (installerState.bundleReady === false) {
+      ; (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'virtual-device-install-failed')
+      showToast(getInstallerPrecheckMessage(installerState.bundleMessage), 'warning')
+      finalizeRemoteMicSession()
+      return
+    }
+
+    let installTimedOut = false
+    if (remoteMicRequestTimerRef.current) {
+      clearTimeout(remoteMicRequestTimerRef.current)
+    }
+
+    const installExpiresAt = Date.now() + REMOTE_MIC_INSTALL_TIMEOUT_MS
+    setRemoteMicSession(prev => ({
+      ...prev,
+      isInstallingVirtualDevice: true,
+      needsVirtualDeviceSetup: true,
+      installError: undefined,
+      expiresAt: installExpiresAt
+    }))
+    showToast(t('remoteMic.installStarting', {
+      device: virtualMicDeviceStatus.expectedDeviceHint || getVirtualAudioDeviceName(localPlatform)
+    }), 'info')
+
+    remoteMicRequestTimerRef.current = setTimeout(() => {
+      installTimedOut = true
+      ; (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'virtual-device-install-failed')
+      showToast(t('remoteMic.installTimeout'), 'warning')
+      finalizeRemoteMicSession()
+    }, REMOTE_MIC_INSTALL_TIMEOUT_MS)
+
+    const installResult = await installVirtualAudioDriver(remoteMicSession.requestId)
+    if (installTimedOut) {
+      return
+    }
+
+    if (!installResult) {
+      ; (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'virtual-device-install-failed')
+      showToast(t('remoteMic.installFailed'), 'error')
+      finalizeRemoteMicSession()
+      return
+    }
+
+    if (installResult.state === 'reboot-required') {
+      ; (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'virtual-device-restart-required')
+      showToast(t('remoteMic.installNeedsRestart'), 'warning')
+      finalizeRemoteMicSession()
+      return
+    }
+
+    if (installResult.state === 'user-cancelled') {
+      ; (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'user-cancelled')
+      showToast(t('remoteMic.installCancelled'), 'warning')
+      finalizeRemoteMicSession()
+      return
+    }
+
+    if (installResult.state === 'failed' || installResult.state === 'unsupported') {
+      ; (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'virtual-device-install-failed')
+      showToast(t('remoteMic.installFailed'), 'error')
+      finalizeRemoteMicSession()
+      return
+    }
+
+    await refreshDevices()
+    const devices = typeof navigator.mediaDevices?.enumerateDevices === 'function'
+      ? await navigator.mediaDevices.enumerateDevices()
+      : []
+    const readyAfterInstall = devices.length > 0
+      ? isVirtualMicOutputReady(localPlatform, devices)
+      : virtualMicDeviceStatus.ready
+    if (!readyAfterInstall) {
+      ; (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, false, 'virtual-device-install-failed')
+      showToast(t('remoteMic.virtualDeviceMissing'), 'warning')
+      finalizeRemoteMicSession()
+      return
+    }
+
+    setRemoteMicSession(prev => ({
+      ...prev,
+      isInstallingVirtualDevice: false,
+      needsVirtualDeviceSetup: false
+    }))
+
+    const ok = (peerManager as any).respondRemoteMicRequest?.(remoteMicSession.requestId, true, 'accepted')
+    if (!ok) {
+      showToast(t('remoteMic.responseFailed'), 'error')
+      finalizeRemoteMicSession()
+      return
+    }
+    showToast(t('remoteMic.installCompleted', {
+      device: virtualMicDeviceStatus.expectedDeviceHint || getVirtualAudioDeviceName(localPlatform)
+    }), 'success')
+  }, [
+    remoteMicSession,
+    showToast,
+    t,
+    finalizeRemoteMicSession,
+    virtualMicDeviceStatus.expectedDeviceHint,
+    virtualMicDeviceStatus.ready,
+    localPlatform,
+    installVirtualAudioDriver,
+    refreshDevices,
+    syncVirtualAudioInstallerState,
+    getInstallerPrecheckMessage
+  ])
+
+  const handleStopRemoteMic = useCallback((reason: RemoteMicStopReason = 'stopped-by-source') => {
+    const normalizedReason = normalizeRemoteMicStopReason(reason)
+    const session = remoteMicSession
+    if (!session.requestId) {
+      finalizeRemoteMicSession()
+      return
+    }
+
+    if (session.role === 'source' && session.targetPeerId) {
+      ; (peerManager as any).sendRemoteMicStop?.(session.targetPeerId, session.requestId, normalizedReason)
+    } else if (session.role === 'target' && session.sourcePeerId) {
+      ; (peerManager as any).sendRemoteMicStop?.(session.sourcePeerId, session.requestId, normalizedReason)
+    }
+
+    ; (peerManager as any).stopRemoteMicSession?.(normalizedReason)
+    finalizeRemoteMicSession()
+  }, [remoteMicSession, finalizeRemoteMicSession])
 
   // Screen sharing
   const {
@@ -280,12 +695,17 @@ export default function App() {
       unsubscribeTrayLeave?.()
       toastTimeouts.forEach(timeoutId => clearTimeout(timeoutId))
       toastTimeouts.clear()
+      clearRemoteMicTimers()
       pipeline.destroy()
       soundManager.destroy()
       AppLog.info('Application cleanup')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showToast, t])
+  }, [showToast, t, clearRemoteMicTimers])
+
+  useEffect(() => {
+    syncVirtualAudioInstallerState()
+  }, [syncVirtualAudioInstallerState])
 
   /**
    * Set up remote stream handler and mute status handler
@@ -319,6 +739,197 @@ export default function App() {
       }
     })
   }, [showToast])
+
+  /**
+   * Remote microphone control channel handler.
+   */
+  useEffect(() => {
+    const handleRemoteMicControlMessage = (peerId: string, message: RemoteMicControlMessage) => {
+      switch (message.type) {
+        case 'rm_request': {
+          if (remoteMicSession.state === 'active' || remoteMicSession.state === 'pendingIncoming' || remoteMicSession.state === 'pendingOutgoing') {
+            ; (peerManager as any).respondRemoteMicRequest?.(message.requestId, false, 'busy')
+            return
+          }
+
+          const sourceName = message.sourceName || peers.get(peerId)?.name || 'Unknown'
+          const expiresAt = Date.now() + REMOTE_MIC_REQUEST_TIMEOUT_MS
+          setRemoteMicSession({
+            state: 'pendingIncoming',
+            requestId: message.requestId,
+            sourcePeerId: peerId,
+            sourceName,
+            targetPeerId: localPeerId,
+            role: 'target',
+            expiresAt,
+            needsVirtualDeviceSetup: !virtualMicDeviceStatus.ready,
+            isInstallingVirtualDevice: false
+          })
+
+          if ((localPlatform === 'win' || localPlatform === 'mac') && !virtualMicDeviceStatus.ready) {
+            syncVirtualAudioInstallerState()
+          }
+
+          if (remoteMicRequestTimerRef.current) {
+            clearTimeout(remoteMicRequestTimerRef.current)
+          }
+          remoteMicRequestTimerRef.current = setTimeout(() => {
+            ; (peerManager as any).respondRemoteMicRequest?.(message.requestId, false, 'rejected')
+            setRemoteMicSession({
+              state: 'expired',
+              requestId: message.requestId,
+              sourcePeerId: peerId,
+              sourceName,
+              targetPeerId: localPeerId,
+              role: 'target',
+              reason: 'request-timeout'
+            })
+          }, REMOTE_MIC_REQUEST_TIMEOUT_MS)
+
+          showToast(t('remoteMic.requestReceived', { name: sourceName }), 'info')
+          break
+        }
+
+        case 'rm_response': {
+          if (remoteMicSession.state !== 'pendingOutgoing' || remoteMicSession.requestId !== message.requestId) {
+            return
+          }
+
+          if (remoteMicRequestTimerRef.current) {
+            clearTimeout(remoteMicRequestTimerRef.current)
+            remoteMicRequestTimerRef.current = null
+          }
+
+          if (message.accepted) {
+            const targetPeerId = remoteMicSession.targetPeerId || peerId
+            const routeSet = (peerManager as any).setAudioRoutingMode?.('exclusive', targetPeerId)
+            if (!routeSet) {
+              showToast(t('remoteMic.routingFailed'), 'error')
+              finalizeRemoteMicSession()
+              return
+            }
+
+            ; (peerManager as any).sendRemoteMicStart?.(targetPeerId, message.requestId)
+            setRemoteMicSession({
+              state: 'active',
+              requestId: message.requestId,
+              sourcePeerId: localPeerId,
+              targetPeerId,
+              targetName: remoteMicSession.targetName || peers.get(targetPeerId)?.name || 'Unknown',
+              role: 'source',
+              startedAt: Date.now()
+            })
+
+            if (remoteMicHeartbeatSendRef.current) {
+              clearInterval(remoteMicHeartbeatSendRef.current)
+            }
+            remoteMicHeartbeatSendRef.current = setInterval(() => {
+              ; (peerManager as any).sendRemoteMicHeartbeat?.(targetPeerId, message.requestId)
+            }, REMOTE_MIC_HEARTBEAT_INTERVAL_MS)
+
+            showToast(t('remoteMic.requestAccepted'), 'success')
+          } else {
+            setRemoteMicSession({
+              state: 'rejected',
+              requestId: message.requestId,
+              sourcePeerId: localPeerId,
+              targetPeerId: remoteMicSession.targetPeerId,
+              role: 'source',
+              reason: message.reason || 'rejected'
+            })
+            showToast(getRemoteMicRejectMessage(message.reason), 'warning')
+          }
+          break
+        }
+
+        case 'rm_start': {
+          if (remoteMicSession.state !== 'pendingIncoming' || remoteMicSession.requestId !== message.requestId) {
+            return
+          }
+
+          if (remoteMicRequestTimerRef.current) {
+            clearTimeout(remoteMicRequestTimerRef.current)
+            remoteMicRequestTimerRef.current = null
+          }
+
+          remoteMicLastHeartbeatAtRef.current = Date.now()
+          setRemoteMicSession(prev => ({
+            ...prev,
+            state: 'active',
+            startedAt: Date.now()
+          }))
+
+          if (remoteMicHeartbeatWatchRef.current) {
+            clearInterval(remoteMicHeartbeatWatchRef.current)
+          }
+
+          remoteMicHeartbeatWatchRef.current = setInterval(() => {
+            const elapsed = Date.now() - remoteMicLastHeartbeatAtRef.current
+            if (elapsed > REMOTE_MIC_HEARTBEAT_TIMEOUT_MS) {
+              ; (peerManager as any).sendRemoteMicStop?.(peerId, message.requestId, 'heartbeat-timeout')
+              finalizeRemoteMicSession(t('remoteMic.heartbeatTimeout'), true)
+            }
+          }, 1000)
+
+          showToast(t('remoteMic.activeAsTarget'), 'success')
+          break
+        }
+
+        case 'rm_heartbeat': {
+          if (
+            remoteMicSession.state === 'active' &&
+            remoteMicSession.role === 'target' &&
+            remoteMicSession.requestId === message.requestId &&
+            remoteMicSession.sourcePeerId === peerId
+          ) {
+            remoteMicLastHeartbeatAtRef.current = Date.now()
+          }
+          break
+        }
+
+        case 'rm_stop': {
+          if (remoteMicSession.requestId && remoteMicSession.requestId !== message.requestId) {
+            return
+          }
+          finalizeRemoteMicSession(t('remoteMic.stopped'), true)
+          break
+        }
+      }
+    }
+
+    const setOnRemoteMicControl = (peerManager as any).setOnRemoteMicControl?.bind(peerManager)
+    if (typeof setOnRemoteMicControl !== 'function') {
+      return
+    }
+
+    setOnRemoteMicControl(handleRemoteMicControlMessage)
+    return () => {
+      setOnRemoteMicControl(null)
+    }
+  }, [
+    finalizeRemoteMicSession,
+    getRemoteMicRejectMessage,
+    localPeerId,
+    localPlatform,
+    peers,
+    remoteMicSession,
+    showToast,
+    syncVirtualAudioInstallerState,
+    t,
+    virtualMicDeviceStatus.ready
+  ])
+
+  useEffect(() => {
+    if (remoteMicSession.state !== 'rejected' && remoteMicSession.state !== 'expired') {
+      return
+    }
+
+    const timer = setTimeout(() => {
+      setRemoteMicSession({ state: 'idle' })
+    }, 2500)
+
+    return () => clearTimeout(timer)
+  }, [remoteMicSession.state])
 
   /**
    * Sync call state with system tray
@@ -434,6 +1045,8 @@ export default function App() {
    */
   const handleCancelSearch = useCallback(() => {
     AppLog.info('User cancelled search')
+    ; (peerManager as any).stopRemoteMicSession?.('unknown')
+    resetRemoteMicSession({ state: 'idle' })
     leaveRoom()
     stopCapture()
     if (isScreenSharing) stopScreenShare()
@@ -442,7 +1055,7 @@ export default function App() {
     setIsChatOpen(false)
     resetChat()
     setAppView('lobby')
-  }, [leaveRoom, stopCapture, isScreenSharing, stopScreenShare, resetChat])
+  }, [leaveRoom, stopCapture, isScreenSharing, stopScreenShare, resetChat, resetRemoteMicSession])
 
   /**
    * Keyboard shortcuts
@@ -583,6 +1196,8 @@ export default function App() {
   const handleLeaveRoom = useCallback(() => {
     AppLog.info('Leaving room', { roomId })
     setShowLeaveConfirm(false)
+    ; (peerManager as any).stopRemoteMicSession?.('unknown')
+    resetRemoteMicSession({ state: 'idle' })
     leaveRoom()
     stopCapture()
     if (isScreenSharing) stopScreenShare()
@@ -592,7 +1207,7 @@ export default function App() {
     setIsChatOpen(false)
     resetChat()
     setAppView('lobby')
-  }, [leaveRoom, stopCapture, roomId, isScreenSharing, stopScreenShare, resetChat])
+  }, [leaveRoom, stopCapture, roomId, isScreenSharing, stopScreenShare, resetChat, resetRemoteMicSession])
 
   /**
    * Handle input device change
@@ -671,6 +1286,96 @@ export default function App() {
 
     AppLog.debug('Settings changed', { newSettings })
   }, [])
+
+  const handleOpenRemoteMicSetup = useCallback(async () => {
+    const opened = await window.electronAPI?.openRemoteMicSetupDoc?.()
+    if (!opened) {
+      showToast(t('remoteMic.setupDocUnavailable'), 'warning')
+    }
+  }, [showToast, t])
+
+  const handleInstallRemoteMicDriver = useCallback(async () => {
+    if (!getVirtualAudioProviderForPlatform(localPlatform)) {
+      showToast(t('remoteMic.installUnsupportedPlatform'), 'warning')
+      return
+    }
+
+    const installerState = await syncVirtualAudioInstallerState()
+    if (installerState.bundleReady === false) {
+      showToast(getInstallerPrecheckMessage(installerState.bundleMessage), 'warning')
+      return
+    }
+
+    showToast(t('remoteMic.installStarting', {
+      device: virtualMicDeviceStatus.expectedDeviceHint || getVirtualAudioDeviceName(localPlatform)
+    }), 'info')
+    const result = await installVirtualAudioDriver(`manual-${Date.now()}`)
+    if (!result) {
+      showToast(t('remoteMic.installFailed'), 'error')
+      return
+    }
+
+    if (result.state === 'reboot-required') {
+      showToast(t('remoteMic.installNeedsRestart'), 'warning')
+      return
+    }
+    if (result.state === 'user-cancelled') {
+      showToast(t('remoteMic.installCancelled'), 'warning')
+      return
+    }
+    if (result.state === 'failed' || result.state === 'unsupported') {
+      showToast(t('remoteMic.installFailed'), 'error')
+      return
+    }
+
+    await refreshDevices()
+    const devices = typeof navigator.mediaDevices?.enumerateDevices === 'function'
+      ? await navigator.mediaDevices.enumerateDevices()
+      : []
+    const ready = devices.length > 0
+      ? isVirtualMicOutputReady(localPlatform, devices)
+      : virtualMicDeviceStatus.ready
+
+    if (ready) {
+      showToast(t('remoteMic.installCompleted', {
+        device: virtualMicDeviceStatus.expectedDeviceHint || getVirtualAudioDeviceName(localPlatform)
+      }), 'success')
+    } else {
+      showToast(t('remoteMic.virtualDeviceMissing'), 'warning')
+    }
+  }, [
+    installVirtualAudioDriver,
+    localPlatform,
+    refreshDevices,
+    showToast,
+    t,
+    virtualMicDeviceStatus.expectedDeviceHint,
+    virtualMicDeviceStatus.ready,
+    syncVirtualAudioInstallerState,
+    getInstallerPrecheckMessage
+  ])
+
+  const handleRecheckVirtualMicDevice = useCallback(async () => {
+    await refreshDevices()
+    await syncVirtualAudioInstallerState()
+
+    const devices = typeof navigator.mediaDevices?.enumerateDevices === 'function'
+      ? await navigator.mediaDevices.enumerateDevices()
+      : []
+    const ready = devices.length > 0
+      ? isVirtualMicOutputReady(localPlatform, devices)
+      : virtualMicDeviceStatus.ready
+    showToast(
+      ready ? t('remoteMic.ready') : t('remoteMic.notReady'),
+      ready ? 'success' : 'warning'
+    )
+  }, [localPlatform, refreshDevices, showToast, syncVirtualAudioInstallerState, t, virtualMicDeviceStatus.ready])
+
+  const handleRemoteMicRoutingError = useCallback((peerId: string, error: string) => {
+    AppLog.error('Remote mic sink routing failed', { peerId, error })
+    showToast(t('remoteMic.routingFailed'), 'error')
+    handleStopRemoteMic('routing-failed')
+  }, [showToast, t, handleStopRemoteMic])
 
   /**
    * Copy room ID to clipboard
@@ -814,6 +1519,14 @@ export default function App() {
           onMarkChatRead={handleMarkChatRead}
           isScreenSharing={isScreenSharing}
           onToggleScreenShare={handleToggleScreenShare}
+          remoteMicSession={remoteMicSession}
+          virtualMicDeviceStatus={virtualMicDeviceStatus}
+          virtualAudioInstallerState={virtualAudioInstallerState}
+          onRequestRemoteMic={handleRequestRemoteMic}
+          onRespondRemoteMicRequest={handleRespondRemoteMicRequest}
+          onStopRemoteMic={handleStopRemoteMic}
+          onOpenRemoteMicSetup={handleOpenRemoteMicSetup}
+          onRemoteMicRoutingError={handleRemoteMicRoutingError}
         />
       )}
 
@@ -833,6 +1546,11 @@ export default function App() {
           onVideoDeviceChange={handleVideoDeviceChange}
           onClose={() => setAppView('lobby')}
           onShowToast={showToast}
+          virtualMicDeviceStatus={virtualMicDeviceStatus}
+          virtualAudioInstallerState={virtualAudioInstallerState}
+          onInstallRemoteMicDriver={handleInstallRemoteMicDriver}
+          onRecheckRemoteMicDevice={handleRecheckVirtualMicDevice}
+          onOpenRemoteMicSetup={handleOpenRemoteMicSetup}
         />
       )}
     </div>
