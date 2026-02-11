@@ -5,10 +5,12 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { ParticipantCard } from './ParticipantCard'
+import { ExpandedParticipantView } from './ExpandedParticipantView'
 import { AudioMeter } from './AudioMeter'
 import { DeviceSelector } from './DeviceSelector'
 import { ChatPanel } from './ChatPanel'
 import { useI18n } from '../hooks/useI18n'
+import { useExpandedView } from '../hooks/useExpandedView'
 import { logger } from '../utils/Logger'
 import type {
   Peer,
@@ -145,6 +147,10 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const startTimeRef = useRef(Date.now())
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const peerVolumeHandlersRef = useRef<Map<string, (volume: number) => void>>(new Map())
+  const expandHandlersRef = useRef<Map<string, () => void>>(new Map())
+  const expandedViewRef = useRef<HTMLDivElement>(null)
+
+  const { expandedPeerId, isFullscreen, expandPeer, enterFullscreen, collapse } = useExpandedView(peers)
 
   const isRemoteMicActive = remoteMicSession.state === 'active'
   const isRemoteMicSource = isRemoteMicActive && remoteMicSession.role === 'source'
@@ -185,6 +191,16 @@ export const RoomView: React.FC<RoomViewProps> = ({
     return handler
   }, [handlePeerVolumeChange])
 
+  // Get a stable expand callback per peer to avoid re-rendering memoized ParticipantCard.
+  const getExpandHandler = useCallback((peerId: string) => {
+    const existing = expandHandlersRef.current.get(peerId)
+    if (existing) return existing
+
+    const handler = () => expandPeer(peerId)
+    expandHandlersRef.current.set(peerId, handler)
+    return handler
+  }, [expandPeer])
+
   // Clean up per-peer volume state/callbacks for peers that left.
   useEffect(() => {
     const activePeerIds = new Set(peers.keys())
@@ -192,6 +208,12 @@ export const RoomView: React.FC<RoomViewProps> = ({
     peerVolumeHandlersRef.current.forEach((_, peerId) => {
       if (!activePeerIds.has(peerId)) {
         peerVolumeHandlersRef.current.delete(peerId)
+      }
+    })
+
+    expandHandlersRef.current.forEach((_, peerId) => {
+      if (!activePeerIds.has(peerId)) {
+        expandHandlersRef.current.delete(peerId)
       }
     })
 
@@ -500,8 +522,56 @@ export const RoomView: React.FC<RoomViewProps> = ({
         </div>
       )}
 
-      {/* Main Content - Participants Grid */}
+      {/* Main Content - Participants Grid or Expanded View */}
       <main className="flex-1 p-4 overflow-y-auto">
+        {expandedPeerId && peers.get(expandedPeerId) ? (
+          <>
+            {/* Expanded View */}
+            <ExpandedParticipantView
+              ref={expandedViewRef}
+              peer={peers.get(expandedPeerId)!}
+              stream={remoteStreams.get(expandedPeerId)}
+              isFullscreen={isFullscreen}
+              onCollapse={collapse}
+              onEnterFullscreen={() => expandedViewRef.current && enterFullscreen(expandedViewRef.current)}
+              connectionQuality={connectionStats.get(expandedPeerId)}
+            />
+            {/* Keep the expanded peer's ParticipantCard mounted but hidden for audio continuity */}
+            {(() => {
+              const peer = peers.get(expandedPeerId)!
+              const isMappedSourcePeer = isRemoteMicTarget && remoteMicSession.sourcePeerId === peer.id
+              const routeRole = isMappedSourcePeer ? 'virtualMic' as const : 'speaker' as const
+              const mappedOutputDeviceId = routeRole === 'virtualMic'
+                ? (virtualMicDeviceStatus?.outputDeviceId ?? null)
+                : selectedOutputDevice
+              return (
+                <div hidden>
+                  <ParticipantCard
+                    name={peer.name}
+                    peerId={peer.id}
+                    isMicMuted={peer.isMuted}
+                    isVideoMuted={peer.isVideoMuted === true}
+                    isSpeakerMuted={peer.isSpeakerMuted || false}
+                    isScreenSharing={peer.isScreenSharing}
+                    isLocal={false}
+                    audioLevel={peer.audioLevel}
+                    connectionState={peer.connectionState}
+                    stream={remoteStreams.get(peer.id)}
+                    outputDeviceId={mappedOutputDeviceId}
+                    localSpeakerMuted={routeRole === 'virtualMic' ? false : isSpeakerMuted}
+                    volume={getPeerVolume(peer.id)}
+                    onVolumeChange={getPeerVolumeChangeHandler(peer.id)}
+                    platform={peer.platform}
+                    connectionQuality={connectionStats.get(peer.id)}
+                    routeRole={routeRole}
+                    isRemoteMicMapped={isMappedSourcePeer}
+                    onSinkRoutingError={onRemoteMicRoutingError}
+                  />
+                </div>
+              )
+            })()}
+          </>
+        ) : (
         <div className="max-w-4xl mx-auto">
           {/* Grid of participants */}
           <div className={`grid gap-4 ${peersArray.length === 0 ? 'grid-cols-1 max-w-xs mx-auto' :
@@ -558,6 +628,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                     routeRole={routeRole}
                     isRemoteMicMapped={isMappedSourcePeer || isMappedTarget}
                     onSinkRoutingError={onRemoteMicRoutingError}
+                    onExpand={getExpandHandler(peer.id)}
                   />
 
                   {onRequestRemoteMic && (
@@ -617,6 +688,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
             </div>
           )}
         </div>
+        )}
       </main>
 
       {/* Incoming Remote Mic Request Modal */}

@@ -106,6 +106,7 @@ interface ParticipantCardProps {
     jitter: number
     quality: 'excellent' | 'good' | 'fair' | 'poor'
   }
+  onExpand?: () => void  // Callback to expand this participant's video
 }
 
 const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
@@ -127,7 +128,8 @@ const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
   isRemoteMicMapped = false,
   onSinkRoutingError,
   platform,
-  connectionQuality
+  connectionQuality,
+  onExpand
 }) => {
   const { t } = useI18n()
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -340,7 +342,7 @@ const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
 
   return (
     <div className={`
-      card p-4 flex flex-col items-center gap-3 transition-all relative overflow-hidden
+      group card p-4 flex flex-col items-center gap-3 transition-all relative overflow-hidden
       ${displayLevel > 10 && !isMicMuted ? 'ring-2 ring-green-400 ring-opacity-50' : ''}
     `}>
       {/* Hidden audio element for remote streams */}
@@ -364,6 +366,22 @@ const ParticipantCardComponent: React.FC<ParticipantCardProps> = ({
           </svg>
           {t('room.screenSharing')}
         </div>
+      )}
+
+      {/* Expand button - shown on remote cards with active video */}
+      {!isLocal && showVideo && onExpand && (
+        <button
+          onClick={onExpand}
+          className="absolute bottom-2 right-2 z-20 p-1.5 bg-black/50 text-white rounded-lg
+                     hover:bg-black/70 transition-colors opacity-0 group-hover:opacity-100"
+          title={t('room.expandView')}
+          data-testid="expand-view-btn"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+          </svg>
+        </button>
       )}
 
       {isRemoteMicMapped && (
@@ -525,6 +543,7 @@ export const ParticipantCard = React.memo(ParticipantCardComponent, (prevProps, 
     prevProps.isRemoteMicMapped === nextProps.isRemoteMicMapped &&
     prevProps.onSinkRoutingError === nextProps.onSinkRoutingError &&
     prevProps.platform === nextProps.platform &&
-    prevProps.connectionQuality === nextProps.connectionQuality
+    prevProps.connectionQuality === nextProps.connectionQuality &&
+    prevProps.onExpand === nextProps.onExpand
   )
 })

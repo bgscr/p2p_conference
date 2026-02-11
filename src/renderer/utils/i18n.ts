@@ -102,6 +102,10 @@ const en: Translations = {
     screenSharing: 'Sharing Screen',
     screenShareHint: 'Share Screen (S)',
     peerScreenSharing: '{name} is sharing their screen',
+    expandView: 'Expand View',
+    collapseView: 'Minimize',
+    enterFullscreen: 'Fullscreen',
+    exitFullscreen: 'Exit Fullscreen',
   },
   leaveConfirm: {
     title: 'Leave Call?',
@@ -368,6 +372,10 @@ const zhCN: Translations = {
     screenSharing: '正在共享屏幕',
     screenShareHint: '共享屏幕 (S)',
     peerScreenSharing: '{name} 正在共享屏幕',
+    expandView: '展开视图',
+    collapseView: '最小化',
+    enterFullscreen: '全屏',
+    exitFullscreen: '退出全屏',
   },
   leaveConfirm: {
     title: '离开通话？',
