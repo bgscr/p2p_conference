@@ -17,10 +17,16 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import App from '../renderer/App'
+import App, {
+  normalizeRemoteMicStopReason,
+  isVirtualMicOutputReady,
+  getVirtualAudioProviderForPlatform,
+  getVirtualAudioDeviceName
+} from '../renderer/App'
 import { peerManager } from '../renderer/signaling/SimplePeerManager'
+import { featureFlags } from '../renderer/config/featureFlags'
 
 const mocks = vi.hoisted(() => ({
   joinRoom: vi.fn(),
@@ -51,6 +57,8 @@ const mocks = vi.hoisted(() => ({
   installVirtualAudioDriver: vi.fn(),
   getVirtualAudioInstallerState: vi.fn(),
   openRemoteMicSetupDoc: vi.fn(),
+  exportDiagnosticsBundle: vi.fn(),
+  getHealthSnapshot: vi.fn(),
   downloadLogs: vi.fn(),
   respondRemoteMicRequest: vi.fn(),
   sendRemoteMicRequest: vi.fn(),
@@ -67,6 +75,16 @@ let useRoomReturnOverrides: any = {}
 let useMediaStreamReturnOverrides: any = {}
 let onChatMessageCallback: ((msg: any) => void) | null = null
 let onRemoteMicControlCallback: ((peerId: string, message: any) => void) | null = null
+const delegateEventBridgeState = vi.hoisted(() => ({
+  callbacks: null as {
+    onRemoteStream?: (peerId: string, stream: MediaStream) => void
+    onError?: (error: Error, context: string) => void
+  } | null
+}))
+let roomCallbacksCapture: any = {}
+let screenShareState = false
+let onScreenShareStartCallback: ((stream: MediaStream) => void) | null = null
+let onScreenShareStopCallback: (() => void) | null = null
 
 vi.mock('../renderer/components/LobbyView', () => ({
   LobbyView: ({ onJoinRoom, onOpenSettings, onInputDeviceChange, onVideoDeviceChange, onOutputDeviceChange }: any) => (
@@ -82,7 +100,7 @@ vi.mock('../renderer/components/LobbyView', () => ({
 }))
 
 vi.mock('../renderer/components/RoomView', () => ({
-  RoomView: ({ onLeaveRoom, onToggleMute, onToggleVideo, onToggleSpeakerMute, onToggleSound, onCopyRoomId, onInputDeviceChange, onVideoDeviceChange, onSettingsChange, onToggleChat, onToggleScreenShare, isChatOpen, chatMessages, chatUnreadCount, connectionState, onRespondRemoteMicRequest, onRequestRemoteMic, onStopRemoteMic, onRemoteMicRoutingError, remoteMicSession }: any) => (
+  RoomView: ({ onLeaveRoom, onToggleMute, onToggleVideo, onToggleSpeakerMute, onToggleSound, onCopyRoomId, onInputDeviceChange, onVideoDeviceChange, onSettingsChange, onToggleChat, onToggleScreenShare, isChatOpen, chatMessages, chatUnreadCount, connectionState, onRespondRemoteMicRequest, onRequestRemoteMic, onStopRemoteMic, onRemoteMicRoutingError, remoteMicSession, localPlatform }: any) => (
     <div data-testid="room-view" data-connstate={connectionState}>
       <button data-testid="leave-room-btn" onClick={onLeaveRoom}>Leave</button>
       <button data-testid="toggle-mute-btn" onClick={onToggleMute}>Mute</button>
@@ -95,6 +113,8 @@ vi.mock('../renderer/components/RoomView', () => ({
       <button data-testid="room-input-btn" onClick={() => onInputDeviceChange('room-mic')}>RoomInput</button>
       <button data-testid="room-video-btn" onClick={() => onVideoDeviceChange('room-vid')}>RoomVideo</button>
       <button data-testid="room-ns-btn" onClick={() => onSettingsChange({ noiseSuppressionEnabled: false })}>NS</button>
+      <button data-testid="room-ptt-enable-btn" onClick={() => onSettingsChange({ pushToTalkEnabled: true })}>EnablePTT</button>
+      <button data-testid="room-ptt-empty-key-btn" onClick={() => onSettingsChange({ pushToTalkKey: '' })}>EmptyPTTKey</button>
       <button data-testid="remote-mic-accept-btn" onClick={() => onRespondRemoteMicRequest?.(true)}>AcceptRemoteMic</button>
       <button data-testid="remote-mic-reject-btn" onClick={() => onRespondRemoteMicRequest?.(false)}>RejectRemoteMic</button>
       <button data-testid="remote-mic-request-btn" onClick={() => onRequestRemoteMic?.('peer-1')}>RequestRemoteMic</button>
@@ -106,18 +126,20 @@ vi.mock('../renderer/components/RoomView', () => ({
       <div data-testid="chat-open-state">{String(isChatOpen)}</div>
       <div data-testid="chat-message-count">{String(chatMessages?.length ?? 0)}</div>
       <div data-testid="chat-unread-count">{String(chatUnreadCount ?? 0)}</div>
+      <div data-testid="local-platform">{localPlatform}</div>
     </div>
   )
 }))
 
 vi.mock('../renderer/components/SettingsPanel', () => ({
-  SettingsPanel: ({ onClose, onShowToast, onInstallRemoteMicDriver, onRecheckRemoteMicDevice, onOpenRemoteMicSetup }: any) => (
+  SettingsPanel: ({ onClose, onShowToast, onInstallRemoteMicDriver, onRecheckRemoteMicDevice, onOpenRemoteMicSetup, onExportDiagnostics }: any) => (
     <div data-testid="settings-panel">
       <button data-testid="close-settings-btn" onClick={onClose}>Close</button>
       <button data-testid="show-toast-btn" onClick={() => onShowToast('Test', 'success')}>Toast</button>
       <button data-testid="install-driver-btn" onClick={() => onInstallRemoteMicDriver?.()}>InstallDriver</button>
       <button data-testid="recheck-driver-btn" onClick={() => onRecheckRemoteMicDevice?.()}>RecheckDriver</button>
       <button data-testid="open-setup-doc-btn" onClick={() => onOpenRemoteMicSetup?.()}>OpenSetupDoc</button>
+      <button data-testid="export-diagnostics-btn" onClick={() => onExportDiagnostics?.()}>ExportDiagnostics</button>
     </div>
   )
 }))
@@ -152,7 +174,8 @@ vi.mock('../renderer/components/Toast', () => ({
 }))
 
 vi.mock('../renderer/hooks/useRoom', () => ({
-  useRoom: vi.fn().mockImplementation((_callbacks: any) => {
+  useRoom: vi.fn().mockImplementation((callbacks: any) => {
+    roomCallbacksCapture = callbacks
     return {
       roomId: null,
       peers: new Map(),
@@ -193,11 +216,15 @@ vi.mock('../renderer/hooks/useMediaStream', () => ({
 }))
 
 vi.mock('../renderer/hooks/useScreenShare', () => ({
-  useScreenShare: vi.fn().mockImplementation(() => ({
-    isScreenSharing: false,
-    startScreenShare: mocks.startScreenShare,
-    stopScreenShare: mocks.stopScreenShare,
-  }))
+  useScreenShare: vi.fn().mockImplementation((onStart: (stream: MediaStream) => void, onStop: () => void) => {
+    onScreenShareStartCallback = onStart
+    onScreenShareStopCallback = onStop
+    return {
+      isScreenSharing: screenShareState,
+      startScreenShare: mocks.startScreenShare,
+      stopScreenShare: mocks.stopScreenShare,
+    }
+  })
 }))
 
 vi.mock('../renderer/hooks/useI18n', () => ({
@@ -206,13 +233,30 @@ vi.mock('../renderer/hooks/useI18n', () => ({
 
 vi.mock('../renderer/signaling/SimplePeerManager', () => ({
   peerManager: {
-    setCallbacks: vi.fn(),
+    on: vi.fn(() => () => { }),
+    setCallbacks: vi.fn((callbacks: {
+      onRemoteStream?: (peerId: string, stream: MediaStream) => void
+      onError?: (error: Error, context: string) => void
+    }) => {
+      delegateEventBridgeState.callbacks = callbacks
+    }),
     setOnChatMessage: vi.fn((cb: ((msg: any) => void) | null) => {
       onChatMessageCallback = cb
     }),
     setOnRemoteMicControl: vi.fn((cb: ((peerId: string, msg: any) => void) | null) => {
       onRemoteMicControlCallback = cb
     }),
+    setOnModerationControl: vi.fn(),
+    getModerationState: vi.fn().mockReturnValue({
+      roomLocked: false,
+      roomLockOwnerPeerId: null,
+      localHandRaised: false,
+      raisedHands: []
+    }),
+    setRoomLocked: vi.fn().mockReturnValue(true),
+    requestMuteAll: vi.fn().mockReturnValue('req-mute-all'),
+    setHandRaised: vi.fn().mockReturnValue(true),
+    respondMuteAllRequest: vi.fn(),
     respondRemoteMicRequest: mocks.respondRemoteMicRequest,
     sendRemoteMicRequest: mocks.sendRemoteMicRequest,
     sendRemoteMicStop: mocks.sendRemoteMicStop,
@@ -271,6 +315,10 @@ describe('App - additional coverage gaps', () => {
     useMediaStreamReturnOverrides = {}
     onChatMessageCallback = null
     onRemoteMicControlCallback = null
+    roomCallbacksCapture = {}
+    screenShareState = false
+    onScreenShareStartCallback = null
+    onScreenShareStopCallback = null
 
     const mockStream = {
       getAudioTracks: () => [{ id: 'track-1', kind: 'audio', label: 'Test', enabled: true, muted: false }],
@@ -303,6 +351,26 @@ describe('App - additional coverage gaps', () => {
     mocks.startScreenShare.mockResolvedValue(true)
     mocks.stopScreenShare.mockReturnValue(undefined)
     mocks.openRemoteMicSetupDoc.mockResolvedValue(true)
+    mocks.getHealthSnapshot.mockResolvedValue({
+      timestamp: '2026-02-13T00:00:00.000Z',
+      uptimeSeconds: 120,
+      appVersion: '1.0.0',
+      platform: 'win32',
+      arch: 'x64',
+      nodeVersion: '20.20.0',
+      electronVersion: '40.2.1',
+      memoryUsage: {
+        rss: 1,
+        heapTotal: 1,
+        heapUsed: 1,
+        external: 1,
+        arrayBuffers: 1
+      },
+      windowVisible: true,
+      inCall: true,
+      muted: false
+    })
+    mocks.exportDiagnosticsBundle.mockResolvedValue({ ok: true, path: 'C:/logs/diag.json' })
 
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -341,12 +409,15 @@ describe('App - additional coverage gaps', () => {
         installVirtualAudioDriver: mocks.installVirtualAudioDriver,
         getVirtualAudioInstallerState: mocks.getVirtualAudioInstallerState,
         openRemoteMicSetupDoc: mocks.openRemoteMicSetupDoc,
+        exportDiagnosticsBundle: mocks.exportDiagnosticsBundle,
+        getHealthSnapshot: mocks.getHealthSnapshot,
       },
       writable: true, configurable: true
     })
   })
 
   afterEach(() => {
+    cleanup()
     vi.useRealTimers()
     vi.clearAllMocks()
     delete (window as any).electronAPI
@@ -376,30 +447,453 @@ describe('App - additional coverage gaps', () => {
     return toasts[toasts.length - 1]?.textContent || ''
   }
 
-  it('keyboard M key toggles mute in room view', async () => {
-    await goToRoom()
-    fireEvent.keyDown(window, { key: 'm' })
-    expect(mocks.toggleMute).toHaveBeenCalled()
-  })
-
-  it('keyboard Escape shows leave confirm in room view when connected', async () => {
-    useRoomReturnOverrides = { connectionState: 'connected', roomId: 'room-1' }
-    await goToRoom()
-    fireEvent.keyDown(window, { key: 'Escape' })
-    await waitFor(() => expect(screen.getByTestId('leave-confirm-dialog')).toBeInTheDocument())
-  })
-
-  it('keyboard Escape cancels search when connecting', async () => {
-    useRoomReturnOverrides = { connectionState: 'signaling' }
-    await goToRoom()
-    fireEvent.keyDown(window, { key: 'Escape' })
-    expect(mocks.leaveRoom).toHaveBeenCalled()
-  })
-
-  it('keyboard Ctrl+Shift+L downloads logs', async () => {
+  it('shows toast via SettingsPanel onShowToast', async () => {
+    const user = userEvent.setup()
     await renderApp()
-    fireEvent.keyDown(window, { key: 'l', ctrlKey: true, shiftKey: true })
-    expect(mocks.downloadLogs).toHaveBeenCalled()
+    await user.click(screen.getByTestId('settings-btn'))
+    await waitFor(() => expect(screen.getByTestId('settings-panel')).toBeInTheDocument())
+
+    await user.click(screen.getByTestId('show-toast-btn'))
+    await waitFor(() => expect(screen.getByTestId('toast-notification')).toBeInTheDocument())
+
+    await user.click(screen.getByTestId('dismiss-toast-btn'))
+    await waitFor(() => expect(screen.queryByTestId('toast-notification')).not.toBeInTheDocument())
+  })
+
+  it('triggers onPeerJoin callback with sound', async () => {
+    await renderApp()
+    expect(roomCallbacksCapture.onPeerJoin).toBeDefined()
+
+    act(() => { roomCallbacksCapture.onPeerJoin('peer-1', 'Bob') })
+    expect(mocks.playJoin).toHaveBeenCalled()
+  })
+
+  it('triggers onPeerLeave callback with sound', async () => {
+    await renderApp()
+    act(() => { roomCallbacksCapture.onPeerLeave('peer-1', 'Bob') })
+    expect(mocks.playLeave).toHaveBeenCalled()
+  })
+
+  it('triggers connected sound on state change', async () => {
+    await renderApp()
+    act(() => { roomCallbacksCapture.onConnectionStateChange('connected') })
+    expect(mocks.playConnected).toHaveBeenCalled()
+  })
+
+  it('triggers error sound on failed state change', async () => {
+    await renderApp()
+    act(() => { roomCallbacksCapture.onConnectionStateChange('failed') })
+    expect(mocks.playError).toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      label: 'join',
+      clear: () => mocks.playJoin.mockClear(),
+      trigger: () => roomCallbacksCapture.onPeerJoin('peer-2', 'Charlie'),
+      expectNotCalled: () => expect(mocks.playJoin).not.toHaveBeenCalled()
+    },
+    {
+      label: 'leave',
+      clear: () => mocks.playLeave.mockClear(),
+      trigger: () => roomCallbacksCapture.onPeerLeave('peer-2', 'Charlie'),
+      expectNotCalled: () => expect(mocks.playLeave).not.toHaveBeenCalled()
+    },
+    {
+      label: 'connection error',
+      clear: () => mocks.playError.mockClear(),
+      trigger: () => roomCallbacksCapture.onConnectionStateChange('failed'),
+      expectNotCalled: () => expect(mocks.playError).not.toHaveBeenCalled()
+    }
+  ])('does not play $label sound when sound is disabled', async ({ clear, trigger, expectNotCalled }) => {
+    const user = userEvent.setup()
+    await goToRoom()
+    await user.click(screen.getByTestId('toggle-sound-btn'))
+    clear()
+
+    act(() => { trigger() })
+    expectNotCalled()
+  })
+
+  it('handles video toggle in room', async () => {
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('toggle-video-btn'))
+
+    expect(mocks.toggleVideo).toHaveBeenCalled()
+    expect(peerManager.broadcastMuteStatus).toHaveBeenCalled()
+  })
+
+  it('handles speaker mute toggle in room', async () => {
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('toggle-speaker-btn'))
+
+    expect(mocks.playClick).toHaveBeenCalled()
+    expect(peerManager.broadcastMuteStatus).toHaveBeenCalled()
+  })
+
+  it('keeps screen sharing status when toggling mute, speaker, and video', async () => {
+    screenShareState = true
+    await goToRoom()
+    ; (peerManager.broadcastMuteStatus as any).mockClear()
+
+    fireEvent.click(screen.getByTestId('toggle-mute-btn'))
+    fireEvent.click(screen.getByTestId('toggle-speaker-btn'))
+    fireEvent.click(screen.getByTestId('toggle-video-btn'))
+
+    const calls = (peerManager.broadcastMuteStatus as any).mock.calls
+    expect(calls).toHaveLength(3)
+    expect(calls[0][2]).toBe(true)
+    expect(calls[0][3]).toBe(true)
+    expect(calls[1][2]).toBe(true)
+    expect(calls[1][3]).toBe(true)
+    expect(calls[2][2]).toBe(true)
+    expect(calls[2][3]).toBe(true)
+  })
+
+  it('handles copy room ID', async () => {
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('copy-id-btn'))
+  })
+
+  it('handles sound toggle', async () => {
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('toggle-sound-btn'))
+    expect(mocks.setEnabled).toHaveBeenCalled()
+  })
+
+  it('handles video device change from room', async () => {
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('room-video-btn'))
+    await waitFor(() => expect(mocks.switchVideoDevice).toHaveBeenCalledWith('room-vid'))
+  })
+
+  it('handles leave confirm flow', async () => {
+    const user = userEvent.setup()
+    await goToRoom()
+    await user.click(screen.getByTestId('leave-room-btn'))
+    await waitFor(() => expect(screen.getByTestId('leave-confirm-dialog')).toBeInTheDocument())
+
+    await user.click(screen.getByTestId('confirm-leave-btn'))
+    await waitFor(() => {
+      expect(mocks.leaveRoom).toHaveBeenCalled()
+      expect(mocks.stopCapture).toHaveBeenCalled()
+      expect(mocks.pipelineDisconnect).toHaveBeenCalled()
+      expect(screen.getByTestId('lobby-view')).toBeInTheDocument()
+    })
+  })
+
+  it('handles settings change from room (noise suppression)', async () => {
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('room-ns-btn'))
+    expect(mocks.pipelineSetNS).toHaveBeenCalledWith(false)
+  })
+
+  it('registers and calls remote stream callbacks', async () => {
+    await renderApp()
+    const remoteStreamCallback = delegateEventBridgeState.callbacks?.onRemoteStream
+    expect(remoteStreamCallback).toBeTypeOf('function')
+
+    const stream = {
+      id: 'rs1',
+      getTracks: () => [{ id: 'rt1', kind: 'audio' }],
+      getAudioTracks: () => [{ id: 'rt1', enabled: true, muted: false }]
+    } as unknown as MediaStream
+
+    act(() => { remoteStreamCallback?.('peer-r1', stream) })
+  })
+
+  it('handles remote stream with no audio tracks', async () => {
+    await renderApp()
+    const remoteStreamCallback = delegateEventBridgeState.callbacks?.onRemoteStream
+    expect(remoteStreamCallback).toBeTypeOf('function')
+    const stream = { id: 'rs2', getTracks: () => [], getAudioTracks: () => [] } as unknown as MediaStream
+    act(() => { remoteStreamCallback?.('peer-r2', stream) })
+  })
+
+  it('handles peer manager error callback with toast', async () => {
+    await renderApp()
+    const errorCallback = delegateEventBridgeState.callbacks?.onError
+    expect(errorCallback).toBeTypeOf('function')
+    act(() => { errorCallback?.(new Error('conn error'), 'peer') })
+    await waitFor(() => expect(screen.getByTestId('toast-notification')).toBeInTheDocument())
+  })
+
+  it('handles join room failure', async () => {
+    const user = userEvent.setup()
+    mocks.joinRoom.mockRejectedValue(new Error('Join failed'))
+    await renderApp()
+
+    await user.click(screen.getByTestId('join-room-btn'))
+    await waitFor(() => {
+      expect(screen.getByTestId('error-banner')).toBeInTheDocument()
+      expect(screen.getByTestId('lobby-view')).toBeInTheDocument()
+    })
+  })
+
+  it('handles pipeline failure and falls back to raw stream', async () => {
+    const user = userEvent.setup()
+    mocks.pipelineConnectInput.mockRejectedValue(new Error('Pipeline failed'))
+    await renderApp()
+
+    await user.click(screen.getByTestId('join-room-btn'))
+    await waitFor(() => {
+      expect(peerManager.setLocalStream).toHaveBeenCalled()
+      expect(mocks.joinRoom).toHaveBeenCalled()
+    })
+  })
+
+  it('handles switchVideoDevice returning null', async () => {
+    mocks.switchVideoDevice.mockResolvedValue(null)
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('room-video-btn'))
+  })
+
+  it('handles switchInputDevice returning null', async () => {
+    mocks.switchInputDevice.mockResolvedValue(null)
+    await renderApp()
+    fireEvent.click(screen.getByTestId('change-input-btn'))
+    await waitFor(() => expect(mocks.switchInputDevice).toHaveBeenCalledWith('new-device-id'))
+  })
+
+  it('handles pipeline failure during input device switch', async () => {
+    const fallbackStream = {
+      getAudioTracks: () => [{ id: 'fb-track', kind: 'audio', label: 'FB', enabled: true }],
+      getVideoTracks: () => [],
+      getTracks: () => [{ id: 'fb-track', kind: 'audio' }],
+      id: 'fb-stream'
+    } as unknown as MediaStream
+    mocks.switchInputDevice.mockResolvedValue(fallbackStream)
+    mocks.pipelineConnectInput.mockRejectedValue(new Error('Pipeline reconnect failed'))
+
+    await renderApp()
+    fireEvent.click(screen.getByTestId('change-input-btn'))
+
+    await waitFor(() => {
+      expect(peerManager.replaceTrack).toHaveBeenCalled()
+      expect(peerManager.setLocalStream).toHaveBeenCalled()
+    })
+  })
+
+  it('joins room with camera enabled', async () => {
+    const user = userEvent.setup()
+    await renderApp()
+    await user.click(screen.getByTestId('join-cam-btn'))
+
+    await waitFor(() => {
+      expect(mocks.startCapture).toHaveBeenCalledWith(expect.objectContaining({ videoEnabled: true }))
+      expect(mocks.joinRoom).toHaveBeenCalledWith('test-room-123', 'Alice')
+    })
+  })
+
+  it('handles startCapture returning null', async () => {
+    const user = userEvent.setup()
+    mocks.startCapture.mockResolvedValue(null)
+    await renderApp()
+
+    await user.click(screen.getByTestId('join-room-btn'))
+    await waitFor(() => expect(mocks.joinRoom).toHaveBeenCalled())
+  })
+
+  it('covers remote mic helper utility branches', () => {
+    expect(normalizeRemoteMicStopReason('busy')).toBe('busy')
+    expect(normalizeRemoteMicStopReason('not-a-valid-reason')).toBe('stopped-by-source')
+    expect(normalizeRemoteMicStopReason(123)).toBe('stopped-by-source')
+
+    const macDevices = [{ kind: 'audiooutput', label: 'BlackHole 2ch' }] as MediaDeviceInfo[]
+    const winDevices = [{ kind: 'audiooutput', label: 'CABLE Input (VB-Audio Virtual Cable)' }] as MediaDeviceInfo[]
+    const otherDevices = [{ kind: 'audiooutput', label: 'Built-in Output' }] as MediaDeviceInfo[]
+    expect(isVirtualMicOutputReady('mac', macDevices)).toBe(true)
+    expect(isVirtualMicOutputReady('mac', otherDevices)).toBe(false)
+    expect(isVirtualMicOutputReady('win', winDevices)).toBe(true)
+    expect(isVirtualMicOutputReady('linux', otherDevices)).toBe(false)
+
+    expect(getVirtualAudioProviderForPlatform('win')).toBe('vb-cable')
+    expect(getVirtualAudioProviderForPlatform('mac')).toBe('blackhole')
+    expect(getVirtualAudioProviderForPlatform('linux')).toBeNull()
+
+    expect(getVirtualAudioDeviceName('win')).toBe('VB-CABLE')
+    expect(getVirtualAudioDeviceName('mac')).toBe('BlackHole 2ch')
+    expect(getVirtualAudioDeviceName('linux')).toBe('Virtual Audio Device')
+  })
+
+  it('handles remote mic request busy and request-id failure branches', async () => {
+    useRoomReturnOverrides = {
+      roomId: 'room-1',
+      connectionState: 'connected',
+      peers: new Map([['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected' }]])
+    }
+    await goToRoom()
+
+    act(() => {
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_request',
+        requestId: 'req-busy',
+        sourcePeerId: 'peer-1',
+        sourceName: 'Bob',
+        targetPeerId: 'local-peer-123',
+        ts: Date.now()
+      })
+    })
+    await waitFor(() => expect(screen.getByTestId('remote-mic-state')).toHaveTextContent('pendingIncoming'))
+
+    fireEvent.click(screen.getByTestId('remote-mic-request-btn'))
+    await waitFor(() => expect(getLatestToastText()).toContain('remoteMic.busy'))
+
+    fireEvent.click(screen.getByTestId('remote-mic-reject-btn'))
+    await waitFor(() => expect(screen.getByTestId('remote-mic-state')).toHaveTextContent('idle'))
+
+    mocks.sendRemoteMicRequest.mockReturnValueOnce(null)
+    fireEvent.click(screen.getByTestId('remote-mic-request-btn'))
+    await waitFor(() => expect(getLatestToastText()).toContain('remoteMic.requestFailed'))
+  })
+
+  it('ignores mismatched remote mic control message branches', async () => {
+    useRoomReturnOverrides = {
+      roomId: 'room-1',
+      connectionState: 'connected',
+      peers: new Map([['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected' }]])
+    }
+    await goToRoom()
+
+    act(() => {
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_response',
+        requestId: 'unknown-request',
+        accepted: true,
+        ts: Date.now()
+      })
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_heartbeat',
+        requestId: 'unknown-request',
+        ts: Date.now()
+      })
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_start',
+        requestId: 'unknown-request',
+        ts: Date.now()
+      })
+    })
+    expect(screen.getByTestId('remote-mic-state')).toHaveTextContent('idle')
+
+    act(() => {
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_request',
+        requestId: 'req-stop-mismatch',
+        sourcePeerId: 'peer-1',
+        sourceName: 'Bob',
+        targetPeerId: 'local-peer-123',
+        ts: Date.now()
+      })
+    })
+    await waitFor(() => expect(screen.getByTestId('remote-mic-state')).toHaveTextContent('pendingIncoming'))
+
+    act(() => {
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_stop',
+        requestId: 'different-request-id',
+        reason: 'stopped-by-source',
+        ts: Date.now()
+      })
+    })
+    expect(screen.getByTestId('remote-mic-state')).toHaveTextContent('pendingIncoming')
+  })
+
+  it('replaces pending timers for outgoing and incoming request flows', async () => {
+    useRoomReturnOverrides = {
+      roomId: 'room-1',
+      connectionState: 'connected',
+      peers: new Map([['peer-1', { id: 'peer-1', name: 'Bob', isMuted: false, audioLevel: 0, connectionState: 'connected' }]])
+    }
+
+    await renderApp()
+    fireEvent.click(screen.getByTestId('join-room-btn'))
+    await waitFor(() => expect(screen.getByTestId('room-view')).toBeInTheDocument())
+
+    act(() => {
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_request',
+        requestId: 'req-timeout',
+        sourcePeerId: 'peer-1',
+        sourceName: 'Bob',
+        targetPeerId: 'local-peer-123',
+        ts: Date.now()
+      })
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_request',
+        requestId: 'req-timeout',
+        sourcePeerId: 'peer-1',
+        sourceName: 'Bob',
+        targetPeerId: 'local-peer-123',
+        ts: Date.now()
+      })
+    })
+    await waitFor(() => expect(screen.getByTestId('remote-mic-state')).toHaveTextContent('pendingIncoming'))
+
+    act(() => {
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_start',
+        requestId: 'req-timeout',
+        ts: Date.now()
+      })
+      onRemoteMicControlCallback?.('peer-1', {
+        type: 'rm_start',
+        requestId: 'req-timeout',
+        ts: Date.now()
+      })
+    })
+    await waitFor(() => expect(screen.getByTestId('remote-mic-state')).toHaveTextContent('active'))
+  })
+
+  it('returns early when remote mic callback registration API is unavailable', async () => {
+    const original = (peerManager as any).setOnRemoteMicControl
+    ; (peerManager as any).setOnRemoteMicControl = undefined
+    try {
+      await goToRoom()
+      expect(screen.getByTestId('room-view')).toBeInTheDocument()
+    } finally {
+      ; (peerManager as any).setOnRemoteMicControl = original
+    }
+  })
+
+  it.each([
+    {
+      label: 'M toggles mute in room view',
+      setup: async () => { await goToRoom() },
+      event: { key: 'm' },
+      assert: async () => { expect(mocks.toggleMute).toHaveBeenCalled() }
+    },
+    {
+      label: 'Ctrl+Shift+L downloads logs',
+      setup: async () => { await renderApp() },
+      event: { key: 'l', ctrlKey: true, shiftKey: true },
+      assert: async () => { expect(mocks.downloadLogs).toHaveBeenCalled() }
+    }
+  ])('keyboard shortcut: $label', async ({ setup, event, assert }) => {
+    await setup()
+    fireEvent.keyDown(window, event)
+    await assert()
+  })
+
+  it.each([
+    {
+      label: 'shows leave confirm when connected',
+      roomOverride: { connectionState: 'connected', roomId: 'room-1' },
+      assert: async () => {
+        await waitFor(() => expect(screen.getByTestId('leave-confirm-dialog')).toBeInTheDocument())
+      }
+    },
+    {
+      label: 'cancels search when signaling',
+      roomOverride: { connectionState: 'signaling' },
+      assert: async () => {
+        expect(mocks.leaveRoom).toHaveBeenCalled()
+      }
+    }
+  ])('keyboard Escape: $label', async ({ roomOverride, assert }) => {
+    useRoomReturnOverrides = roomOverride
+    await goToRoom()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await assert()
   })
 
   it('keyboard shortcuts ignored in input elements', async () => {
@@ -412,18 +906,22 @@ describe('App - additional coverage gaps', () => {
     document.body.removeChild(input)
   })
 
-  it('electronAPI onDownloadLogs callback triggers download', async () => {
+  it.each([
+    {
+      label: 'onDownloadLogs triggers download',
+      callbackName: 'onDownloadLogs',
+      assert: () => expect(mocks.downloadLogs).toHaveBeenCalled()
+    },
+    {
+      label: 'onTrayToggleMute toggles mute',
+      callbackName: 'onTrayToggleMute',
+      assert: () => expect(mocks.toggleMute).toHaveBeenCalled()
+    }
+  ])('electronAPI callback: $label', async ({ callbackName, assert }) => {
     await renderApp()
-    expect(electronCallbacks.onDownloadLogs).toBeDefined()
-    act(() => { electronCallbacks.onDownloadLogs() })
-    expect(mocks.downloadLogs).toHaveBeenCalled()
-  })
-
-  it('electronAPI onTrayToggleMute callback toggles mute', async () => {
-    await renderApp()
-    expect(electronCallbacks.onTrayToggleMute).toBeDefined()
-    act(() => { electronCallbacks.onTrayToggleMute() })
-    expect(mocks.toggleMute).toHaveBeenCalled()
+    expect((electronCallbacks as any)[callbackName]).toBeDefined()
+    act(() => { (electronCallbacks as any)[callbackName]() })
+    assert()
   })
 
   it('electronAPI onTrayLeaveCall callback shows leave confirm', async () => {
@@ -507,21 +1005,31 @@ describe('App - additional coverage gaps', () => {
     expect(peerManager.replaceTrack).not.toHaveBeenCalled()
   })
 
-  it('mac platform detection', async () => {
+  it.each([
+    {
+      label: 'mac user agent',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
+      expectedPlatform: 'mac'
+    },
+    {
+      label: 'linux user agent',
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
+      expectedPlatform: 'linux'
+    },
+    {
+      label: 'unknown user agent defaults to win',
+      userAgent: 'CustomAgent/1.0',
+      expectedPlatform: 'win'
+    }
+  ])('derives local platform for $label', async ({ userAgent, expectedPlatform }) => {
     Object.defineProperty(navigator, 'userAgent', {
-      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
-      writable: true, configurable: true
+      value: userAgent,
+      writable: true,
+      configurable: true
     })
-    await renderApp()
-    // The localPlatform should be 'mac' - can verify through RoomView props
-  })
 
-  it('linux platform detection', async () => {
-    Object.defineProperty(navigator, 'userAgent', {
-      value: 'Mozilla/5.0 (X11; Linux x86_64)',
-      writable: true, configurable: true
-    })
-    await renderApp()
+    await goToRoom()
+    expect(screen.getByTestId('local-platform')).toHaveTextContent(expectedPlatform)
   })
 
   it('no electronAPI does not crash', async () => {
@@ -902,6 +1410,7 @@ describe('App - additional coverage gaps', () => {
     ]
 
     for (const installCase of installCases) {
+      mocks.respondRemoteMicRequest.mockClear()
       mocks.getVirtualAudioInstallerState.mockResolvedValue(
         installCase.installerState || { inProgress: false, platformSupported: true, bundleReady: true }
       )
@@ -924,6 +1433,7 @@ describe('App - additional coverage gaps', () => {
         writable: true,
         configurable: true
       })
+      const toastCountBefore = screen.queryAllByTestId('toast-notification').length
 
       act(() => {
         onRemoteMicControlCallback?.('peer-1', {
@@ -935,15 +1445,15 @@ describe('App - additional coverage gaps', () => {
           ts: Date.now()
         })
       })
-      await waitFor(() => expect(screen.getByTestId('remote-mic-state')).toHaveTextContent('pendingIncoming'))
+      await waitFor(() => expect(screen.queryAllByTestId('toast-notification').length).toBeGreaterThan(toastCountBefore))
       fireEvent.click(screen.getByTestId('remote-mic-accept-btn'))
 
-      await waitFor(() => expect(mocks.respondRemoteMicRequest).toHaveBeenCalledWith(
+      await waitFor(() => expect(mocks.respondRemoteMicRequest).toHaveBeenLastCalledWith(
         installCase.requestId,
         installCase.expectedReason === 'accepted',
         installCase.expectedReason
       ))
-      expect(getLatestToastText()).toContain(installCase.expectedToast)
+      await waitFor(() => expect(getLatestToastText()).toContain(installCase.expectedToast))
     }
   })
 
@@ -1139,6 +1649,18 @@ describe('App - additional coverage gaps', () => {
     await waitFor(() => expect(getLatestToastText()).toContain('remoteMic.notReady'))
   })
 
+  it('exports diagnostics bundle from settings panel', async () => {
+    await goToSettings()
+
+    fireEvent.click(screen.getByTestId('export-diagnostics-btn'))
+
+    await waitFor(() => {
+      expect(mocks.getHealthSnapshot).toHaveBeenCalled()
+      expect(mocks.exportDiagnosticsBundle).toHaveBeenCalled()
+      expect(getLatestToastText()).toContain('settings.exportDiagnosticsSuccess')
+    })
+  })
+
   it('rejects manual install action on unsupported platforms', async () => {
     Object.defineProperty(navigator, 'userAgent', {
       value: 'Mozilla/5.0 (X11; Linux x86_64)',
@@ -1171,6 +1693,19 @@ describe('App - additional coverage gaps', () => {
 
     expect(mocks.toggleVideo).toHaveBeenCalled()
     expect(mocks.startScreenShare).toHaveBeenCalled()
+  })
+
+  it('supports push-to-talk key down/up flow while muted', async () => {
+    useMediaStreamReturnOverrides = {
+      isMuted: true
+    }
+    await goToRoom()
+
+    fireEvent.click(screen.getByTestId('room-ptt-enable-btn'))
+    fireEvent.keyDown(window, { key: ' ', code: 'Space' })
+    fireEvent.keyUp(window, { key: ' ', code: 'Space' })
+
+    await waitFor(() => expect(mocks.toggleMute).toHaveBeenCalledTimes(2))
   })
 
   it('supports macOS install-and-accept flow with BlackHole detection', async () => {
@@ -1267,5 +1802,106 @@ describe('App - additional coverage gaps', () => {
     fireEvent.click(screen.getByTestId('remote-mic-stop-btn'))
     expect(mocks.sendRemoteMicStop).toHaveBeenCalledWith('peer-1', 'req-target-stop', 'stopped-by-source')
     expect(mocks.stopRemoteMicSession).toHaveBeenCalledWith('stopped-by-source')
+  })
+
+  it('does not play click sounds for mute/speaker toggles when sound is disabled', async () => {
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('toggle-sound-btn'))
+    mocks.playClick.mockClear()
+
+    fireEvent.click(screen.getByTestId('toggle-mute-btn'))
+    fireEvent.click(screen.getByTestId('toggle-speaker-btn'))
+
+    expect(mocks.playClick).not.toHaveBeenCalled()
+  })
+
+  it('stops screen share immediately when toggled while already sharing', async () => {
+    screenShareState = true
+    await goToRoom()
+
+    fireEvent.click(screen.getByTestId('toggle-screen-share-btn'))
+    expect(mocks.stopScreenShare).toHaveBeenCalled()
+  })
+
+  it('handles screen share callbacks when video tracks are missing', async () => {
+    await goToRoom()
+
+    const videoTrack = { id: 'screen-track', kind: 'video', enabled: true } as unknown as MediaStreamTrack
+    const withVideo = { getVideoTracks: () => [videoTrack] } as unknown as MediaStream
+    const withoutVideo = { getVideoTracks: () => [] } as unknown as MediaStream
+
+    act(() => onScreenShareStartCallback?.(withoutVideo))
+    expect(peerManager.replaceTrack).not.toHaveBeenCalled()
+
+    act(() => onScreenShareStartCallback?.(withVideo))
+    expect(peerManager.replaceTrack).toHaveBeenCalledWith(videoTrack)
+  })
+
+  it('runs screen share stop callback for missing local stream and missing camera track', async () => {
+    useMediaStreamReturnOverrides = { localStream: null }
+    await goToRoom()
+
+    act(() => onScreenShareStopCallback?.())
+    expect(peerManager.broadcastMuteStatus).toHaveBeenCalled()
+
+    cleanup()
+    useMediaStreamReturnOverrides = {
+      localStream: { getVideoTracks: () => [] }
+    }
+    await goToRoom()
+    ; (peerManager.replaceTrack as any).mockClear()
+    act(() => onScreenShareStopCallback?.())
+    expect(peerManager.replaceTrack).not.toHaveBeenCalled()
+  })
+
+  it('falls back to translated connection error when join failure has no message', async () => {
+    mocks.startCapture.mockRejectedValueOnce({})
+    const user = userEvent.setup()
+    await renderApp()
+
+    await user.click(screen.getByTestId('join-room-btn'))
+    await waitFor(() => expect(screen.getByTestId('error-banner')).toHaveTextContent('errors.connectionFailed'))
+  })
+
+  it('handles input and video device switches when replacement tracks are missing', async () => {
+    useMediaStreamReturnOverrides = {
+      switchInputDevice: vi.fn().mockResolvedValue({
+        getAudioTracks: () => []
+      }),
+      switchVideoDevice: vi.fn().mockResolvedValue({
+        getVideoTracks: () => []
+      })
+    }
+    mocks.pipelineConnectInput.mockRejectedValueOnce(new Error('pipeline fail'))
+    await goToRoom()
+    ; (peerManager.replaceTrack as any).mockClear()
+
+    fireEvent.click(screen.getByTestId('room-input-btn'))
+    fireEvent.click(screen.getByTestId('room-video-btn'))
+
+    await waitFor(() => expect(peerManager.replaceTrack).not.toHaveBeenCalled())
+  })
+
+  it('uses fallback push-to-talk key and disables diagnostics export when flag is off', async () => {
+    const originalDiagnosticsFlag = featureFlags.diagnostics_panel
+    const originalPttFlag = featureFlags.push_to_talk
+    ; (featureFlags as any).diagnostics_panel = false
+    ; (featureFlags as any).push_to_talk = true
+    useMediaStreamReturnOverrides = { isMuted: true }
+
+    await goToRoom()
+    fireEvent.click(screen.getByTestId('room-ptt-enable-btn'))
+    fireEvent.click(screen.getByTestId('room-ptt-empty-key-btn'))
+    fireEvent.keyDown(window, { key: ' ', code: 'Space' })
+    fireEvent.keyUp(window, { key: ' ', code: 'Space' })
+    expect(mocks.toggleMute).toHaveBeenCalled()
+
+    cleanup()
+    await goToSettings()
+    fireEvent.click(screen.getByTestId('export-diagnostics-btn'))
+    expect(mocks.exportDiagnosticsBundle).not.toHaveBeenCalled()
+
+    ; (featureFlags as any).diagnostics_panel = originalDiagnosticsFlag
+    ; (featureFlags as any).push_to_talk = originalPttFlag
   })
 })

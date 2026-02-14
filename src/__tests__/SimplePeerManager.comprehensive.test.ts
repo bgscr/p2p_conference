@@ -8,10 +8,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   SimplePeerManager,
-  generatePeerId,
   selfId,
   MultiBrokerMQTT,
-  MQTTClient,
   resetCredentialsCacheForTesting
 } from '../renderer/signaling/SimplePeerManager'
 
@@ -801,144 +799,6 @@ describe('SimplePeerManager - Connection Stats', () => {
       expect(peerStats.quality).toBe('fair')
       expect(peerStats.rtt).toBe(0)
     }
-  })
-})
-
-describe('MQTTClient - Protocol Tests', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-    vi.clearAllMocks()
-    mockWebSockets = []
-  })
-
-  afterEach(() => {
-    vi.runOnlyPendingTimers()
-    vi.useRealTimers()
-  })
-
-  it('should connect with username and password', async () => {
-    const client = new MQTTClient('wss://test/mqtt', 'testuser', 'testpass')
-
-    const connectPromise = client.connect()
-    await vi.advanceTimersByTimeAsync(100)
-    await connectPromise
-
-    expect(client.isConnected()).toBe(true)
-
-    // Verify CONNECT packet was sent with credentials
-    const ws = mockWebSockets[mockWebSockets.length - 1]
-    expect(ws.send).toHaveBeenCalled()
-
-    client.disconnect()
-  })
-
-  it('should report not connected before connect', () => {
-    const client = new MQTTClient('wss://test/mqtt')
-    expect(client.isConnected()).toBe(false)
-  })
-
-  it('should return broker URL', () => {
-    const client = new MQTTClient('wss://test/mqtt')
-    expect(client.getBrokerUrl()).toBe('wss://test/mqtt')
-  })
-
-  it('should report not connected initially', () => {
-    const client = new MQTTClient('wss://test/mqtt')
-    expect(client.isConnected()).toBe(false)
-  })
-
-  it('should set disconnect callback', () => {
-    const client = new MQTTClient('wss://test/mqtt')
-    const callback = vi.fn()
-
-    // Should not throw
-    expect(() => client.setOnDisconnect(callback)).not.toThrow()
-  })
-})
-
-describe('MultiBrokerMQTT', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-    vi.clearAllMocks()
-    mockWebSockets = []
-    resetCredentialsCacheForTesting()
-
-    Object.defineProperty(window, 'electronAPI', {
-      value: {
-        getICEServers: vi.fn().mockResolvedValue([]),
-        getMQTTBrokers: vi.fn().mockResolvedValue([
-          { url: 'wss://broker1/mqtt' },
-          { url: 'wss://broker2/mqtt' }
-        ])
-      },
-      writable: true,
-      configurable: true
-    })
-  })
-
-  afterEach(() => {
-    vi.runOnlyPendingTimers()
-    vi.useRealTimers()
-    delete window.electronAPI
-  })
-
-  it('should create instance', () => {
-    const multi = new MultiBrokerMQTT()
-    expect(multi).toBeDefined()
-    expect(typeof multi.connectAll).toBe('function')
-    expect(typeof multi.disconnect).toBe('function')
-    expect(typeof multi.publish).toBe('function')
-    multi.disconnect()
-  })
-
-  it('should report not connected initially', () => {
-    const multi = new MultiBrokerMQTT()
-    expect(multi.isConnected()).toBe(false)
-    multi.disconnect()
-  })
-
-  it('should return empty status before connecting', () => {
-    const multi = new MultiBrokerMQTT()
-    const status = multi.getConnectionStatus()
-    expect(Array.isArray(status)).toBe(true)
-    multi.disconnect()
-  })
-
-  it('should return zero deduplicator size initially', () => {
-    const multi = new MultiBrokerMQTT()
-    expect(multi.getDeduplicatorSize()).toBe(0)
-    multi.disconnect()
-  })
-
-  it('should have subscribe and publish methods', () => {
-    const multi = new MultiBrokerMQTT()
-    expect(typeof multi.subscribeAll).toBe('function')
-    expect(typeof multi.publish).toBe('function')
-    multi.disconnect()
-  })
-})
-
-describe('generatePeerId', () => {
-  it('should generate IDs with only alphanumeric characters', () => {
-    for (let i = 0; i < 50; i++) {
-      const id = generatePeerId()
-      expect(/^[A-Za-z0-9]+$/.test(id)).toBe(true)
-    }
-  })
-
-  it('should generate exactly 16 characters', () => {
-    for (let i = 0; i < 50; i++) {
-      expect(generatePeerId()).toHaveLength(16)
-    }
-  })
-
-  it('should have high uniqueness', () => {
-    const ids = new Set<string>()
-    for (let i = 0; i < 1000; i++) {
-      ids.add(generatePeerId())
-    }
-    // All 1000 should be unique (collision is astronomically unlikely)
-    expect(ids.size).toBe(1000)
   })
 })
 

@@ -7,6 +7,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { MediaLog } from '../utils/Logger'
 import type { AudioDevice, AudioProcessingConfig, VirtualMicDeviceStatus } from '@/types'
 
+type MediaCaptureConfig = Partial<AudioProcessingConfig> & {
+  videoEnabled?: boolean
+}
+
 interface UseMediaStreamResult {
   localStream: MediaStream | null
   inputDevices: AudioDevice[]
@@ -22,7 +26,7 @@ interface UseMediaStreamResult {
   isLoading: boolean
   error: string | null
 
-  startCapture: (config?: Partial<AudioProcessingConfig>) => Promise<MediaStream | null>
+  startCapture: (config?: MediaCaptureConfig) => Promise<MediaStream | null>
   stopCapture: () => void
   switchInputDevice: (deviceId: string) => Promise<MediaStream | null>
   switchVideoDevice: (deviceId: string) => Promise<MediaStream | null>
@@ -83,6 +87,7 @@ export function useMediaStream(): UseMediaStreamResult {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
+  const muteIntentRef = useRef(false)
 
   const updateVirtualMicDeviceStatus = useCallback((outputs: AudioDevice[]) => {
     const supported = platform === 'win' || platform === 'mac'
@@ -232,7 +237,7 @@ export function useMediaStream(): UseMediaStreamResult {
    * Start audio/video capture
    * video: boolean - if true, capture video as well (default: true if available)
    */
-  const startCapture = useCallback(async (config?: Partial<AudioProcessingConfig>): Promise<MediaStream | null> => {
+  const startCapture = useCallback(async (config?: MediaCaptureConfig): Promise<MediaStream | null> => {
     setIsLoading(true)
     setError(null)
 
@@ -270,6 +275,11 @@ export function useMediaStream(): UseMediaStreamResult {
         )
       ])
 
+      const audioTrack = stream.getAudioTracks()[0]
+      if (audioTrack) {
+        audioTrack.enabled = !muteIntentRef.current
+      }
+
       MediaLog.debug('getUserMedia returned successfully', { streamId: stream.id })
       setLocalStream(stream)
 
@@ -280,12 +290,11 @@ export function useMediaStream(): UseMediaStreamResult {
       setupAudioLevelMonitoring(stream)
 
       // Initialize states based on stream tracks
-      const audioTrack = stream.getAudioTracks()[0]
-      if (audioTrack) setIsMuted(!audioTrack.enabled)
+      setIsMuted(muteIntentRef.current)
 
       // Handle video enabled state - check if videoEnabled option was passed
       const videoTrack = stream.getVideoTracks()[0]
-      const shouldEnableVideo = (config as any)?.videoEnabled ?? false  // Default: camera OFF
+      const shouldEnableVideo = config?.videoEnabled ?? false  // Default: camera OFF
       if (videoTrack) {
         videoTrack.enabled = shouldEnableVideo
         setIsVideoEnabled(shouldEnableVideo)
@@ -402,15 +411,18 @@ export function useMediaStream(): UseMediaStreamResult {
         newStream.addTrack(videoTrack)
       }
 
+      const nextAudioTrack = newStream.getAudioTracks()[0]
+      if (nextAudioTrack) {
+        nextAudioTrack.enabled = !muteIntentRef.current
+      }
+
       // Reset cleanup flag since this is an intentional switch, not a stop
       cleanupDoneRef.current = false
 
       // Update stream
       setLocalStream(newStream)
       setSelectedInputDevice(deviceId)
-
-      // Reset mute state since new track starts unmuted
-      setIsMuted(false)
+      setIsMuted(muteIntentRef.current)
 
       // Re-setup audio monitoring
       setupAudioLevelMonitoring(newStream)
@@ -503,14 +515,16 @@ export function useMediaStream(): UseMediaStreamResult {
    * Toggle mute state
    */
   const toggleMute = useCallback(() => {
-    if (localStreamRef.current) {
-      const audioTrack = localStreamRef.current.getAudioTracks()[0]
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled
-        setIsMuted(!audioTrack.enabled)
-        MediaLog.info('Mute toggled', { muted: !audioTrack.enabled })
-      }
+    const nextMuted = !muteIntentRef.current
+    muteIntentRef.current = nextMuted
+
+    const audioTrack = localStreamRef.current?.getAudioTracks()[0]
+    if (audioTrack) {
+      audioTrack.enabled = !nextMuted
     }
+
+    setIsMuted(nextMuted)
+    MediaLog.info('Mute toggled', { muted: nextMuted })
   }, [])
 
   /**

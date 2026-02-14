@@ -70,6 +70,8 @@ export interface AppSettings {
   selectedInputDevice: string | null
   selectedVideoDevice: string | null
   selectedOutputDevice: string | null
+  pushToTalkEnabled?: boolean
+  pushToTalkKey?: 'space' | 'shift' | 'capslock'
 }
 
 /**
@@ -95,6 +97,7 @@ export interface AudioProcessingConfig {
   echoCancellation: boolean
   noiseSuppression: boolean
   autoGainControl: boolean
+  videoEnabled?: boolean
 }
 
 /**
@@ -228,6 +231,61 @@ export interface RemoteMicSession {
   needsVirtualDeviceSetup?: boolean
   isInstallingVirtualDevice?: boolean
   installError?: string
+}
+
+/**
+ * Moderation control messaging
+ */
+export interface RoomLockControlMessage {
+  type: 'mod_room_lock'
+  locked: boolean
+  lockedByPeerId: string
+  ts: number
+}
+
+export interface RoomLockedNoticeMessage {
+  type: 'mod_room_locked_notice'
+  lockedByPeerId: string
+  ts: number
+}
+
+export interface MuteAllRequestMessage {
+  type: 'mod_mute_all_request'
+  requestId: string
+  requestedByPeerId: string
+  requestedByName: string
+  ts: number
+}
+
+export interface MuteAllResponseMessage {
+  type: 'mod_mute_all_response'
+  requestId: string
+  accepted: boolean
+  ts: number
+}
+
+export interface HandRaiseControlMessage {
+  type: 'mod_hand_raise'
+  peerId: string
+  raised: boolean
+  ts: number
+}
+
+export type ModerationControlMessage =
+  | RoomLockControlMessage
+  | RoomLockedNoticeMessage
+  | MuteAllRequestMessage
+  | MuteAllResponseMessage
+  | HandRaiseControlMessage
+
+export interface ModerationState {
+  roomLocked: boolean
+  roomLockOwnerPeerId: string | null
+  localHandRaised: boolean
+  raisedHands: Array<{
+    peerId: string
+    raisedAt: number
+  }>
 }
 
 export interface VirtualMicDeviceStatus {

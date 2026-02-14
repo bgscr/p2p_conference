@@ -13,7 +13,12 @@ vi.mock('fs', () => {
   const mocks = {
     existsSync: vi.fn().mockReturnValue(false),
     mkdirSync: vi.fn(),
-    appendFileSync: vi.fn(),
+    appendFile: vi.fn((...args: any[]) => {
+      const callback = args.at(-1)
+      if (typeof callback === 'function') {
+        callback(null)
+      }
+    }),
     readdirSync: vi.fn().mockReturnValue([]),
     unlinkSync: vi.fn(),
     statSync: vi.fn(),
@@ -24,7 +29,7 @@ vi.mock('fs', () => {
 // ── Imports (after mocks) ──────────────────────────────────────────
 
 import { app } from 'electron'
-import { existsSync, mkdirSync, appendFileSync, readdirSync, unlinkSync, statSync } from 'fs'
+import { existsSync, mkdirSync, appendFile, readdirSync, unlinkSync, statSync } from 'fs'
 import { fileLogger, MainLog, TrayLog, IPCLog } from '../logger'
 import type { LogLevel } from '../logger'
 
@@ -36,6 +41,8 @@ function resetLogger() {
   ;(fileLogger as any).initPromise = null
   ;(fileLogger as any).logsDir = ''
   ;(fileLogger as any).currentLogFile = ''
+  ;(fileLogger as any).writeQueue = []
+  ;(fileLogger as any).isWriting = false
   ;(fileLogger as any).config = {
     maxAgeDays: 7,
     maxSizeMB: 10,
@@ -57,6 +64,12 @@ describe('FileLogger', () => {
     process.env.NODE_ENV = 'development'
     vi.mocked(existsSync).mockReturnValue(false)
     vi.mocked(readdirSync).mockReturnValue([])
+    vi.mocked(appendFile).mockImplementation((...args: any[]) => {
+      const callback = args.at(-1)
+      if (typeof callback === 'function') {
+        callback(null)
+      }
+    })
   })
 
   afterEach(() => {
@@ -110,7 +123,7 @@ describe('FileLogger', () => {
   })
 
   // ────────────────────────────────────────────────────────────────
-  // _doInit – path resolution
+  // _doInit �?path resolution
   // ────────────────────────────────────────────────────────────────
 
   describe('_doInit path resolution', () => {
@@ -294,10 +307,10 @@ describe('FileLogger', () => {
   })
 
   // ────────────────────────────────────────────────────────────────
-  // writeLog – level filtering
+  // writeLog �?level filtering
   // ────────────────────────────────────────────────────────────────
 
-  describe('writeLog – level filtering', () => {
+  describe('writeLog �?level filtering', () => {
     beforeEach(async () => {
       vi.mocked(existsSync).mockReturnValue(true)
     })
@@ -309,7 +322,7 @@ describe('FileLogger', () => {
 
       fileLogger.debug('Mod', 'should be filtered')
 
-      expect(appendFileSync).not.toHaveBeenCalled()
+      expect(appendFile).not.toHaveBeenCalled()
     })
 
     it('should filter out debug and info when minLevel is warn', async () => {
@@ -321,7 +334,7 @@ describe('FileLogger', () => {
       fileLogger.info('Mod', 'filtered')
       fileLogger.warn('Mod', 'included')
 
-      const calls = vi.mocked(appendFileSync).mock.calls
+      const calls = vi.mocked(appendFile).mock.calls
       expect(calls).toHaveLength(1)
       expect(calls[0][1]).toContain('included')
     })
@@ -336,7 +349,7 @@ describe('FileLogger', () => {
       fileLogger.warn('Mod', 'no')
       fileLogger.error('Mod', 'yes')
 
-      const calls = vi.mocked(appendFileSync).mock.calls
+      const calls = vi.mocked(appendFile).mock.calls
       expect(calls).toHaveLength(1)
       expect(calls[0][1]).toContain('yes')
     })
@@ -351,15 +364,15 @@ describe('FileLogger', () => {
       fileLogger.warn('M', 'w')
       fileLogger.error('M', 'e')
 
-      expect(appendFileSync).toHaveBeenCalledTimes(4)
+      expect(appendFile).toHaveBeenCalledTimes(4)
     })
   })
 
   // ────────────────────────────────────────────────────────────────
-  // writeLog – data serialization
+  // writeLog �?data serialization
   // ────────────────────────────────────────────────────────────────
 
-  describe('writeLog – data serialization', () => {
+  describe('writeLog �?data serialization', () => {
     beforeEach(async () => {
       vi.mocked(existsSync).mockReturnValue(true)
       await fileLogger.init()
@@ -369,7 +382,7 @@ describe('FileLogger', () => {
     it('should include short data inline when serialized length < 1000', () => {
       fileLogger.info('Mod', 'msg', { key: 'value' })
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('| {"key":"value"}')
     })
 
@@ -378,7 +391,7 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', 'msg', bigData)
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('...(truncated)')
       // The truncated portion should be 1000 chars of the JSON
       expect(written).not.toContain('"x'.repeat(1100))
@@ -390,23 +403,23 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', 'msg', circular)
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[non-serializable data]')
     })
 
     it('should not include data separator when data is undefined', () => {
       fileLogger.info('Mod', 'msg')
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).not.toContain(' | ')
     })
   })
 
   // ────────────────────────────────────────────────────────────────
-  // writeLog – console output
+  // writeLog �?console output
   // ────────────────────────────────────────────────────────────────
 
-  describe('writeLog – console output', () => {
+  describe('writeLog �?console output', () => {
     beforeEach(async () => {
       vi.mocked(existsSync).mockReturnValue(true)
       await fileLogger.init()
@@ -487,10 +500,10 @@ describe('FileLogger', () => {
   })
 
   // ────────────────────────────────────────────────────────────────
-  // writeLog – file output
+  // writeLog �?file output
   // ────────────────────────────────────────────────────────────────
 
-  describe('writeLog – file output', () => {
+  describe('writeLog �?file output', () => {
     beforeEach(async () => {
       vi.mocked(existsSync).mockReturnValue(true)
       await fileLogger.init()
@@ -500,8 +513,8 @@ describe('FileLogger', () => {
     it('should write to file with correct format', () => {
       fileLogger.info('TestMod', 'hello world')
 
-      expect(appendFileSync).toHaveBeenCalledTimes(1)
-      const [filePath, content, encoding] = vi.mocked(appendFileSync).mock.calls[0]
+      expect(appendFile).toHaveBeenCalledTimes(1)
+      const [filePath, content, encoding] = vi.mocked(appendFile).mock.calls[0]
 
       expect(filePath).toContain(`p2p-conference-${today}.log`)
       expect(content).toContain('[INFO ]')
@@ -519,7 +532,7 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', 'should not write')
 
-      expect(appendFileSync).not.toHaveBeenCalled()
+      expect(appendFile).not.toHaveBeenCalled()
     })
 
     it('should not write to file when initialized but logsDir is empty (fallback mode)', () => {
@@ -529,7 +542,7 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', 'no file write')
 
-      expect(appendFileSync).not.toHaveBeenCalled()
+      expect(appendFile).not.toHaveBeenCalled()
     })
 
     it('should detect date change and update log file', () => {
@@ -544,13 +557,16 @@ describe('FileLogger', () => {
       fileLogger.info('Mod', 'new day message')
 
       // Should have written to a file with today's date
-      const writtenPath = vi.mocked(appendFileSync).mock.calls[0][0] as string
+      const writtenPath = vi.mocked(appendFile).mock.calls[0][0] as string
       expect(writtenPath).toContain(`p2p-conference-${today}.log`)
     })
 
-    it('should handle appendFileSync failure gracefully', () => {
-      vi.mocked(appendFileSync).mockImplementation(() => {
-        throw new Error('disk full')
+    it('should handle appendFile failure gracefully', () => {
+      vi.mocked(appendFile).mockImplementation((...args: any[]) => {
+        const callback = args.at(-1)
+        if (typeof callback === 'function') {
+          callback(new Error('disk full'))
+        }
       })
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -576,7 +592,7 @@ describe('FileLogger', () => {
 
     it('debug() should write a DEBUG log', () => {
       fileLogger.debug('Mod', 'debug message', { x: 1 })
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[DEBUG]')
       expect(written).toContain('[Mod]')
       expect(written).toContain('debug message')
@@ -584,19 +600,19 @@ describe('FileLogger', () => {
 
     it('info() should write an INFO log', () => {
       fileLogger.info('Mod', 'info message')
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[INFO ]')
     })
 
     it('warn() should write a WARN log', () => {
       fileLogger.warn('Mod', 'warn message')
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[WARN ]')
     })
 
     it('error() should write an ERROR log', () => {
       fileLogger.error('Mod', 'error message')
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[ERROR]')
     })
   })
@@ -629,7 +645,7 @@ describe('FileLogger', () => {
       mod.warn('test warn')
       mod.error('test error')
 
-      const calls = vi.mocked(appendFileSync).mock.calls
+      const calls = vi.mocked(appendFile).mock.calls
       expect(calls).toHaveLength(4)
       for (const call of calls) {
         expect(call[1]).toContain('[CustomMod]')
@@ -642,7 +658,7 @@ describe('FileLogger', () => {
 
       mod.info('msg', data)
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('{"key":"val"}')
     })
   })
@@ -660,21 +676,21 @@ describe('FileLogger', () => {
 
     it('MainLog should log with [Main] module', () => {
       MainLog.info('main message')
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[Main]')
       expect(written).toContain('main message')
     })
 
     it('TrayLog should log with [Tray] module', () => {
       TrayLog.warn('tray warning')
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[Tray]')
       expect(written).toContain('tray warning')
     })
 
     it('IPCLog should log with [IPC] module', () => {
       IPCLog.error('ipc error')
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[IPC]')
       expect(written).toContain('ipc error')
     })
@@ -746,7 +762,7 @@ describe('FileLogger', () => {
     it('should prefix module with "Renderer:"', () => {
       fileLogger.logFromRenderer('info', 'App', 'renderer message')
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[Renderer:App]')
       expect(written).toContain('renderer message')
     })
@@ -756,13 +772,13 @@ describe('FileLogger', () => {
 
       fileLogger.logFromRenderer('info', 'App', 'filtered')
 
-      expect(appendFileSync).not.toHaveBeenCalled()
+      expect(appendFile).not.toHaveBeenCalled()
     })
 
     it('should pass through data argument', () => {
       fileLogger.logFromRenderer('warn', 'Component', 'warning', { detail: 42 })
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[Renderer:Component]')
       expect(written).toContain('{"detail":42}')
     })
@@ -773,7 +789,7 @@ describe('FileLogger', () => {
         fileLogger.logFromRenderer(level, 'Mod', `${level} msg`)
       }
 
-      expect(appendFileSync).toHaveBeenCalledTimes(4)
+      expect(appendFile).toHaveBeenCalledTimes(4)
     })
   })
 
@@ -803,7 +819,7 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', '')
 
-      expect(appendFileSync).toHaveBeenCalledTimes(1)
+      expect(appendFile).toHaveBeenCalledTimes(1)
     })
 
     it('should handle special characters in module and message', async () => {
@@ -813,7 +829,7 @@ describe('FileLogger', () => {
 
       fileLogger.info('My/Module [v2]', 'message with "quotes" & <brackets>')
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('[My/Module [v2]]')
       expect(written).toContain('message with "quotes" & <brackets>')
     })
@@ -825,7 +841,7 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', 'msg', null)
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('| null')
     })
 
@@ -836,7 +852,7 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', 'msg', 0)
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('| 0')
     })
 
@@ -847,7 +863,7 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', 'msg', false)
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('| false')
     })
 
@@ -858,8 +874,9 @@ describe('FileLogger', () => {
 
       fileLogger.info('Mod', 'msg', '')
 
-      const written = vi.mocked(appendFileSync).mock.calls[0][1] as string
+      const written = vi.mocked(appendFile).mock.calls[0][1] as string
       expect(written).toContain('| ""')
     })
   })
 })
+

@@ -8,6 +8,7 @@ import { DeviceSelector } from './DeviceSelector'
 import { useI18n } from '../hooks/useI18n'
 import { logger } from '../utils/Logger'
 import type { AudioDevice, AppSettings, VirtualMicDeviceStatus } from '@/types'
+import { isFeatureEnabled } from '../config/featureFlags'
 
 interface SettingsPanelProps {
   settings: AppSettings
@@ -34,6 +35,8 @@ interface SettingsPanelProps {
   onInstallRemoteMicDriver?: () => void
   onRecheckRemoteMicDevice?: () => void
   onOpenRemoteMicSetup?: () => void
+  onExportDiagnostics?: () => void
+  diagnosticsExportInProgress?: boolean
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -56,6 +59,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onInstallRemoteMicDriver,
   onRecheckRemoteMicDevice,
   onOpenRemoteMicSetup,
+  onExportDiagnostics,
+  diagnosticsExportInProgress,
 }) => {
   const { t, currentLanguage, setLanguage, getAvailableLanguages } = useI18n()
 
@@ -73,6 +78,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const installerBundleReady = virtualAudioInstallerState?.bundleReady !== false
   const canAutoInstallVirtualDevice = Boolean(virtualAudioInstallerState?.platformSupported) && installerBundleReady
+  const pushToTalkEnabled = isFeatureEnabled('push_to_talk')
+  const diagnosticsPanelEnabled = isFeatureEnabled('diagnostics_panel')
   const showInstallerBundleWarning = Boolean(
     (virtualMicDeviceStatus?.platform === 'win' || virtualMicDeviceStatus?.platform === 'mac') &&
     virtualMicDeviceStatus?.ready === false &&
@@ -339,6 +346,48 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                 </label>
               </div>
+
+              {pushToTalkEnabled && (
+                <div className="flex flex-col gap-3 py-3 border-t border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-gray-900">{t('settings.pushToTalk')}</p>
+                      <p className="text-sm text-gray-500">{t('settings.pushToTalkDesc')}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onSettingsChange({ pushToTalkEnabled: !settings.pushToTalkEnabled })}
+                      className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                        settings.pushToTalkEnabled
+                          ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                      data-testid="settings-ptt-toggle"
+                    >
+                      {settings.pushToTalkEnabled ? t('room.on') : t('room.off')}
+                    </button>
+                  </div>
+                  {settings.pushToTalkEnabled && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600">{t('settings.pushToTalkKey')}</span>
+                      <select
+                        value={settings.pushToTalkKey || 'space'}
+                        onChange={(event) => {
+                          onSettingsChange({
+                            pushToTalkKey: event.target.value as 'space' | 'shift' | 'capslock'
+                          })
+                        }}
+                        className="rounded border border-gray-300 px-2 py-1 text-sm text-gray-700"
+                        data-testid="settings-ptt-key"
+                      >
+                        <option value="space">Space</option>
+                        <option value="shift">Shift</option>
+                        <option value="capslock">CapsLock</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </section>
 
@@ -379,6 +428,23 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   </svg>
                   {t('settings.clearLogs')}
                 </button>
+
+                {diagnosticsPanelEnabled && (
+                  <button
+                    onClick={onExportDiagnostics}
+                    disabled={!onExportDiagnostics || diagnosticsExportInProgress}
+                    className="btn btn-secondary flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                    data-testid="settings-export-diagnostics-btn"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M9 17v-2a4 4 0 014-4h6m0 0l-3-3m3 3l-3 3M5 3h8a2 2 0 012 2v4m0 0H5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-2" />
+                    </svg>
+                    {diagnosticsExportInProgress
+                      ? t('settings.exportDiagnosticsRunning')
+                      : t('settings.exportDiagnostics')}
+                  </button>
+                )}
               </div>
 
               <p className="text-xs text-gray-400">

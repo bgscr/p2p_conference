@@ -219,6 +219,35 @@ describe('SoundManager - actual source coverage', () => {
 
             expect(() => soundManager.playClick()).not.toThrow()
         })
+
+        it.each([
+            ['playLeave'],
+            ['playConnected'],
+            ['playError'],
+            ['playClick'],
+        ])('%s catches error when createOscillator throws', (methodName) => {
+            global.AudioContext = class {
+                currentTime = 0
+                destination = {}
+                state = 'running'
+                createOscillator = vi.fn(() => { throw new Error('Oscillator error') })
+                createGain = vi.fn(() => ({
+                    gain: {
+                        setValueAtTime: vi.fn(),
+                        linearRampToValueAtTime: vi.fn(),
+                    },
+                    connect: vi.fn(),
+                }))
+                close = vi.fn()
+            } as any
+
+            soundManager.destroy()
+            soundManager.setEnabled(true)
+
+            expect(() => {
+                ; (soundManager as any)[methodName]()
+            }).not.toThrow()
+        })
     })
 
     describe('enabled/disabled state', () => {

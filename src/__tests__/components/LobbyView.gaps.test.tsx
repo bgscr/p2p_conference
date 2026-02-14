@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 // Hoist mocks
@@ -315,7 +315,9 @@ describe('LobbyView - additional coverage gaps', () => {
       })
 
       // Change video device - this should restart camera test (line 114-115)
-      rerender(<LobbyView {...defaultProps} selectedVideoDevice="cam-2" />)
+      await act(async () => {
+        rerender(<LobbyView {...defaultProps} selectedVideoDevice="cam-2" />)
+      })
 
       // getUserMedia should be called again
       expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2)
@@ -409,7 +411,9 @@ describe('LobbyView - additional coverage gaps', () => {
       })
 
       // Change input device - this should restart mic test (line 104-107)
-      rerender(<LobbyView {...defaultProps} selectedInputDevice="mic-2" />)
+      await act(async () => {
+        rerender(<LobbyView {...defaultProps} selectedInputDevice="mic-2" />)
+      })
 
       // Pipeline disconnect should be called (from restart)
       expect(mocks.pipelineDisconnect).toHaveBeenCalled()

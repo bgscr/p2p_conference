@@ -98,6 +98,15 @@ npm run build:mac    # macOS
 npm run build:linux  # Linux
 ```
 
+### Production Credential Setup
+
+Packaged builds run in secure production mode by default and require secure credential configuration.
+
+- Canonical setup and variable reference: `docs/CREDENTIAL_SECURITY.md` (section "Canonical Production Usage")
+- Preferred: configure `P2P_CREDENTIALS_URL` (`https://`) and optional `P2P_CREDENTIALS_BEARER_TOKEN`
+- Alternative: provide complete secure TURN/MQTT env credentials (`TURN_*`, `MQTT_PRIVATE_*`, with `MQTT_PRIVATE_URL=wss://...`)
+- Current repo default is `P2P_ALLOW_INSECURE_PRODUCTION=true` for packaged startup convenience; set it to `false` once secure production credentials are ready
+
 ### Code Quality
 
 ```bash

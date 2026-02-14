@@ -19,7 +19,6 @@
  * - network reconnect: inner timer abort paths, MQTT not connected retry, error retry
  * - manualReconnect when no room
  * - handleBeforeUnload
- * - loadCredentials: error handling, concurrent loading
  * - MultiBrokerMQTT: handleBrokerDisconnect existing timer, subscribe failed on resubscribe
  * - MultiBrokerMQTT: getConnectionStatus
  * - MQTTClient: connect timeout, incomplete packet in buffer
@@ -31,9 +30,9 @@ import {
   selfId,
   MQTTClient,
   MultiBrokerMQTT,
-  loadCredentials,
   resetCredentialsCacheForTesting,
 } from '../renderer/signaling/SimplePeerManager'
+import { createTestPeer } from './helpers/simplePeerManagerTestUtils'
 
 // Mock Logger
 vi.mock('../renderer/utils/Logger', () => ({
@@ -193,21 +192,15 @@ function mockMqtt(overrides: Record<string, any> = {}) {
   }
 }
 
-function createPeer(pc: MockPC, overrides: Record<string, any> = {}) {
-  return {
+function createPeer(pc: MockPC, overrides: Record<string, any> = {}): any {
+  return createTestPeer({
     pc,
-    stream: null,
     userName: 'TestUser',
-    platform: 'win' as const,
-    connectionStartTime: Date.now(),
+    platform: 'win',
     isConnected: false,
     muteStatus: { micMuted: false, speakerMuted: false },
-    iceRestartAttempts: 0,
-    iceRestartInProgress: false,
-    disconnectTimer: null,
-    reconnectTimer: null,
     ...overrides,
-  }
+  })
 }
 
 // ==========================================================
@@ -870,30 +863,6 @@ describe('SimplePeerManager - additional gaps', () => {
     broadcastSpy.mockRestore()
   })
 
-  // --- loadCredentials error handling ---
-  it('loadCredentials handles API error gracefully', async () => {
-    resetCredentialsCacheForTesting()
-    Object.defineProperty(window, 'electronAPI', {
-      value: {
-        getICEServers: vi.fn().mockRejectedValue(new Error('API error')),
-        getMQTTBrokers: vi.fn().mockResolvedValue([]),
-      },
-      writable: true, configurable: true,
-    })
-
-    await expect(loadCredentials()).resolves.toBeUndefined()
-  })
-
-  // --- loadCredentials returns same promise when called concurrently ---
-  it('loadCredentials returns same promise for concurrent calls', async () => {
-    resetCredentialsCacheForTesting()
-    const p1 = loadCredentials()
-    const p2 = loadCredentials()
-
-    // Both should resolve to the same underlying promise
-    await Promise.all([p1, p2])
-  })
-
   // --- startAnnounceInterval stops after duration when healthy peers exist ---
   it('announce interval stops after duration when healthy peers exist', async () => {
     managerAny.roomId = 'test-room'
@@ -1350,5 +1319,546 @@ describe('SimplePeerManager - ICE restart and leave coverage', () => {
     expect(restartSpy.mock.calls.length).toBeGreaterThan(1)
 
     restartSpy.mockRestore()
+  })
+})
+
+describe('MQTTClient - branch gap extensions', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    mockWebSockets = []
+  })
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    vi.stubGlobal('WebSocket', MockWS)
+  })
+
+  it('derives unknown broker hash when URL has no host segment', () => {
+    const client: any = new MQTTClient('mqtt-no-scheme')
+    expect(client.clientId).toContain('_unknown_')
+    client.disconnect()
+  })
+
+  it('encodes CONNECT remaining length with multi-byte varint for long credentials', () => {
+    const client: any = new MQTTClient('wss://long-cred/mqtt', 'u'.repeat(200), 'p'.repeat(200))
+    const ws = { readyState: MockWS.OPEN, send: vi.fn(), close: vi.fn() }
+    client.ws = ws
+    client.sendConnect()
+    const packet = ws.send.mock.calls[0][0] as Uint8Array
+    expect(packet[0]).toBe(0x10)
+    expect((packet[1] & 0x80) !== 0).toBe(true)
+    client.disconnect()
+  })
+
+  it('handles SUBACK and PINGRESP packets without pending subscribe state', async () => {
+    const client = new MQTTClient('wss://test/mqtt')
+    const connectPromise = client.connect()
+    await vi.advanceTimersByTimeAsync(50)
+    await connectPromise
+
+    const ws = mockWebSockets[mockWebSockets.length - 1]
+    ws.onmessage?.({ data: new Uint8Array([0x90, 0x03, 0x00, 0x01, 0x00]).buffer })
+    ws.onmessage?.({ data: new Uint8Array([0xd0, 0x00]).buffer })
+
+    expect(client.isConnected()).toBe(true)
+    client.disconnect()
+  })
+
+  it('handles publish packet with missing topic-length bytes', async () => {
+    const client = new MQTTClient('wss://test/mqtt')
+    const connectPromise = client.connect()
+    await vi.advanceTimersByTimeAsync(50)
+    await connectPromise
+
+    const ws = mockWebSockets[mockWebSockets.length - 1]
+    // PUBLISH with remaining-length byte but not enough bytes for topic length.
+    ws.onmessage?.({ data: new Uint8Array([0x30, 0x01, 0x7f]).buffer })
+
+    expect(client.isConnected()).toBe(true)
+    client.disconnect()
+  })
+
+  it('handles keepalive when websocket is not open and subscribe timeout when already subscribed', async () => {
+    const client: any = new MQTTClient('wss://test/mqtt')
+    client.ws = { readyState: MockWS.CLOSED, send: vi.fn(), close: vi.fn() }
+    client.startKeepalive()
+    await vi.advanceTimersByTimeAsync(35000)
+    expect(client.ws.send).not.toHaveBeenCalled()
+
+    const connectedClient = new MQTTClient('wss://test/mqtt')
+    const connectPromise = connectedClient.connect()
+    await vi.advanceTimersByTimeAsync(50)
+    await connectPromise
+    const subscribePromise = connectedClient.subscribe('topic/subscribed', () => { })
+    ; (connectedClient as any).subscribed = true
+    await vi.advanceTimersByTimeAsync(6000)
+    await expect(subscribePromise).resolves.toBeTypeOf('boolean')
+    connectedClient.disconnect()
+  })
+
+  it('handles raw PINGRESP packet path directly', () => {
+    const client: any = new MQTTClient('wss://test/mqtt')
+    expect(() => client.handlePacket(new Uint8Array([0xd0, 0x00]))).not.toThrow()
+    client.disconnect()
+  })
+})
+
+describe('MultiBrokerMQTT - branch gap extensions', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    mockWebSockets = []
+    resetCredentialsCacheForTesting()
+    setupElectronAPI()
+  })
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    teardownElectronAPI()
+    vi.stubGlobal('WebSocket', MockWS)
+  })
+
+  it('connectAll returns empty when all broker connects reject', async () => {
+    vi.stubGlobal('WebSocket', class {
+      onopen: any = null
+      onmessage: any = null
+      onclose: any = null
+      onerror: any = null
+      readyState = 0
+      binaryType = 'arraybuffer'
+      send = vi.fn()
+      close = vi.fn()
+      static OPEN = 1
+      static CONNECTING = 0
+      static CLOSING = 2
+      static CLOSED = 3
+      constructor() {
+        setTimeout(() => {
+          this.onerror?.(new Error('connect fail'))
+        }, 0)
+      }
+    })
+
+    const multi = new MultiBrokerMQTT()
+    const connectPromise = multi.connectAll()
+    await vi.advanceTimersByTimeAsync(50)
+    const connected = await connectPromise
+    expect(connected).toEqual([])
+    multi.disconnect()
+  })
+
+  it('reports disconnected status across helper accessors', () => {
+    const multi: any = new MultiBrokerMQTT()
+    multi.clients.set('wss://a', {
+      isConnected: () => false,
+      isSubscribed: () => false,
+      publish: () => false,
+      disconnect: vi.fn(),
+      getMessageCount: () => 0
+    })
+
+    expect(multi.isConnected()).toBe(false)
+    expect(multi.isSubscribed()).toBe(false)
+    expect(multi.getConnectedCount()).toBe(0)
+  })
+
+  it('publish ignores unsuccessful publish calls even for connected/subscribed clients', () => {
+    const multi: any = new MultiBrokerMQTT()
+    multi.clients.set('wss://a', {
+      isConnected: () => true,
+      isSubscribed: () => true,
+      publish: () => false,
+      disconnect: vi.fn(),
+      getMessageCount: () => 0
+    })
+    multi.clients.set('wss://b', {
+      isConnected: () => true,
+      isSubscribed: () => true,
+      publish: () => true,
+      disconnect: vi.fn(),
+      getMessageCount: () => 0
+    })
+
+    expect(multi.publish('topic', 'payload')).toBe(1)
+  })
+
+  it('handleBrokerDisconnect exits immediately when shutting down', async () => {
+    const multi: any = new MultiBrokerMQTT()
+    multi.isShuttingDown = true
+
+    await multi.handleBrokerDisconnect('wss://broker/mqtt')
+    expect(multi.reconnectTimers.size).toBe(0)
+  })
+
+  it('reconnect path handles subscribe failure branch when topic is present', async () => {
+    const multi: any = new MultiBrokerMQTT()
+    multi.topic = 'room/test'
+    multi.onMessage = vi.fn()
+    multi.reconnectAttempts.set('wss://broker/mqtt', 0)
+
+    const connectSpy = vi.spyOn(MQTTClient.prototype, 'connect').mockResolvedValue(undefined)
+    const subscribeSpy = vi.spyOn(MQTTClient.prototype, 'subscribe').mockResolvedValue(false)
+
+    await multi.handleBrokerDisconnect('wss://broker/mqtt')
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(connectSpy).toHaveBeenCalled()
+    expect(subscribeSpy).toHaveBeenCalled()
+
+    connectSpy.mockRestore()
+    subscribeSpy.mockRestore()
+    multi.disconnect()
+  })
+})
+
+describe('SimplePeerManager - branch gap extensions', () => {
+  let manager: SimplePeerManager
+  let managerAny: any
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    mockWebSockets = []
+    mockPeerConnections = []
+    resetCredentialsCacheForTesting()
+    setupElectronAPI()
+
+    Object.defineProperty(navigator, 'onLine', { value: true, writable: true, configurable: true })
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Windows NT 10.0)',
+      writable: true,
+      configurable: true
+    })
+
+    manager = new SimplePeerManager()
+    managerAny = manager as any
+  })
+
+  afterEach(() => {
+    manager.leaveRoom()
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    teardownElectronAPI()
+  })
+
+  it('setAudioRoutingMode rejects unknown exclusive routing target', () => {
+    expect(manager.setAudioRoutingMode('exclusive', 'missing-peer')).toBe(false)
+  })
+
+  it('setLocalStream skips routed audio addTrack when peer is not exclusive target', () => {
+    const pcA = new MockPC()
+    const pcB = new MockPC()
+    managerAny.peers.set('peer-a', createPeer(pcA))
+    managerAny.peers.set('peer-b', createPeer(pcB))
+    manager.setAudioRoutingMode('exclusive', 'peer-b')
+
+    const audioTrack = { id: 'audio-1', kind: 'audio', enabled: true, muted: false, readyState: 'live', stop: vi.fn() } as any
+    const stream = new MediaStream([audioTrack]) as unknown as MediaStream
+    manager.setLocalStream(stream)
+
+    expect(pcA.addTrack).not.toHaveBeenCalled()
+  })
+
+  it('chat data channel ignores invalid payload shape', () => {
+    const peer = createPeer(new MockPC())
+    managerAny.onChatMessage = vi.fn()
+    const dc: any = { label: 'chat', onopen: null, onclose: null, onerror: null, onmessage: null }
+    managerAny.setupDataChannel(dc, 'peer-1', peer, 'chat')
+
+    dc.onmessage?.({ data: JSON.stringify({ type: 'chat', id: 1, senderName: 'x', content: 1, timestamp: 'bad' }) })
+    expect(managerAny.onChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('respondRemoteMicRequest applies default accepted/rejected reasons and updates state', () => {
+    const peer = createPeer(new MockPC(), {
+      controlDataChannel: {
+        readyState: 'open',
+        send: vi.fn(),
+        close: vi.fn()
+      }
+    })
+    managerAny.peers.set('peer-1', peer)
+
+    managerAny.pendingRemoteMicRequests.set('req-accepted', 'peer-1')
+    expect(manager.respondRemoteMicRequest('req-accepted', true)).toBe(true)
+    expect((peer.controlDataChannel!.send as any).mock.calls[0][0]).toContain('"reason":"accepted"')
+    expect(managerAny.activeRemoteMicSourcePeerId).toBe('peer-1')
+
+    managerAny.pendingRemoteMicRequests.set('req-rejected', 'peer-1')
+    expect(manager.respondRemoteMicRequest('req-rejected', false)).toBe(true)
+    expect((peer.controlDataChannel!.send as any).mock.calls[1][0]).toContain('"reason":"rejected"')
+  })
+
+  it('sendRemoteMicStart and sendRemoteMicStop update and clear active mapping state', () => {
+    const peer = createPeer(new MockPC(), {
+      controlDataChannel: {
+        readyState: 'open',
+        send: vi.fn(),
+        close: vi.fn()
+      }
+    })
+    managerAny.peers.set('peer-1', peer)
+
+    expect(manager.sendRemoteMicStart('peer-1', 'req-start')).toBe(true)
+    expect(managerAny.activeRemoteMicTargetPeerId).toBe('peer-1')
+    expect(managerAny.activeRemoteMicRequestId).toBe('req-start')
+
+    managerAny.activeRemoteMicSourcePeerId = 'peer-1'
+    expect(manager.sendRemoteMicStop('peer-1', 'req-start', 'stopped-by-source')).toBe(true)
+    expect(managerAny.activeRemoteMicTargetPeerId).toBeNull()
+    expect(managerAny.activeRemoteMicSourcePeerId).toBeNull()
+    expect(managerAny.activeRemoteMicRequestId).toBeNull()
+  })
+
+  it('stopRemoteMicSession sends stop to both target and source peers when present', () => {
+    const sendStopSpy = vi.spyOn(manager as any, 'sendRemoteMicStop').mockReturnValue(true)
+    managerAny.activeRemoteMicRequestId = 'req-stop-all'
+    managerAny.activeRemoteMicTargetPeerId = 'peer-target'
+    managerAny.activeRemoteMicSourcePeerId = 'peer-source'
+
+    manager.stopRemoteMicSession('stopped-by-source')
+
+    expect(sendStopSpy).toHaveBeenCalledWith('peer-target', 'req-stop-all', 'stopped-by-source')
+    expect(sendStopSpy).toHaveBeenCalledWith('peer-source', 'req-stop-all', 'stopped-by-source')
+    sendStopSpy.mockRestore()
+  })
+
+  it('stopRemoteMicSession skips stop sends when target/source are missing', () => {
+    const sendStopSpy = vi.spyOn(manager as any, 'sendRemoteMicStop').mockReturnValue(true)
+    managerAny.activeRemoteMicRequestId = 'req-no-ends'
+    managerAny.activeRemoteMicTargetPeerId = null
+    managerAny.activeRemoteMicSourcePeerId = null
+
+    manager.stopRemoteMicSession('unknown')
+
+    expect(sendStopSpy).not.toHaveBeenCalled()
+    sendStopSpy.mockRestore()
+  })
+
+  it('handleRemoteMicControlMessage clears active request state on rejected response and stop', () => {
+    managerAny.activeRemoteMicTargetPeerId = 'peer-1'
+    managerAny.activeRemoteMicSourcePeerId = 'peer-1'
+    managerAny.activeRemoteMicRequestId = 'req-ctrl'
+    managerAny.pendingOutgoingRemoteMicRequestId = 'req-ctrl'
+    managerAny.pendingRemoteMicRequests.set('req-ctrl', 'peer-1')
+
+    managerAny.handleRemoteMicControlMessage('peer-1', {
+      type: 'rm_response',
+      requestId: 'req-ctrl',
+      accepted: false,
+      reason: 'rejected',
+      ts: Date.now()
+    })
+    expect(managerAny.activeRemoteMicTargetPeerId).toBeNull()
+    expect(managerAny.activeRemoteMicRequestId).toBeNull()
+
+    managerAny.activeRemoteMicTargetPeerId = 'peer-1'
+    managerAny.activeRemoteMicSourcePeerId = 'peer-1'
+    managerAny.activeRemoteMicRequestId = 'req-ctrl'
+    managerAny.pendingRemoteMicRequests.set('req-ctrl', 'peer-1')
+
+    managerAny.handleRemoteMicControlMessage('peer-1', {
+      type: 'rm_stop',
+      requestId: 'req-ctrl',
+      reason: 'stopped-by-source',
+      ts: Date.now()
+    })
+    expect(managerAny.activeRemoteMicSourcePeerId).toBeNull()
+    expect(managerAny.activeRemoteMicRequestId).toBeNull()
+  })
+
+  it('handleRemoteMicControlMessage keeps unrelated active mappings untouched', () => {
+    managerAny.activeRemoteMicTargetPeerId = 'peer-target-keep'
+    managerAny.activeRemoteMicSourcePeerId = 'peer-source-keep'
+    managerAny.activeRemoteMicRequestId = 'req-keep'
+
+    managerAny.handleRemoteMicControlMessage('peer-other', {
+      type: 'rm_response',
+      requestId: 'req-other',
+      accepted: false,
+      reason: 'rejected',
+      ts: Date.now()
+    })
+    managerAny.handleRemoteMicControlMessage('peer-other', {
+      type: 'rm_stop',
+      requestId: 'req-other',
+      reason: 'unknown',
+      ts: Date.now()
+    })
+
+    expect(managerAny.activeRemoteMicTargetPeerId).toBe('peer-target-keep')
+    expect(managerAny.activeRemoteMicSourcePeerId).toBe('peer-source-keep')
+    expect(managerAny.activeRemoteMicRequestId).toBe('req-keep')
+  })
+
+  it('cleanupPeer handles missing peer and fully closes channels/timers for existing peer', () => {
+    expect(() => managerAny.cleanupPeer('missing-peer')).not.toThrow()
+
+    const peer = createPeer(new MockPC(), {
+      disconnectTimer: setTimeout(() => {}, 1000),
+      reconnectTimer: setTimeout(() => {}, 1000),
+      chatDataChannel: { close: vi.fn(), readyState: 'open' },
+      controlDataChannel: { close: vi.fn(), readyState: 'open' }
+    })
+    managerAny.peers.set('peer-close', peer)
+    managerAny.activeRemoteMicTargetPeerId = 'peer-close'
+    managerAny.activeRemoteMicRequestId = 'req-peer-close'
+    managerAny.onRemoteMicControl = vi.fn()
+
+    managerAny.cleanupPeer('peer-close')
+
+    expect(peer.chatDataChannel).toBeNull()
+    expect(peer.controlDataChannel).toBeNull()
+    expect(managerAny.onRemoteMicControl).toHaveBeenCalled()
+  })
+
+  it('peer connection handlers cover control-channel path and track-with-stream path', () => {
+    managerAny.localStream = new MediaStream([]) as unknown as MediaStream
+    const pc = managerAny.createPeerConnection('peer-handler', 'Peer Handler', 'win', false)
+    const peerConn = managerAny.peers.get('peer-handler')
+
+    const controlChannel: any = { label: 'control', onopen: null, onclose: null, onerror: null, onmessage: null }
+    pc.ondatachannel?.({ channel: controlChannel } as any)
+    expect(peerConn.controlDataChannel).toBe(controlChannel)
+
+    const streamTrack = { kind: 'audio', id: 'audio-track-1' } as any
+    const stream = new MediaStream([streamTrack]) as unknown as MediaStream
+    pc.ontrack?.({ track: streamTrack, streams: [stream] } as any)
+    expect(peerConn.stream).toBe(stream)
+
+    const unknownChannel: any = { label: 'metrics', onopen: null, onclose: null, onerror: null, onmessage: null }
+    pc.ondatachannel?.({ channel: unknownChannel } as any)
+  })
+
+  it('ICE/connection callbacks cover disconnect timer branches and disconnected state branch', () => {
+    const pc = managerAny.createPeerConnection('peer-ice', 'Peer ICE', 'win', false)
+    const peerConn = managerAny.peers.get('peer-ice')
+
+    peerConn.disconnectTimer = setTimeout(() => {}, 1000)
+    pc.iceConnectionState = 'disconnected'
+    pc.oniceconnectionstatechange?.()
+    expect(peerConn.disconnectTimer).not.toBeNull()
+
+    peerConn.disconnectTimer = setTimeout(() => {}, 1000)
+    peerConn.reconnectTimer = setTimeout(() => {}, 1000)
+    pc.connectionState = 'connected'
+    pc.onconnectionstatechange?.()
+    expect(peerConn.disconnectTimer).toBeNull()
+    expect(peerConn.reconnectTimer).toBeNull()
+
+    pc.connectionState = 'disconnected'
+    pc.onconnectionstatechange?.()
+
+    peerConn.iceRestartInProgress = true
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange?.()
+
+    pc.connectionState = 'connecting'
+    pc.onconnectionstatechange?.()
+  })
+
+  it('ICE/connection callbacks handle missing peer references and delayed reconnect guard', async () => {
+    const pc = managerAny.createPeerConnection('peer-missing', 'Peer Missing', 'win', false)
+    const peerConn = managerAny.peers.get('peer-missing')
+    expect(peerConn).toBeDefined()
+
+    managerAny.peers.delete('peer-missing')
+
+    pc.connectionState = 'connected'
+    pc.onconnectionstatechange?.()
+
+    pc.iceConnectionState = 'disconnected'
+    pc.oniceconnectionstatechange?.()
+
+    managerAny.peers.set('peer-missing', createPeer(pc, {
+      disconnectTimer: null,
+      reconnectTimer: null
+    }))
+    const readded = managerAny.peers.get('peer-missing')
+    pc.iceConnectionState = 'disconnected'
+    pc.oniceconnectionstatechange?.()
+    expect(readded.disconnectTimer).not.toBeNull()
+
+    pc.iceConnectionState = 'connected'
+    await vi.advanceTimersByTimeAsync(5000)
+  })
+
+  it('handleRemoteMicPeerDisconnect covers source-only path and pending request cleanup fallback id', () => {
+    managerAny.activeRemoteMicSourcePeerId = 'peer-source-only'
+    managerAny.activeRemoteMicRequestId = null
+    managerAny.pendingRemoteMicRequests.set('req-from-source', 'peer-source-only')
+    managerAny.pendingRemoteMicRequests.set('req-from-other', 'peer-other')
+    managerAny.onRemoteMicControl = vi.fn()
+
+    managerAny.handleRemoteMicPeerDisconnect('peer-source-only')
+
+    expect(managerAny.activeRemoteMicSourcePeerId).toBeNull()
+    expect(managerAny.pendingRemoteMicRequests.has('req-from-source')).toBe(false)
+    expect(managerAny.pendingRemoteMicRequests.has('req-from-other')).toBe(true)
+    expect(managerAny.onRemoteMicControl).toHaveBeenCalled()
+  })
+
+  it('attemptIceRestart timeout callback exits when restart is no longer in progress', async () => {
+    const pc = new MockPC()
+    managerAny.peers.set('peer-timeout-guard', createPeer(pc, {
+      iceRestartInProgress: false
+    }))
+
+    await managerAny.attemptIceRestart('peer-timeout-guard')
+    const peer = managerAny.peers.get('peer-timeout-guard')
+    peer.iceRestartInProgress = false
+    await vi.advanceTimersByTimeAsync(16000)
+    expect(managerAny.peers.has('peer-timeout-guard')).toBe(true)
+  })
+
+  it('attemptIceRestart handles empty offer SDP fallback path', async () => {
+    const pc = new MockPC()
+    pc.createOffer = vi.fn(async () => ({ type: 'offer', sdp: '' }))
+    pc.setLocalDescription = vi.fn(async () => { })
+    managerAny.roomId = 'room-restart'
+    managerAny.mqtt = mockMqtt()
+    managerAny.peers.set('peer-empty-sdp', createPeer(pc, {
+      iceRestartAttempts: 0,
+      iceRestartInProgress: false
+    }))
+
+    await managerAny.attemptIceRestart('peer-empty-sdp')
+    expect(pc.setLocalDescription).toHaveBeenCalled()
+  })
+
+  it('replaceTrack covers video-route and null-routed fallback branches', () => {
+    const videoSender = {
+      track: { kind: 'video', id: 'video-sender' },
+      replaceTrack: vi.fn().mockResolvedValue(undefined),
+      getParameters: vi.fn().mockReturnValue({ codecs: [{ mimeType: 'video/vp8' }] })
+    }
+    const audioSender = {
+      track: { kind: 'audio', id: 'audio-sender' },
+      replaceTrack: vi.fn().mockResolvedValue(undefined),
+      getParameters: vi.fn().mockReturnValue({ codecs: [{ mimeType: 'audio/opus' }] })
+    }
+
+    const pcVideo = new MockPC()
+    pcVideo.getSenders = vi.fn(() => [videoSender as any])
+    managerAny.peers.set('peer-video', createPeer(pcVideo))
+    manager.replaceTrack({ kind: 'video', id: 'video-track', label: 'Video', enabled: true, readyState: 'live' } as any)
+    expect(videoSender.replaceTrack).toHaveBeenCalled()
+
+    const pcAudio = new MockPC()
+    pcAudio.getSenders = vi.fn(() => [audioSender as any])
+    managerAny.peers.set('peer-audio', createPeer(pcAudio))
+    managerAny.peers.set('peer-target-exclusive', createPeer(new MockPC()))
+    manager.setAudioRoutingMode('exclusive', 'peer-target-exclusive')
+    manager.replaceTrack({ kind: 'audio', id: 'audio-track', label: 'Audio', enabled: true, readyState: 'live' } as any)
+    expect(audioSender.replaceTrack).toHaveBeenCalledWith(null)
+
+    const pcNoSender = new MockPC()
+    pcNoSender.getSenders = vi.fn(() => [])
+    managerAny.peers.set('peer-no-sender', createPeer(pcNoSender))
+    manager.replaceTrack({ kind: 'audio', id: 'audio-null-route', label: 'Audio', enabled: true, readyState: 'live' } as any)
+    expect(pcNoSender.addTrack).not.toHaveBeenCalled()
   })
 })

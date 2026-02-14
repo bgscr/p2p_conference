@@ -7,7 +7,7 @@
  */
 
 import { app } from 'electron'
-import { existsSync, mkdirSync, appendFileSync, readdirSync, unlinkSync, statSync } from 'fs'
+import { existsSync, mkdirSync, appendFile, readdirSync, unlinkSync, statSync } from 'fs'
 import { join, dirname } from 'path'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -39,6 +39,8 @@ class FileLogger {
   private currentLogFile: string = ''
   private initialized: boolean = false
   private initPromise: Promise<void> | null = null
+  private writeQueue: string[] = []
+  private isWriting: boolean = false
 
   constructor(config: Partial<LogConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
@@ -193,21 +195,44 @@ class FileLogger {
       }
     }
 
-    // File output
+    // File output (buffered async write to avoid blocking the main process)
     if (this.initialized && this.logsDir) {
-      try {
-        // Check if we need to update the log file (new day)
-        const expectedFile = join(this.logsDir, `p2p-conference-${new Date().toISOString().split('T')[0]}.log`)
-        if (expectedFile !== this.currentLogFile) {
-          this.updateCurrentLogFile()
-        }
+      this.enqueueLog(logLine)
+    }
+  }
 
-        appendFileSync(this.currentLogFile, logLine, 'utf8')
-      } catch (err) {
-        // If file write fails, at least we have console output
+  private enqueueLog(logLine: string): void {
+    this.writeQueue.push(logLine)
+    this.flushLogQueue()
+  }
+
+  private flushLogQueue(): void {
+    if (this.isWriting || !this.initialized || !this.logsDir) {
+      return
+    }
+
+    const nextEntry = this.writeQueue.shift()
+    if (!nextEntry) {
+      return
+    }
+
+    // Check if we need to update the log file (new day)
+    const expectedFile = join(this.logsDir, `p2p-conference-${new Date().toISOString().split('T')[0]}.log`)
+    if (expectedFile !== this.currentLogFile) {
+      this.updateCurrentLogFile()
+    }
+
+    this.isWriting = true
+    appendFile(this.currentLogFile, nextEntry, 'utf8', (err) => {
+      this.isWriting = false
+      if (err) {
+        // If file write fails, at least we still have console output
         console.error('Failed to write to log file:', err)
       }
-    }
+      if (this.writeQueue.length > 0) {
+        this.flushLogQueue()
+      }
+    })
   }
 
   // Public logging methods
@@ -258,6 +283,13 @@ class FileLogger {
    */
   logFromRenderer(level: LogLevel, module: string, message: string, data?: any): void {
     this.writeLog(level, `Renderer:${module}`, message, data)
+  }
+
+  /**
+   * Internal-only helper for unit tests.
+   */
+  getPendingWriteCount(): number {
+    return this.writeQueue.length
   }
 }
 

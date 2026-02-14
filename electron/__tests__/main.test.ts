@@ -18,6 +18,7 @@ const {
   electronMock,
   loggerMock,
   credentialsMock,
+  writeFileMock,
   lastMenuTemplateRef,
   virtualAudioInstallerMock,
 } = vi.hoisted(() => {
@@ -119,6 +120,7 @@ const {
     fileLogger: {
       init: vi.fn().mockResolvedValue(undefined),
       getLogsDir: vi.fn().mockReturnValue('/logs'),
+      getCurrentLogFile: vi.fn().mockReturnValue('/logs/p2p-conference-test.log'),
       logFromRenderer: vi.fn(),
       createModuleLogger: () => ({
         info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -132,7 +134,33 @@ const {
   const credentialsMock = {
     getICEServers: vi.fn().mockReturnValue([{ urls: 'stun:stun.example.com' }]),
     getMQTTBrokers: vi.fn().mockReturnValue([{ url: 'ws://broker' }]),
+    getSessionCredentials: vi.fn().mockResolvedValue({
+      iceServers: [{ urls: 'stun:stun.example.com' }],
+      mqttBrokers: [{ url: 'ws://broker' }],
+      source: 'env',
+      fetchedAt: Date.now()
+    }),
+    getCredentialRuntimeSnapshot: vi.fn().mockReturnValue({
+      hasCachedSession: true,
+      source: 'env',
+      fetchedAt: Date.now(),
+      expiresAt: null,
+      expiresInMs: null,
+      cacheStatus: 'fresh',
+      inFlight: false,
+      cacheSkewMs: 60_000,
+      lastFetchAttemptAt: Date.now(),
+      lastFetchSuccessAt: Date.now(),
+      lastFetchError: null
+    }),
+    configureCredentialRuntime: vi.fn(),
+    validateCredentialConfiguration: vi.fn().mockReturnValue({
+      ok: true,
+      message: 'Credential configuration is valid.'
+    })
   }
+
+  const writeFileMock = vi.fn().mockResolvedValue(undefined)
 
   const virtualAudioInstallerMock = {
     installVirtualAudioDriver: vi.fn().mockResolvedValue({
@@ -161,6 +189,7 @@ const {
     electronMock,
     loggerMock,
     credentialsMock,
+    writeFileMock,
     lastMenuTemplateRef,
     virtualAudioInstallerMock,
   }
@@ -177,6 +206,12 @@ vi.mock('fs', () => {
   }
   return { ...mocks, default: mocks }
 })
+vi.mock('fs/promises', () => ({
+  writeFile: writeFileMock,
+  default: {
+    writeFile: writeFileMock
+  }
+}))
 
 vi.mock('electron', () => electronMock)
 vi.mock('../logger', () => loggerMock)
@@ -1835,6 +1870,61 @@ describe('IPC handlers', () => {
     })
   })
 
+  describe('get-session-credentials', () => {
+    it('is registered', () => {
+      expect(ipcHandleMap.has('get-session-credentials')).toBe(true)
+    })
+
+    it('returns session credentials from credentials provider', async () => {
+      const handler = getIpcHandler('get-session-credentials')!
+      const result = await handler()
+      expect(result).toMatchObject({
+        source: 'env',
+        iceServers: [{ urls: 'stun:stun.example.com' }],
+        mqttBrokers: [{ url: 'ws://broker' }]
+      })
+      expect(credentialsMock.getSessionCredentials).toHaveBeenCalled()
+    })
+  })
+
+  describe('get-health-snapshot', () => {
+    it('is registered', () => {
+      expect(ipcHandleMap.has('get-health-snapshot')).toBe(true)
+    })
+
+    it('returns health snapshot payload', () => {
+      const handler = getIpcHandler('get-health-snapshot')!
+      const result = handler()
+      expect(result).toMatchObject({
+        appVersion: '1.2.3',
+        platform: process.platform,
+        inCall: false,
+        muted: false,
+        credentialRuntime: expect.objectContaining({
+          cacheStatus: 'fresh'
+        })
+      })
+      expect(credentialsMock.getCredentialRuntimeSnapshot).toHaveBeenCalled()
+    })
+  })
+
+  describe('export-diagnostics-bundle', () => {
+    it('is registered', () => {
+      expect(ipcHandleMap.has('export-diagnostics-bundle')).toBe(true)
+    })
+
+    it('writes diagnostics payload and returns output path', async () => {
+      const handler = getIpcHandler('export-diagnostics-bundle')!
+      const result = await handler({}, {
+        password: 'secret',
+        nested: { token: 'abc' }
+      })
+      expect(writeFileMock).toHaveBeenCalled()
+      expect(result.ok).toBe(true)
+      expect(result.path).toContain('diagnostics')
+    })
+  })
+
   describe('open-remote-mic-setup-doc', () => {
     it('is registered', () => {
       expect(ipcHandleMap.has('open-remote-mic-setup-doc')).toBe(true)
@@ -2072,8 +2162,11 @@ describe('All expected IPC channels are registered', () => {
     'get-virtual-audio-installer-state',
     'get-logs-dir',
     'open-logs-folder',
+    'get-session-credentials',
     'get-ice-servers',
     'get-mqtt-brokers',
+    'get-health-snapshot',
+    'export-diagnostics-bundle',
   ]
 
   const expectedOnChannels = [

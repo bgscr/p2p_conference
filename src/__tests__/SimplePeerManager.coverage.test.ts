@@ -20,7 +20,6 @@ import {
   MessageDeduplicator,
   MQTTClient,
   MultiBrokerMQTT,
-  loadCredentials,
   resetCredentialsCacheForTesting,
 } from '../renderer/signaling/SimplePeerManager'
 import { SignalingLog } from '../renderer/utils/Logger'
@@ -830,48 +829,6 @@ describe('SimplePeerManager - coverage gaps', () => {
     expect(result).toContain('stereo=0')
   })
 
-  // --- broadcast when MQTT publishes 0 brokers ---
-  it('broadcast logs correctly when MQTT publish returns 0', () => {
-    managerAny.roomId = 'test-room'
-    managerAny.topic = 'p2p-conf/test-room'
-    managerAny.mqtt = mockMqtt({ publish: () => 0 })
-    managerAny.broadcastChannel = null
-
-    // Should not throw
-    managerAny.broadcast({ v: 1, type: 'announce', from: selfId })
-  })
-
-  // --- broadcast with only BroadcastChannel (no MQTT) ---
-  it('broadcast uses only BroadcastChannel when MQTT is null', () => {
-    managerAny.roomId = 'test-room'
-    managerAny.mqtt = null
-    const bc = new MockBC('test')
-    managerAny.broadcastChannel = bc
-
-    managerAny.broadcast({ v: 1, type: 'announce', from: selfId })
-    expect(bc.postMessage).toHaveBeenCalled()
-  })
-
-  // --- broadcast does not log for ping/pong/mute-status ---
-  it('broadcast skips logging for ping, pong, and mute-status types', () => {
-    managerAny.roomId = 'test-room'
-    managerAny.mqtt = null
-    const bc = new MockBC('test')
-    managerAny.broadcastChannel = bc
-
-    vi.mocked(SignalingLog.debug).mockClear()
-
-    managerAny.broadcast({ v: 1, type: 'ping', from: selfId })
-    managerAny.broadcast({ v: 1, type: 'pong', from: selfId })
-    managerAny.broadcast({ v: 1, type: 'mute-status', from: selfId })
-
-    // None of these should trigger the 'Message broadcast' log
-    const broadcastLogCalls = vi.mocked(SignalingLog.debug).mock.calls.filter(
-      (c: any[]) => c[0] === 'Message broadcast'
-    )
-    expect(broadcastLogCalls.length).toBe(0)
-  })
-
   // --- broadcastMuteStatus early return when no peers ---
   it('broadcastMuteStatus returns early if no peers', () => {
     managerAny.roomId = 'test-room'
@@ -1660,31 +1617,6 @@ describe('SimplePeerManager - coverage gaps', () => {
     broadcastSpy.mockRestore()
   })
 
-  // --- loadCredentials with empty/null results ---
-  it('loadCredentials handles null ICE servers from API', async () => {
-    resetCredentialsCacheForTesting()
-    Object.defineProperty(window, 'electronAPI', {
-      value: {
-        getICEServers: vi.fn().mockResolvedValue(null),
-        getMQTTBrokers: vi.fn().mockResolvedValue(null),
-      },
-      writable: true,
-      configurable: true,
-    })
-
-    await loadCredentials()
-    // Should not throw
-  })
-
-  // --- loadCredentials already loaded ---
-  it('loadCredentials returns early if already loaded', async () => {
-    resetCredentialsCacheForTesting()
-    await loadCredentials()
-
-    // Second call should return immediately
-    await loadCredentials()
-  })
-
   // --- replaceTrack with null track ---
   it('replaceTrack returns early with null track', () => {
     manager.replaceTrack(null as any)
@@ -1847,36 +1779,6 @@ describe('SimplePeerManager - coverage gaps', () => {
 
     // Should not throw
     await managerAny.handleIceCandidate(peerId, { candidate: 'c1', sdpMid: '0' })
-  })
-
-  // --- broadcast adds msgId if missing ---
-  it('broadcast adds msgId if not present', () => {
-    managerAny.roomId = 'test-room'
-    managerAny.mqtt = null
-    const bc = new MockBC('test')
-    managerAny.broadcastChannel = bc
-
-    const msg: any = { v: 1, type: 'announce', from: selfId }
-    managerAny.broadcast(msg)
-
-    expect(msg.msgId).toBeDefined()
-    expect(typeof msg.msgId).toBe('string')
-  })
-
-  // --- sendToPeer sets to, sessionId, and msgId ---
-  it('sendToPeer sets to, sessionId, and generates msgId', () => {
-    managerAny.roomId = 'test-room'
-    managerAny.sessionId = 42
-    managerAny.mqtt = null
-    const bc = new MockBC('test')
-    managerAny.broadcastChannel = bc
-
-    const msg: any = { v: 1, type: 'ping', from: selfId }
-    managerAny.sendToPeer('target-peer', msg)
-
-    expect(msg.to).toBe('target-peer')
-    expect(msg.sessionId).toBe(42)
-    expect(msg.msgId).toBeDefined()
   })
 
   // --- getDebugInfo returns comprehensive info ---

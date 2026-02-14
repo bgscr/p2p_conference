@@ -13,6 +13,9 @@ export default defineConfig({
     test: {
         globals: true,
         environment: 'jsdom',
+        pool: 'vmThreads',
+        vmMemoryLimit: '512MB',
+        maxWorkers: 2,
         setupFiles: ['src/__tests__/setup.ts'],
         include: ['src/__tests__/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}', 'electron/**/*.test.ts'],
         exclude: ['e2e/**'],

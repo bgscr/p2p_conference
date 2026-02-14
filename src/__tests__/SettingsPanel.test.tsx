@@ -204,6 +204,28 @@ describe('SettingsPanel', () => {
     expect(props.onSettingsChange).toHaveBeenCalledWith({ autoGainControlEnabled: true })
   })
 
+  it('toggles push-to-talk setting', async () => {
+    const props = defaultProps()
+    render(<SettingsPanel {...props} />)
+
+    await user.click(screen.getByTestId('settings-ptt-toggle'))
+    expect(props.onSettingsChange).toHaveBeenCalledWith({ pushToTalkEnabled: true })
+  })
+
+  it('updates push-to-talk hotkey when push-to-talk is enabled', async () => {
+    const props = defaultProps({
+      settings: {
+        ...defaultProps().settings,
+        pushToTalkEnabled: true,
+        pushToTalkKey: 'space'
+      }
+    })
+    render(<SettingsPanel {...props} />)
+
+    await user.selectOptions(screen.getByTestId('settings-ptt-key'), 'capslock')
+    expect(props.onSettingsChange).toHaveBeenCalledWith({ pushToTalkKey: 'capslock' })
+  })
+
   // --- handleDownloadLogs ---
   it('calls logger.downloadLogs when download button is clicked', async () => {
     render(<SettingsPanel {...defaultProps()} />)
@@ -239,6 +261,14 @@ describe('SettingsPanel', () => {
 
     expect(mocks.clearLogs).toHaveBeenCalled()
     // No crash = success
+  })
+
+  it('calls diagnostics export callback', async () => {
+    const onExportDiagnostics = vi.fn()
+    render(<SettingsPanel {...defaultProps({ onExportDiagnostics })} />)
+
+    await user.click(screen.getByTestId('settings-export-diagnostics-btn'))
+    expect(onExportDiagnostics).toHaveBeenCalledTimes(1)
   })
 
   // --- Language Selection ---

@@ -4,12 +4,13 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { selfId, type SimplePeerManager } from '../signaling/SimplePeerManager'
+import { selfId } from '../signaling'
+import type { PeerManager } from '../signaling'
 import type { ChatMessage } from '@/types'
 
 export const MAX_CHAT_MESSAGE_LENGTH = 5000
 
-type ChatManager = Pick<SimplePeerManager, 'setOnChatMessage' | 'sendChatMessage'>
+type ChatManager = Pick<PeerManager, 'setOnChatMessage' | 'sendChatMessage'>
 
 interface UseDataChannelOptions {
   p2pManager: ChatManager
@@ -116,4 +117,3 @@ export function useDataChannel({
     reset
   }
 }
-

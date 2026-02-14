@@ -3,7 +3,7 @@
  * Handles window management, system permissions, tray, and IPC communication
  */
 
-import { app, BrowserWindow, ipcMain, systemPreferences, Menu, shell, Tray, nativeImage, desktopCapturer, session, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, systemPreferences, Menu, shell, Tray, nativeImage, session } from 'electron'
 
 // Suppress security warnings in development (CSP unsafe-eval is required by Vite HMR)
 // This warning will not appear in production builds
@@ -14,13 +14,25 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { fileLogger, MainLog, TrayLog, IPCLog } from './logger'
 import type { LogLevel } from './logger'
-import { getICEServers, getMQTTBrokers } from './credentials'
+import {
+  getICEServers,
+  getMQTTBrokers,
+  getSessionCredentials,
+  getCredentialRuntimeSnapshot,
+  configureCredentialRuntime,
+  validateCredentialConfiguration
+} from './credentials'
 import {
   installVirtualAudioDriver,
   getVirtualAudioInstallerState,
   validateBundledVirtualAudioAssets,
   type VirtualAudioProvider
 } from './services/virtualAudioInstaller'
+import { exportDiagnosticsBundle } from './services/diagnosticsBundle'
+import {
+  getScreenSourcesForIpc,
+  setupDisplayMediaHandler as setupDisplayMediaRequestHandler
+} from './services/displayMedia'
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
 try {
@@ -37,100 +49,27 @@ let tray: Tray | null = null
 let isQuitting = false
 let isMuted = false
 let isInCall = false
+const appStartTime = Date.now()
 
-function pickCurrentScreenSource(sources: Electron.DesktopCapturerSource[]): Electron.DesktopCapturerSource | undefined {
-  const screenSources = sources.filter(source => source.id.startsWith('screen:'))
-  if (screenSources.length === 0) {
-    return undefined
-  }
-
-  try {
-    const cursorPoint = screen.getCursorScreenPoint()
-    const currentDisplay = screen.getDisplayNearestPoint(cursorPoint)
-    const currentDisplayId = String(currentDisplay.id)
-    const matched = screenSources.find(source => source.display_id === currentDisplayId)
-    return matched ?? screenSources[0]
-  } catch {
-    return screenSources[0]
+function getHealthSnapshot() {
+  return {
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round((Date.now() - appStartTime) / 1000),
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    nodeVersion: process.versions.node,
+    electronVersion: process.versions.electron,
+    memoryUsage: process.memoryUsage(),
+    windowVisible: mainWindow?.isVisible() ?? false,
+    inCall: isInCall,
+    muted: isMuted,
+    credentialRuntime: getCredentialRuntimeSnapshot()
   }
 }
 
-function prioritizeCaptureSources(sources: Electron.DesktopCapturerSource[]): Electron.DesktopCapturerSource[] {
-  const screenSources = sources.filter(source => source.id.startsWith('screen:'))
-  const windowSources = sources.filter(source => source.id.startsWith('window:'))
-  const currentScreen = pickCurrentScreenSource(screenSources)
-
-  const orderedScreens = currentScreen
-    ? [currentScreen, ...screenSources.filter(source => source.id !== currentScreen.id)]
-    : screenSources
-
-  // Keep windows as a fallback when screen capture fails on some environments.
-  return [...orderedScreens, ...windowSources]
-}
-
-/**
- * Configure display media (screen sharing) handler for Electron.
- * Without this, renderer getDisplayMedia may reject with NotSupportedError.
- */
 function setupDisplayMediaHandler(): void {
-  try {
-    const currentSession = session.defaultSession
-    if (!currentSession || typeof (currentSession as any).setDisplayMediaRequestHandler !== 'function') {
-      MainLog.warn('Display media request handler not available')
-      return
-    }
-
-    const requestHandler = async (
-      request: { securityOrigin?: string; videoRequested?: boolean; audioRequested?: boolean; userGesture?: boolean },
-      callback: (streams: { video?: Electron.DesktopCapturerSource; audio?: any }) => void
-    ) => {
-      try {
-        MainLog.debug('Display media request received', {
-          origin: request.securityOrigin,
-          videoRequested: request.videoRequested,
-          audioRequested: request.audioRequested,
-          userGesture: request.userGesture
-        })
-
-        // Prefer current screen, but keep windows as fallback for remote-control environments.
-        const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] })
-        const prioritizedSources = prioritizeCaptureSources(sources)
-
-        if (!prioritizedSources || prioritizedSources.length === 0) {
-          MainLog.warn('No display capture sources available')
-          callback({ video: undefined })
-          return
-        }
-
-        const preferred = prioritizedSources[0]
-
-        MainLog.info('Display capture source granted', {
-          sourceCount: prioritizedSources.length,
-          sourceId: preferred.id,
-          sourceName: preferred.name,
-          sourceType: preferred.id.startsWith('screen:') ? 'screen' : 'window'
-        })
-        callback({ video: preferred })
-      } catch (err) {
-        MainLog.error('Failed to provide display capture source', { error: String(err) })
-        callback({ video: undefined })
-      }
-    }
-
-    try {
-      currentSession.setDisplayMediaRequestHandler(requestHandler, { useSystemPicker: true })
-      MainLog.info('Display media request handler configured', { useSystemPicker: true })
-    } catch (err) {
-      MainLog.warn('Failed to enable system picker for display media, retrying without it', {
-        error: String(err)
-      })
-      currentSession.setDisplayMediaRequestHandler(requestHandler)
-      MainLog.info('Display media request handler configured', { useSystemPicker: false })
-    }
-
-  } catch (err) {
-    MainLog.error('Failed to configure display media handler', { error: String(err) })
-  }
+  setupDisplayMediaRequestHandler({ currentSession: session.defaultSession, logger: MainLog })
 }
 
 /**
@@ -646,6 +585,31 @@ app.whenReady().then(async () => {
   // Initialize file logger first
   await fileLogger.init()
 
+  const isProductionRuntime = app.isPackaged || process.env.NODE_ENV === 'production'
+  const allowInsecureProduction =
+    (process.env.P2P_ALLOW_INSECURE_PRODUCTION ?? 'true').trim().toLowerCase() === 'true'
+  const enforceSecureProduction = !allowInsecureProduction
+
+  configureCredentialRuntime({
+    isProduction: isProductionRuntime,
+    enforceSecureProduction
+  })
+
+  const credentialValidation = validateCredentialConfiguration()
+  if (!credentialValidation.ok) {
+    if (isProductionRuntime && enforceSecureProduction) {
+      MainLog.error('Credential validation failed in secure production mode', {
+        message: credentialValidation.message
+      })
+      throw new Error(credentialValidation.message)
+    }
+    MainLog.warn('Credential validation failed (dev mode fallback allowed)', {
+      message: credentialValidation.message
+    })
+  } else {
+    MainLog.info('Credential configuration validated', { message: credentialValidation.message })
+  }
+
   MainLog.info('App starting', {
     version: app.getVersion(),
     platform: process.platform,
@@ -691,7 +655,11 @@ app.whenReady().then(async () => {
     }
   })
 }).catch((error) => {
-  MainLog.error('Failed to initialize app', { error })
+  MainLog.error('Failed to initialize app', {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined
+  })
+  app.quit()
 })
 
 /**
@@ -740,22 +708,8 @@ ipcMain.handle('get-platform', () => {
 })
 
 ipcMain.handle('get-screen-sources', async () => {
-  try {
-    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] })
-    const prioritizedSources = prioritizeCaptureSources(sources)
-    const serializableSources = prioritizedSources.map(source => ({
-      id: source.id,
-      name: source.name
-    }))
-    IPCLog.debug('Screen sources requested', {
-      count: serializableSources.length,
-      firstSourceId: serializableSources[0]?.id
-    })
-    return serializableSources
-  } catch (err) {
-    IPCLog.error('Failed to get screen sources', { error: String(err) })
-    return []
-  }
+  const sources = await getScreenSourcesForIpc(IPCLog)
+  return sources.map((source) => ({ id: source.id, name: source.name }))
 })
 
 ipcMain.handle('open-remote-mic-setup-doc', async () => {
@@ -869,6 +823,17 @@ ipcMain.on('flash-window', () => {
  * These keep sensitive credentials in the main process
  */
 
+ipcMain.handle('get-session-credentials', async () => {
+  IPCLog.debug('Session credentials requested')
+  try {
+    const credentials = await getSessionCredentials()
+    return credentials
+  } catch (err) {
+    IPCLog.error('Failed to resolve session credentials', { error: String(err) })
+    throw err
+  }
+})
+
 // Get ICE servers configuration (STUN + TURN with credentials)
 ipcMain.handle('get-ice-servers', () => {
   IPCLog.debug('ICE servers requested')
@@ -879,6 +844,33 @@ ipcMain.handle('get-ice-servers', () => {
 ipcMain.handle('get-mqtt-brokers', () => {
   IPCLog.debug('MQTT brokers requested')
   return getMQTTBrokers()
+})
+
+ipcMain.handle('get-health-snapshot', () => {
+  IPCLog.debug('Health snapshot requested')
+  return getHealthSnapshot()
+})
+
+ipcMain.handle('export-diagnostics-bundle', async (_event, payload?: unknown) => {
+  const diagnosticsDir = join(fileLogger.getLogsDir() || app.getPath('userData'), 'diagnostics')
+  const result = await exportDiagnosticsBundle({
+    diagnosticsRootDir: diagnosticsDir,
+    logsDir: fileLogger.getLogsDir(),
+    currentLogFile: fileLogger.getCurrentLogFile(),
+    payload,
+    healthSnapshot: getHealthSnapshot(),
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    osVersion: process.getSystemVersion()
+  })
+
+  if (result.ok) {
+    IPCLog.info('Diagnostics bundle exported', { path: result.path })
+  } else {
+    IPCLog.error('Failed to export diagnostics bundle', { error: result.error })
+  }
+  return result
 })
 
 /**

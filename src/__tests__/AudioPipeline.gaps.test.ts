@@ -16,16 +16,18 @@
  * - handleWorkletMessage: ready, error, stats, unknown types
  * - getAudioLevel: with analyser returning data
  * - setNoiseSuppression: without workletNode
- * - getStats: timeout path
+ * - getStats: timeout path and successful response path
  * - setGain: clamping
  * - disconnect: all error catch paths
+ * - destroy: catches audioContext.close errors
+ * - resetAudioPipeline: destroys existing singleton instance
  * - getSampleRate: without audioContext
  * - getOutputStream: without destinationNode
  * - getAnalyserNode: without analyserNode
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { AudioPipeline, resetAudioPipeline } from '../renderer/audio-processor/AudioPipeline'
+import { AudioPipeline, getAudioPipeline, resetAudioPipeline } from '../renderer/audio-processor/AudioPipeline'
 
 vi.mock('../renderer/utils/Logger', () => ({
   AudioLog: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
@@ -282,6 +284,48 @@ describe('AudioPipeline - additional gaps', () => {
     expect(result).toEqual({ error: 'Stats request timeout' })
   })
 
+  it('getStats resolves when worklet sends stats payload', async () => {
+    let addedEventHandler: ((event: MessageEvent) => void) | null = null
+    class StatsWorkletNode {
+      port = {
+        postMessage: vi.fn().mockImplementation((msg: { type: string }) => {
+          if (msg.type === 'getStats' && addedEventHandler) {
+            setTimeout(() => {
+              addedEventHandler?.({
+                data: { type: 'stats', data: { cpu: 5, framesProcessed: 1000 } },
+              } as MessageEvent)
+            }, 50)
+          }
+        }),
+        onmessage: null as ((event: MessageEvent) => void) | null,
+        addEventListener: vi.fn().mockImplementation((_event: string, handler: (event: MessageEvent) => void) => {
+          addedEventHandler = handler
+        }),
+        removeEventListener: vi.fn(),
+      }
+      constructor() {
+        setTimeout(() => {
+          this.port.onmessage?.({ data: { type: 'ready' } } as MessageEvent)
+        }, 10)
+      }
+      connect = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('AudioWorkletNode', StatsWorkletNode)
+    const pipeline = new AudioPipeline()
+    await pipeline.initialize()
+
+    const connectPromise = pipeline.connectInputStream(new MediaStream())
+    await vi.advanceTimersByTimeAsync(100)
+    await connectPromise
+
+    const statsPromise = pipeline.getStats()
+    await vi.advanceTimersByTimeAsync(100)
+
+    await expect(statsPromise).resolves.toEqual({ cpu: 5, framesProcessed: 1000 })
+  })
+
   it('setGain clamps values between 0 and 2', async () => {
     const pipeline = new AudioPipeline()
     await pipeline.initialize()
@@ -315,6 +359,24 @@ describe('AudioPipeline - additional gaps', () => {
       ; (pipeline as any).analyserNode.disconnect = vi.fn(() => { throw new Error('disc error') })
 
     expect(() => pipeline.disconnect()).not.toThrow()
+  })
+
+  it('destroy catches audioContext.close() rejection', async () => {
+    class FailCloseAudioContext extends MockAudioContext {
+      close = vi.fn().mockRejectedValue(new Error('Close failed'))
+    }
+    vi.stubGlobal('AudioContext', FailCloseAudioContext)
+
+    const pipeline = new AudioPipeline()
+    await pipeline.initialize()
+
+    await expect(pipeline.destroy()).resolves.toBeUndefined()
+
+    const { AudioLog } = await import('../renderer/utils/Logger')
+    expect(AudioLog.warn).toHaveBeenCalledWith(
+      'Error closing AudioContext',
+      expect.objectContaining({ error: expect.any(Error) })
+    )
   })
 
   it('getSampleRate returns 48000 without audioContext', () => {
@@ -412,5 +474,17 @@ describe('AudioPipeline - additional gaps', () => {
 
     // Clear timeout
     await vi.advanceTimersByTimeAsync(12000)
+  })
+
+  it('resetAudioPipeline destroys existing singleton instance', async () => {
+    const instance = getAudioPipeline()
+    await instance.initialize()
+    expect(instance.isReady()).toBe(true)
+
+    await resetAudioPipeline()
+
+    const nextInstance = getAudioPipeline()
+    expect(nextInstance).not.toBe(instance)
+    expect(nextInstance.isReady()).toBe(false)
   })
 })

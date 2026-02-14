@@ -1,194 +1,120 @@
-import { _electron as electron, test, expect, ElectronApplication, Page } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
+import {
+  closeClient,
+  launchClient,
+  setEnglishAndOpenLobby,
+  type LaunchedClient
+} from './helpers/multiPeerSession'
 
 test.describe('Settings and Navigation E2E', () => {
-    test.describe.configure({ mode: 'serial' })
+  test.describe.configure({ mode: 'serial' })
 
-    let electronApp: ElectronApplication
-    let window: Page
+  let appClient: LaunchedClient | null = null
+  let window: Page
 
-    test.beforeAll(async () => {
-        electronApp = await electron.launch({
-            args: ['.', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
-            locale: 'en-US',
-            env: { ...process.env, NODE_ENV: 'test' }
-        })
-        window = await electronApp.firstWindow()
+  async function joinRoom(userName: string): Promise<string> {
+    await window.locator('data-testid=lobby-name-input').fill(userName)
+    await window.locator('data-testid=lobby-generate-btn').click()
+    const roomId = await window.locator('data-testid=lobby-room-input').inputValue()
+    await window.locator('data-testid=lobby-join-btn').click()
+    await expect(window.locator('data-testid=room-leave-btn')).toBeVisible({ timeout: 20_000 })
+    return roomId
+  }
+
+  async function openLobbySettings(): Promise<void> {
+    await window.getByRole('button', { name: /Settings/i }).first().evaluate((element: HTMLButtonElement) => {
+      element.click()
     })
+    await expect(window.getByRole('heading', { name: /Settings/i })).toBeVisible({ timeout: 10_000 })
+  }
 
-    test.afterAll(async () => {
-        await electronApp.close()
+  async function leaveRoomIfNeeded(): Promise<void> {
+    const leaveButton = window.locator('data-testid=room-leave-btn')
+    if ((await leaveButton.count()) === 0) return
+
+    await leaveButton.first().evaluate((element: HTMLButtonElement) => {
+      element.click()
     })
+    const confirmLeaveButton = window.locator('button.btn.bg-red-600')
+    if ((await confirmLeaveButton.count()) > 0) {
+      await confirmLeaveButton.first().evaluate((element: HTMLButtonElement) => {
+        element.click()
+      })
+    }
 
-    test('Settings panel opens and closes correctly', async () => {
-        // Force English language
-        await window.evaluate(() => {
-            localStorage.setItem('p2p-conf-language', 'en')
-        })
-        await window.reload()
-        await window.waitForLoadState('domcontentloaded')
+    await expect(window.locator('data-testid=lobby-title')).toBeVisible({ timeout: 10_000 })
+  }
 
-        // Wait for lobby
-        await expect(window.locator('data-testid=lobby-title')).toBeVisible()
+  test.beforeAll(async () => {
+    appClient = await launchClient('p2p-settings-')
+    window = appClient.page
+  })
 
-        // Click settings button (gear icon)
-        const settingsBtn = window.locator('button[title*="Settings"], button[aria-label*="Settings"], button:has(svg.lucide-settings)')
+  test.afterAll(async () => {
+    await closeClient(appClient)
+  })
 
-        // If settings button exists on lobby, click it
-        if (await settingsBtn.count() > 0) {
-            await settingsBtn.first().click()
+  test.beforeEach(async () => {
+    await setEnglishAndOpenLobby(window)
+  })
 
-            // Verify settings panel is visible
-            const settingsPanel = window.locator('[data-testid=settings-panel], .settings-panel, text=Settings')
-            await expect(settingsPanel.first()).toBeVisible({ timeout: 5000 })
-        }
+  test.afterEach(async () => {
+    await leaveRoomIfNeeded()
+  })
+
+  test('Settings panel opens and closes correctly', async () => {
+    await openLobbySettings()
+
+    await window.locator('header button[title]').first().click()
+    await expect(window.locator('data-testid=lobby-title')).toBeVisible()
+  })
+
+  test('Language can be changed in settings', async () => {
+    await openLobbySettings()
+
+    const languageButtons = window.locator('section.card').first().locator('button')
+    expect(await languageButtons.count()).toBeGreaterThan(1)
+
+    await languageButtons.nth(1).click()
+    await expect.poll(async () => {
+      return await window.evaluate(() => localStorage.getItem('p2p-conf-language'))
+    }).not.toBe('en')
+
+    await window.getByRole('button', { name: 'English' }).click()
+    await expect.poll(async () => {
+      return await window.evaluate(() => localStorage.getItem('p2p-conf-language'))
+    }).toBe('en')
+  })
+
+  test('Complete user flow: Join room, toggle controls, leave room', async () => {
+    const roomId = await joinRoom('E2ETestUser')
+    expect(roomId.length).toBeGreaterThan(5)
+
+    const muteBtn = window.locator('data-testid=room-mute-btn')
+    await expect(muteBtn).toBeVisible()
+    await window.keyboard.press('m')
+    await window.keyboard.press('m')
+    await expect(window.locator('data-testid=room-leave-btn')).toBeVisible()
+
+    await leaveRoomIfNeeded()
+  })
+
+  test('Room ID validation shows error for empty room', async () => {
+    await window.locator('data-testid=lobby-name-input').fill('TestUser')
+    await window.locator('data-testid=lobby-room-input').fill('')
+
+    const joinBtn = window.locator('data-testid=lobby-join-btn')
+    await expect(joinBtn).toBeDisabled()
+  })
+
+  test('Copy room link functionality works', async () => {
+    await joinRoom('CopyUser')
+
+    const copyBtn = window.locator('data-testid=room-copy-btn')
+    await expect(copyBtn).toBeVisible()
+    await copyBtn.evaluate((element: HTMLButtonElement) => {
+      element.click()
     })
-
-    test('Language can be changed in settings', async () => {
-        // Force English first
-        await window.evaluate(() => {
-            localStorage.setItem('p2p-conf-language', 'en')
-        })
-        await window.reload()
-        await window.waitForLoadState('domcontentloaded')
-
-        // Look for language selector
-        const languageSelect = window.locator('select[data-testid=language-select], select:has-text("English")')
-
-        if (await languageSelect.count() > 0) {
-            // Get current value before change
-            const currentLang = await window.evaluate(() => localStorage.getItem('p2p-conf-language'))
-            expect(currentLang).toBe('en')
-
-            // Change to another language (Spanish)
-            await languageSelect.first().selectOption('es')
-
-            // Verify localStorage was updated
-            const newLang = await window.evaluate(() => localStorage.getItem('p2p-conf-language'))
-            expect(newLang).toBe('es')
-
-            // Reset to English
-            await languageSelect.first().selectOption('en')
-        }
-    })
-
-    test('Complete user flow: Join room, toggle controls, leave room', async () => {
-        // Force English
-        await window.evaluate(() => {
-            localStorage.setItem('p2p-conf-language', 'en')
-        })
-        await window.reload()
-        await window.waitForLoadState('domcontentloaded')
-
-        // Wait for lobby
-        await expect(window.locator('data-testid=lobby-title')).toBeVisible()
-
-        // Enter username
-        const nameInput = window.locator('data-testid=lobby-name-input')
-        await nameInput.fill('E2ETestUser')
-
-        // Generate room ID
-        const generateBtn = window.locator('data-testid=lobby-generate-btn')
-        await generateBtn.click()
-
-        // Verify Room ID is generated
-        const roomInput = window.locator('data-testid=lobby-room-input')
-        const roomId = await roomInput.inputValue()
-        expect(roomId.length).toBeGreaterThan(5)
-
-        // Join room
-        const joinBtn = window.locator('data-testid=lobby-join-btn')
-        await joinBtn.click()
-
-        // Wait for room view
-        const leaveBtn = window.locator('data-testid=room-leave-btn')
-        await expect(leaveBtn).toBeVisible({ timeout: 20000 })
-
-        // Toggle mute using keyboard
-        await window.keyboard.press('m')
-        await window.waitForTimeout(500)
-        await window.keyboard.press('m')
-
-        // Check for overlay (Searching for peers...)
-        const cancelBtn = window.locator('button:has-text("Cancel")')
-        if (await cancelBtn.isVisible()) {
-            await cancelBtn.click()
-        } else {
-            // Leave room via main button if connected
-            await leaveBtn.click()
-        }
-
-        // Verify leave confirmation dialog or direct return to lobby
-        const confirmBtn = window.locator('button:has-text("Leave"), button:has-text("Confirm")')
-        if (await confirmBtn.count() > 0) {
-            await confirmBtn.first().click()
-        }
-
-        // Verify return to lobby
-        await expect(window.locator('data-testid=lobby-title')).toBeVisible({ timeout: 10000 })
-    })
-
-    test('Room ID validation shows error for empty room', async () => {
-        // Force English
-        await window.evaluate(() => {
-            localStorage.setItem('p2p-conf-language', 'en')
-        })
-        await window.reload()
-        await window.waitForLoadState('domcontentloaded')
-
-        // Wait for lobby
-        await expect(window.locator('data-testid=lobby-title')).toBeVisible()
-
-        // Enter username
-        const nameInput = window.locator('data-testid=lobby-name-input')
-        await nameInput.fill('TestUser')
-
-        // Clear room input (should be empty by default)
-        const roomInput = window.locator('data-testid=lobby-room-input')
-        await roomInput.clear()
-
-        // Click Join without room ID
-        const joinBtn = window.locator('data-testid=lobby-join-btn')
-
-        // Join button should be disabled or show error
-        const isDisabled = await joinBtn.isDisabled()
-
-        if (!isDisabled) {
-            await joinBtn.click()
-            // Should see error or remain on lobby
-            await expect(window.locator('data-testid=lobby-title')).toBeVisible()
-        } else {
-            expect(isDisabled).toBe(true)
-        }
-    })
-
-    test('Copy room link functionality works', async () => {
-        // Force English
-        await window.evaluate(() => {
-            localStorage.setItem('p2p-conf-language', 'en')
-        })
-        await window.reload()
-        await window.waitForLoadState('domcontentloaded')
-
-        // Wait for lobby
-        await expect(window.locator('data-testid=lobby-title')).toBeVisible()
-
-        // Enter username
-        const nameInput = window.locator('data-testid=lobby-name-input')
-        await nameInput.fill('TestUser')
-
-        // Generate room ID
-        const generateBtn = window.locator('data-testid=lobby-generate-btn')
-        await generateBtn.click()
-
-        // Look for copy button
-        const copyBtn = window.locator('[data-testid=copy-link-btn], button[title*="Copy"], button:has(svg.lucide-copy)')
-
-        if (await copyBtn.count() > 0) {
-            await copyBtn.first().click()
-
-            // Verify clipboard or toast notification
-            // Note: Clipboard access may be restricted in test environment
-            await window.waitForTimeout(500)
-        }
-    })
+    await expect(window.locator('data-testid=room-leave-btn')).toBeVisible()
+  })
 })

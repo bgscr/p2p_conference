@@ -1,68 +1,48 @@
-import { _electron as electron, test, expect, ElectronApplication, Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test'
+import {
+  closeClient,
+  launchClient,
+  setEnglishAndOpenLobby,
+  type LaunchedClient
+} from './helpers/multiPeerSession'
 
 test.describe('Camera Features E2E', () => {
-    test.describe.configure({ mode: 'serial' });
+    test.describe.configure({ mode: 'serial' })
 
-    let electronApp: ElectronApplication;
-    let window: Page;
+    let appClient: LaunchedClient | null = null
+    let window: Page
 
     test.beforeAll(async () => {
-        electronApp = await electron.launch({
-            args: ['.', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
-            locale: 'en-US',
-            env: { ...process.env, NODE_ENV: 'test' }
-        });
-        window = await electronApp.firstWindow();
-    });
+      appClient = await launchClient('p2p-camera-')
+      window = appClient.page
+    })
 
     test.afterAll(async () => {
-        await electronApp.close();
-    });
+      await closeClient(appClient)
+    })
 
     test('Lobby Camera Toggle & Join with Video Off', async () => {
-        // Force English language
-        await window.evaluate(() => {
-            localStorage.setItem('p2p-conf-language', 'en');
-        });
-        await window.reload();
-        await window.waitForLoadState('domcontentloaded');
+      await setEnglishAndOpenLobby(window)
 
-        // Check toggle exists
-        const cameraToggle = window.locator('data-testid=camera-toggle');
-        await expect(cameraToggle).toBeVisible();
+      const cameraToggle = window.locator('data-testid=camera-toggle')
+      await expect(cameraToggle).toBeVisible()
 
-        // Check it is OFF (gray background)
-        await expect(cameraToggle).toHaveClass(/bg-gray-300/);
+      await expect(cameraToggle).toHaveClass(/bg-gray-300/)
 
-        // Click to turn ON
-        await cameraToggle.click();
-        await expect(cameraToggle).toHaveClass(/bg-blue-600/);
+      await cameraToggle.click()
+      await expect(cameraToggle).toHaveClass(/bg-blue-600/)
 
-        // Click to turn OFF again
-        await cameraToggle.click();
-        await expect(cameraToggle).toHaveClass(/bg-gray-300/);
+      await cameraToggle.click()
+      await expect(cameraToggle).toHaveClass(/bg-gray-300/)
 
-        // Enter username
-        const nameInput = window.locator('data-testid=lobby-name-input');
-        await nameInput.fill('TestUser');
+      await window.locator('data-testid=lobby-name-input').fill('TestUser')
+      await window.locator('data-testid=lobby-generate-btn').click()
+      await window.locator('data-testid=lobby-join-btn').click()
 
-        // Click Generate button
-        const generateBtn = window.locator('data-testid=lobby-generate-btn');
-        await generateBtn.click();
+      await expect(window.locator('data-testid=room-leave-btn')).toBeVisible({ timeout: 20_000 })
 
-        // Click Join
-        const joinBtn = window.locator('data-testid=lobby-join-btn');
-        // Wait a bit just in case
-        await window.waitForTimeout(1000);
-        await joinBtn.click();
-
-        // Verify transition to Room View
-        const leaveBtn = window.locator('data-testid=room-leave-btn');
-        await expect(leaveBtn).toBeVisible({ timeout: 20000 });
-
-        // Verify Video Button exists and indicates "Start Video"
-        const roomVideoBtn = window.locator('data-testid=room-video-btn');
-        await expect(roomVideoBtn).toBeVisible();
-        await expect(roomVideoBtn).toHaveAttribute('title', 'Start Video');
-    });
-});
+      const roomVideoBtn = window.locator('data-testid=room-video-btn')
+      await expect(roomVideoBtn).toBeVisible()
+      await expect(roomVideoBtn).toHaveAttribute('title', 'Start Video')
+    })
+})

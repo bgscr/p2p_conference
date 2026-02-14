@@ -4,7 +4,8 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { peerManager, selfId, SimplePeerManager } from '../signaling/SimplePeerManager'
+import { peerManager, selfId } from '../signaling'
+import type { PeerManager } from '../signaling'
 import { RoomLog } from '../utils/Logger'
 import type { Peer, ConnectionState } from '@/types'
 
@@ -12,7 +13,7 @@ import type { Peer, ConnectionState } from '@/types'
 export { selfId }
 
 interface UseRoomResult {
-  room: SimplePeerManager | null
+  room: PeerManager | null
   roomId: string | null
   peers: Map<string, Peer>
   localPeerId: string
@@ -77,78 +78,79 @@ export function useRoom(callbacks?: RoomCallbacks): UseRoomResult {
   }, [])
 
   /**
-   * Initialize peer manager callbacks
-   * NOTE: onRemoteStream is handled by App.tsx to store streams for audio playback
-   * We only handle onPeerJoin and onPeerLeave here for peer list management
+   * Initialize peer manager event subscriptions.
+   * NOTE: remoteStream is handled by App.tsx to store streams for audio playback.
    */
   useEffect(() => {
-    peerManager.setCallbacks({
-      onPeerJoin: (peerId: string, userName: string, platform: 'win' | 'mac' | 'linux') => {
-        RoomLog.info('Peer joined', { peerId, userName, platform })
+    const unsubscribePeerJoin = peerManager.on('peerJoin', ({ peerId, userName, platform }) => {
+      RoomLog.info('Peer joined', { peerId, userName, platform })
 
-        const newPeer: Peer = {
-          id: peerId,
-          name: userName,
-          isMuted: false,
-          isSpeakerMuted: false,
-          audioLevel: 0,
-          connectionState: 'connected',
-          platform
+      const newPeer: Peer = {
+        id: peerId,
+        name: userName,
+        isMuted: false,
+        isSpeakerMuted: false,
+        audioLevel: 0,
+        connectionState: 'connected',
+        platform
+      }
+
+      setPeers(prev => {
+        const updated = new Map(prev)
+        updated.set(peerId, newPeer)
+        RoomLog.debug('Peers updated', { count: updated.size })
+        return updated
+      })
+
+      updateConnectionState('connected')
+      callbacksRef.current.onPeerJoin?.(peerId, userName)
+    })
+
+    const unsubscribePeerLeave = peerManager.on('peerLeave', ({ peerId, userName }) => {
+      RoomLog.info('Peer left', { peerId, userName })
+
+      setPeers(prev => {
+        const updated = new Map(prev)
+        updated.delete(peerId)
+
+        RoomLog.debug('Peers updated after leave', { count: updated.size })
+
+        if (updated.size === 0) {
+          updateConnectionState('signaling')
         }
 
-        setPeers(prev => {
-          const updated = new Map(prev)
-          updated.set(peerId, newPeer)
-          RoomLog.debug('Peers updated', { count: updated.size })
-          return updated
-        })
+        return updated
+      })
 
-        updateConnectionState('connected')
-        callbacksRef.current.onPeerJoin?.(peerId, userName)
-      },
-
-      onPeerLeave: (peerId: string, userName: string, _platform: 'win' | 'mac' | 'linux') => {
-        RoomLog.info('Peer left', { peerId, userName })
-
-        setPeers(prev => {
-          const updated = new Map(prev)
-          updated.delete(peerId)
-
-          RoomLog.debug('Peers updated after leave', { count: updated.size })
-
-          if (updated.size === 0) {
-            updateConnectionState('signaling')
-          }
-
-          return updated
-        })
-
-        callbacksRef.current.onPeerLeave?.(peerId, userName)
-      },
-
-      onPeerMuteChange: (peerId: string, muteStatus: { micMuted: boolean, speakerMuted: boolean, videoMuted?: boolean, isScreenSharing?: boolean }) => {
-        RoomLog.debug('Peer mute status changed', { peerId, muteStatus })
-
-        setPeers(prev => {
-          const updated = new Map(prev)
-          const peer = updated.get(peerId)
-
-          if (peer) {
-            updated.set(peerId, {
-              ...peer,
-              isMuted: muteStatus.micMuted,
-              isSpeakerMuted: muteStatus.speakerMuted,
-              isVideoMuted: muteStatus.videoMuted ?? peer.isVideoMuted,
-              isScreenSharing: muteStatus.isScreenSharing ?? peer.isScreenSharing
-            })
-          }
-
-          return updated
-        })
-      }
-      // NOTE: onRemoteStream is NOT set here - it's handled by App.tsx
-      // to properly store streams in remoteStreams state for audio playback
+      callbacksRef.current.onPeerLeave?.(peerId, userName)
     })
+
+    const unsubscribePeerMuteChange = peerManager.on('peerMuteChange', ({ peerId, muteStatus }) => {
+      RoomLog.debug('Peer mute status changed', { peerId, muteStatus })
+
+      setPeers(prev => {
+        const updated = new Map(prev)
+        const peer = updated.get(peerId)
+
+        if (peer) {
+          updated.set(peerId, {
+            ...peer,
+            isMuted: muteStatus.micMuted,
+            isSpeakerMuted: muteStatus.speakerMuted,
+            isVideoMuted: muteStatus.videoMuted ?? peer.isVideoMuted,
+            isScreenSharing: muteStatus.isScreenSharing ?? peer.isScreenSharing
+          })
+        }
+
+        return updated
+      })
+    })
+
+    return () => {
+      unsubscribePeerJoin()
+      unsubscribePeerLeave()
+      unsubscribePeerMuteChange()
+    }
   }, [updateConnectionState])
 
   /**

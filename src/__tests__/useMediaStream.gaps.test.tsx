@@ -122,12 +122,20 @@ describe('useMediaStream - additional gaps', () => {
     vi.restoreAllMocks()
   })
 
+  async function setupHook() {
+    const hook = renderHook(() => useMediaStream())
+    await act(async () => {
+      await Promise.resolve()
+    })
+    return hook
+  }
+
   it('startCapture handles NotFoundError', async () => {
     const notFoundErr = new Error('Not found')
     notFoundErr.name = 'NotFoundError'
     mockGetUserMedia.mockRejectedValue(notFoundErr)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -141,7 +149,7 @@ describe('useMediaStream - additional gaps', () => {
     genericErr.name = 'GenericError'
     mockGetUserMedia.mockRejectedValue(genericErr)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -155,14 +163,16 @@ describe('useMediaStream - additional gaps', () => {
     // getUserMedia never resolves
     mockGetUserMedia.mockImplementation(() => new Promise(() => { }))
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     let capturePromise: Promise<any>
     act(() => {
       capturePromise = result.current.startCapture()
     })
 
-    await vi.advanceTimersByTimeAsync(11000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(11000)
+    })
 
     await act(async () => {
       await capturePromise!
@@ -178,7 +188,7 @@ describe('useMediaStream - additional gaps', () => {
     const stream = createMockStream([audioTrack], [videoTrack])
     mockGetUserMedia.mockResolvedValue(stream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture({ videoEnabled: false } as any)
@@ -194,7 +204,7 @@ describe('useMediaStream - additional gaps', () => {
     const stream = createMockStream([audioTrack], [videoTrack])
     mockGetUserMedia.mockResolvedValue(stream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture({ videoEnabled: true } as any)
@@ -209,7 +219,7 @@ describe('useMediaStream - additional gaps', () => {
     const stream = createMockStream([audioTrack])
     mockGetUserMedia.mockResolvedValue(stream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -229,7 +239,7 @@ describe('useMediaStream - additional gaps', () => {
     const initStream = createMockStream([audioTrack], [videoTrack])
     mockGetUserMedia.mockResolvedValue(initStream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -247,12 +257,39 @@ describe('useMediaStream - additional gaps', () => {
     expect(result.current.selectedInputDevice).toBe('mic-2')
   })
 
+  it('switchInputDevice preserves mute state', async () => {
+    const initialAudioTrack = createMockTrack('audio', 'a1')
+    const initialStream = createMockStream([initialAudioTrack])
+    mockGetUserMedia.mockResolvedValueOnce(initialStream)
+
+    const { result } = await setupHook()
+
+    await act(async () => {
+      await result.current.startCapture()
+    })
+
+    act(() => {
+      result.current.toggleMute()
+    })
+
+    const switchedAudioTrack = createMockTrack('audio', 'a2')
+    const switchedStream = createMockStream([switchedAudioTrack])
+    mockGetUserMedia.mockResolvedValueOnce(switchedStream)
+
+    await act(async () => {
+      await result.current.switchInputDevice('mic-2')
+    })
+
+    expect(result.current.isMuted).toBe(true)
+    expect(switchedAudioTrack.enabled).toBe(false)
+  })
+
   it('switchInputDevice error sets error state', async () => {
     const audioTrack = createMockTrack('audio', 'a1')
     const stream = createMockStream([audioTrack])
     mockGetUserMedia.mockResolvedValueOnce(stream).mockRejectedValueOnce(new Error('Switch failed'))
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -267,7 +304,7 @@ describe('useMediaStream - additional gaps', () => {
   })
 
   it('switchInputDevice with no current stream returns null', async () => {
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     // Wait for initial device enumeration to complete
     await act(async () => {
@@ -289,7 +326,7 @@ describe('useMediaStream - additional gaps', () => {
     const stream = createMockStream([audioTrack], [videoTrack])
     mockGetUserMedia.mockResolvedValueOnce(stream).mockRejectedValueOnce(new Error('Camera failed'))
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -304,7 +341,7 @@ describe('useMediaStream - additional gaps', () => {
   })
 
   it('switchVideoDevice with no current stream returns null', async () => {
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     // Wait for initial device enumeration
     await act(async () => {
@@ -329,7 +366,7 @@ describe('useMediaStream - additional gaps', () => {
     const videoStream = createMockStream([], [newVideoTrack])
     mockGetUserMedia.mockResolvedValueOnce(videoStream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     const changeCallback = vi.fn()
     await act(async () => {
@@ -351,7 +388,7 @@ describe('useMediaStream - additional gaps', () => {
     const stream = createMockStream([audioTrack])
     mockGetUserMedia.mockResolvedValue(stream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -366,6 +403,26 @@ describe('useMediaStream - additional gaps', () => {
     expect(result.current.isMuted).toBe(false)
   })
 
+  it('applies pre-capture mute intent when capture starts', async () => {
+    const audioTrack = createMockTrack('audio', 'a-pre')
+    const stream = createMockStream([audioTrack])
+    mockGetUserMedia.mockResolvedValue(stream)
+
+    const { result } = await setupHook()
+
+    act(() => {
+      result.current.toggleMute()
+    })
+    expect(result.current.isMuted).toBe(true)
+
+    await act(async () => {
+      await result.current.startCapture()
+    })
+
+    expect(result.current.isMuted).toBe(true)
+    expect(audioTrack.enabled).toBe(false)
+  })
+
   it('toggleVideo toggles video track enabled', async () => {
     const audioTrack = createMockTrack('audio', 'a1')
     const videoTrack = createMockTrack('video', 'v1')
@@ -373,7 +430,7 @@ describe('useMediaStream - additional gaps', () => {
     const stream = createMockStream([audioTrack], [videoTrack])
     mockGetUserMedia.mockResolvedValue(stream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture({ videoEnabled: true } as any)
@@ -389,7 +446,7 @@ describe('useMediaStream - additional gaps', () => {
     const stream = createMockStream([audioTrack])
     mockGetUserMedia.mockResolvedValue(stream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -400,16 +457,19 @@ describe('useMediaStream - additional gaps', () => {
   })
 
   it('selectOutputDevice updates state', async () => {
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
-    act(() => { result.current.selectOutputDevice('spk-2') })
+    await act(async () => {
+      result.current.selectOutputDevice('spk-2')
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
     expect(result.current.selectedOutputDevice).toBe('spk-2')
   })
 
   it('refreshDevices handles enumerateDevices failure', async () => {
     mockEnumerateDevices.mockRejectedValue(new Error('Enum failed'))
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     // Wait for initial refresh to fail
     await act(async () => {
@@ -420,7 +480,7 @@ describe('useMediaStream - additional gaps', () => {
   })
 
   it('device change event triggers refresh', async () => {
-    const { result: _result } = renderHook(() => useMediaStream())
+    const { result: _result } = await setupHook()
 
     // Wait for initial enumeration
     await act(async () => {
@@ -446,7 +506,7 @@ describe('useMediaStream - additional gaps', () => {
     const stream = createMockStream([], [videoTrack])
     mockGetUserMedia.mockResolvedValue(stream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
 
     await act(async () => {
       await result.current.startCapture()
@@ -454,8 +514,8 @@ describe('useMediaStream - additional gaps', () => {
     // Should not crash when no audio tracks
   })
 
-  it('setOnStreamChange sets the callback ref', () => {
-    const { result } = renderHook(() => useMediaStream())
+  it('setOnStreamChange sets the callback ref', async () => {
+    const { result } = await setupHook()
     const cb = vi.fn()
     act(() => { result.current.setOnStreamChange(cb) })
     // Callback should be stored (tested indirectly via switchInputDevice)
@@ -470,7 +530,7 @@ describe('useMediaStream - additional gaps', () => {
     const newStream = createMockStream([newAudioTrack])
     mockGetUserMedia.mockResolvedValueOnce(newStream)
 
-    const { result } = renderHook(() => useMediaStream())
+    const { result } = await setupHook()
     const changeCallback = vi.fn()
 
     await act(async () => {
@@ -485,3 +545,4 @@ describe('useMediaStream - additional gaps', () => {
     expect(changeCallback).toHaveBeenCalled()
   })
 })
+

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from '../renderer/App'
 import { peerManager } from '../renderer/signaling/SimplePeerManager'
@@ -143,12 +143,34 @@ vi.mock('../renderer/hooks/useI18n', () => ({
 
 vi.mock('../renderer/signaling/SimplePeerManager', () => ({
   peerManager: {
+    on: vi.fn(() => () => {}),
     setCallbacks: vi.fn(),
     setOnChatMessage: vi.fn(),
+    setOnRemoteMicControl: vi.fn(),
+    setOnModerationControl: vi.fn(),
+    getModerationState: vi.fn().mockReturnValue({
+      roomLocked: false,
+      roomLockOwnerPeerId: null,
+      localHandRaised: false,
+      raisedHands: []
+    }),
+    setRoomLocked: vi.fn().mockReturnValue(true),
+    requestMuteAll: vi.fn().mockReturnValue('req-mute-all'),
+    setHandRaised: vi.fn().mockReturnValue(true),
+    respondMuteAllRequest: vi.fn(),
+    respondRemoteMicRequest: vi.fn().mockReturnValue(true),
+    sendRemoteMicRequest: vi.fn().mockReturnValue('req-remote-mic'),
+    sendRemoteMicStop: vi.fn().mockReturnValue(true),
+    sendRemoteMicStart: vi.fn().mockReturnValue(true),
+    sendRemoteMicHeartbeat: vi.fn().mockReturnValue(true),
+    setAudioRoutingMode: vi.fn().mockReturnValue(true),
+    stopRemoteMicSession: vi.fn(),
     sendChatMessage: vi.fn(),
     setLocalStream: vi.fn(),
     replaceTrack: vi.fn(),
     broadcastMuteStatus: vi.fn(),
+    startScreenShare: vi.fn().mockResolvedValue(true),
+    stopScreenShare: vi.fn(),
     getDebugInfo: vi.fn().mockReturnValue({ selfId: 'test-self-id' })
   },
   selfId: 'test-self-id'
@@ -234,6 +256,7 @@ describe('App Integration', () => {
   })
 
   afterEach(() => {
+    cleanup()
     vi.clearAllMocks()
     delete window.electronAPI
   })

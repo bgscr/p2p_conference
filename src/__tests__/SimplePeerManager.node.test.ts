@@ -1,3 +1,6 @@
+/**
+ * @vitest-environment node
+ */
 import { describe, it, expect } from 'vitest'
 import { SimplePeerManager } from '../renderer/signaling/SimplePeerManager'
 

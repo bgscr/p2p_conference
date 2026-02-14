@@ -129,3 +129,9 @@ dist-electron/
 !build/drivers/**
 # Log files
 logs/
+
+# Local/generated diagnostics artifacts
+.claude/settings.local.json
+vitest-report.json
+playwright-results.json
+artifacts/baseline-report.json

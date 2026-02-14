@@ -4,6 +4,50 @@
 
 This document describes the credential security improvements made to the P2P Conference application.
 
+## Canonical Production Usage (Source of Truth)
+
+Current repo default is packaged startup convenience mode (secure enforcement is off unless explicitly enabled).
+Startup validation logic lives in `electron/main.ts` and `electron/credentials.ts`.
+
+- `P2P_ALLOW_INSECURE_PRODUCTION` unset or `true` means insecure production startup is allowed.
+- Set `P2P_ALLOW_INSECURE_PRODUCTION=false` to enforce secure production startup validation.
+- In secure production mode, startup requires either:
+  1. `P2P_CREDENTIALS_URL` (must be `https://`, optional `P2P_CREDENTIALS_BEARER_TOKEN`)
+  2. Complete TURN and/or private MQTT env credentials
+- `MQTT_PRIVATE_URL` must use `wss://` in secure production mode.
+
+### Recommended Production Env Template
+
+```env
+# Preferred source: credential endpoint
+P2P_CREDENTIALS_URL=https://credentials.example.com/v1/p2p/session
+P2P_CREDENTIALS_BEARER_TOKEN=replace-with-rotated-token
+
+# Optional cache metadata for env-provided credentials
+CREDENTIALS_EXPIRES_AT=2026-12-31T23:59:59Z
+
+# Fallback source: direct secure credentials
+TURN_URLS=turns:turn.example.com:5349
+TURN_USERNAME=replace-with-turn-username
+TURN_CREDENTIAL=replace-with-turn-password
+
+MQTT_PRIVATE_URL=wss://mqtt.example.com:8084/mqtt
+MQTT_PRIVATE_USERNAME=replace-with-mqtt-username
+MQTT_PRIVATE_PASSWORD=replace-with-mqtt-password
+
+# Keep secure mode enabled in production packages
+P2P_ALLOW_INSECURE_PRODUCTION=false
+```
+
+### Update Policy for URL/Variable Changes
+
+When recommended URLs or variable names change, update this section first, then sync:
+
+- `.env.example`
+- `README.md`
+- `electron/credentials.ts`
+- `electron/main.ts`
+
 ## Changes Made
 
 ### 1. Main Process Credential Storage (`electron/credentials.ts`)
@@ -63,19 +107,8 @@ This implementation provides **basic protection** against casual inspection:
 
 ## Environment Variables
 
-Configure in `.env`:
-
-```env
-# TURN
-TURN_URLS=turn:your-server.com:3478
-TURN_USERNAME=your-username
-TURN_CREDENTIAL=your-password
-
-# MQTT
-MQTT_PRIVATE_URL=ws://your-mqtt.com:8083/mqtt
-MQTT_PRIVATE_USERNAME=admin
-MQTT_PRIVATE_PASSWORD=password
-```
+For production, use the "Canonical Production Usage" section above.
+For local development/manual testing, the same variable names apply.
 
 ## Future Improvements (★★★★★ Security)
 

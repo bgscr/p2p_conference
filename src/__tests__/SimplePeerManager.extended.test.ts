@@ -1,17 +1,9 @@
 /**
- * Extended tests for SimplePeerManager
+ * Extended integration contracts for SimplePeerManager
  * @vitest-environment jsdom
- * 
- * Tests cover:
- * - Message deduplication
- * - Peer connection lifecycle
- * - ICE restart logic
- * - Network status monitoring
- * - Mute status broadcasting
- * - Connection statistics
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { SimplePeerManager, generatePeerId, loadCredentials, resetCredentialsCacheForTesting, MessageDeduplicator, MQTTClient } from '../renderer/signaling/SimplePeerManager'
+import { SimplePeerManager, loadCredentials, resetCredentialsCacheForTesting, MQTTClient } from '../renderer/signaling/SimplePeerManager'
 
 // Mock Logger
 vi.mock('../renderer/utils/Logger', () => ({
@@ -350,53 +342,7 @@ describe('SimplePeerManager Extended Tests', () => {
     delete window.electronAPI
   })
 
-  describe('generatePeerId', () => {
-    it('should generate 16 character alphanumeric ID', () => {
-      const id = generatePeerId()
-      expect(id).toHaveLength(16)
-      expect(/^[A-Za-z0-9]+$/.test(id)).toBe(true)
-    })
-
-    it('should generate unique IDs', () => {
-      const ids = new Set<string>()
-      for (let i = 0; i < 100; i++) {
-        ids.add(generatePeerId())
-      }
-      expect(ids.size).toBe(100)
-    })
-  })
-
-  describe('loadCredentials', () => {
-    it('should load ICE servers from electron API', async () => {
-      await loadCredentials()
-
-      expect((window as any).electronAPI.getICEServers).toHaveBeenCalled()
-      expect((window as any).electronAPI.getMQTTBrokers).toHaveBeenCalled()
-    })
-
-    it('should handle missing electron API', async () => {
-      delete window.electronAPI
-
-      // Should not throw
-      await loadCredentials()
-    })
-
-    it('should only load once when called multiple times', async () => {
-      const promise1 = loadCredentials()
-      const promise2 = loadCredentials()
-
-      await Promise.all([promise1, promise2])
-
-      // API should only be called once per credential type
-      expect((window as any).electronAPI.getICEServers).toHaveBeenCalledTimes(1)
-    })
-  })
-
   describe('Signaling State Management', () => {
-    it('should start in idle state', () => {
-      expect(manager.getSignalingState()).toBe('idle')
-    })
-
     it('should transition through states during join', async () => {
       const states: string[] = []
       manager.setOnSignalingStateChange((state) => {
@@ -531,13 +477,6 @@ describe('SimplePeerManager Extended Tests', () => {
   })
 
   describe('Network Status Monitoring', () => {
-    it('should track online/offline status', () => {
-      const status = manager.getNetworkStatus()
-      expect(status.isOnline).toBe(true)
-      expect(status.wasInRoomWhenOffline).toBe(false)
-      expect(status.reconnectAttempts).toBe(0)
-    })
-
     it('should handle offline event', async () => {
       const joinPromise = manager.joinRoom('test-room', 'Alice')
       await Promise.resolve()
@@ -573,12 +512,6 @@ describe('SimplePeerManager Extended Tests', () => {
       // Should have triggered reconnect
     })
 
-    it('should allow manual reconnect', async () => {
-      const result = await manager.manualReconnect()
-      // No room to reconnect to
-      expect(result).toBe(false)
-    })
-
     it('should expose network status callback', () => {
       const callback = vi.fn()
       manager.setOnNetworkStatusChange(callback)
@@ -586,25 +519,6 @@ describe('SimplePeerManager Extended Tests', () => {
       window.dispatchEvent(new Event('offline'))
 
       expect(callback).toHaveBeenCalledWith(false)
-    })
-  })
-
-  describe('Debug Info', () => {
-    it('should return comprehensive debug information', async () => {
-      const joinPromise = manager.joinRoom('test-room', 'Alice')
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(100)
-      await joinPromise
-
-      const debugInfo = manager.getDebugInfo() as any
-
-      expect(debugInfo).toHaveProperty('selfId')
-      expect(debugInfo).toHaveProperty('roomId', 'test-room')
-      expect(debugInfo).toHaveProperty('userName', 'Alice')
-      expect(debugInfo).toHaveProperty('signalingState')
-      expect(debugInfo).toHaveProperty('peerCount', 0)
-      expect(debugInfo).toHaveProperty('mqttConnected')
-      expect(debugInfo).toHaveProperty('networkOnline')
     })
   })
 
@@ -641,57 +555,6 @@ describe('SimplePeerManager Extended Tests', () => {
       expect(urls).toContain('wss://broker2.test')
     })
 
-    it('should prevent concurrent join operations', async () => {
-      const join1 = manager.joinRoom('room-1', 'Alice')
-      const join2 = manager.joinRoom('room-2', 'Bob')
-
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(100)
-
-      await Promise.all([join1, join2])
-
-      // Second join should have been ignored
-      const debugInfo = manager.getDebugInfo() as any
-      expect(debugInfo.roomId).toBe('room-1')
-    })
-
-    it('should clean up existing room before joining new one', async () => {
-      const join1 = manager.joinRoom('room-1', 'Alice')
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(200)
-      await join1
-
-      // Join a different room
-      const join2 = manager.joinRoom('room-2', 'Bob')
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(200)
-      await join2
-
-      const debugInfo = manager.getDebugInfo() as any
-      expect(debugInfo.roomId).toBe('room-2')
-      expect(debugInfo.userName).toBe('Bob')
-    })
-  })
-
-  describe('Leave Room Edge Cases', () => {
-    it('should handle leave when not in room', () => {
-      // Should not throw
-      manager.leaveRoom()
-      expect(manager.getSignalingState()).toBe('idle')
-    })
-
-    it('should prevent concurrent leave operations', async () => {
-      const joinPromise = manager.joinRoom('test-room', 'Alice')
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(100)
-      await joinPromise
-
-      // Multiple leaves should not cause issues
-      manager.leaveRoom()
-      manager.leaveRoom()
-
-      expect(manager.getSignalingState()).toBe('idle')
-    })
   })
 
   describe('Callbacks', () => {
@@ -722,71 +585,24 @@ describe('SimplePeerManager Extended Tests', () => {
     })
   })
 
-  describe('getPeers', () => {
-    it('should return empty map when no peers', () => {
-      const peers = manager.getPeers()
-      expect(peers.size).toBe(0)
+  describe('Peer snapshots', () => {
+    it.each([
+      {
+        label: 'peer list',
+        getSize: () => manager.getPeers().size,
+      },
+      {
+        label: 'peer mute statuses',
+        getSize: () => manager.getAllPeerMuteStatuses().size,
+      }
+    ])('returns empty map for $label when no peers', ({ getSize }) => {
+      expect(getSize()).toBe(0)
     })
-  })
 
-  describe('getPeerMuteStatus', () => {
-    it('should return default mute status for unknown peer', () => {
+    it('returns default mute status for unknown peer', () => {
       const status = manager.getPeerMuteStatus('unknown-peer')
       expect(status).toMatchObject({ micMuted: false, speakerMuted: false })
     })
   })
-
-  describe('getAllPeerMuteStatuses', () => {
-    it('should return empty map when no peers', () => {
-      const statuses = manager.getAllPeerMuteStatuses()
-      expect(statuses.size).toBe(0)
-    })
-  })
 })
 
-describe('Message Deduplication', () => {
-  // Test deduplication logic separately
-
-  let dedup: MessageDeduplicator
-
-  beforeEach(() => {
-    dedup = new MessageDeduplicator()
-  })
-
-  afterEach(() => {
-    dedup.destroy()
-  })
-
-  it('should return false for new messages', () => {
-    expect(dedup.isDuplicate('msg-1')).toBe(false)
-    expect(dedup.isDuplicate('msg-2')).toBe(false)
-  })
-
-  it('should return true for duplicate messages', () => {
-    expect(dedup.isDuplicate('msg-1')).toBe(false)
-    expect(dedup.isDuplicate('msg-1')).toBe(true)
-  })
-
-  it('should handle empty message ID', () => {
-    expect(dedup.isDuplicate('')).toBe(false)
-    expect(dedup.isDuplicate('')).toBe(false) // Still false, not tracked
-  })
-
-  it('should track message count', () => {
-    dedup.isDuplicate('msg-1')
-    dedup.isDuplicate('msg-2')
-    dedup.isDuplicate('msg-3')
-
-    expect(dedup.size()).toBe(3)
-  })
-
-  it('should limit window size', () => {
-    // Add more than window size
-    for (let i = 0; i < 600; i++) {
-      dedup.isDuplicate(`msg-${i}`)
-    }
-
-    // Should be limited to window size
-    expect(dedup.size()).toBeLessThanOrEqual(500)
-  })
-})

@@ -67,6 +67,9 @@ describe('Preload Script', () => {
         'getVirtualAudioInstallerState',
         'getICEServers',
         'getMQTTBrokers',
+        'getSessionCredentials',
+        'exportDiagnosticsBundle',
+        'getHealthSnapshot',
       ]
 
       for (const method of expectedMethods) {
@@ -123,6 +126,22 @@ describe('Preload Script', () => {
     it('getMQTTBrokers invokes "get-mqtt-brokers"', () => {
       exposedApi.getMQTTBrokers()
       expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-mqtt-brokers')
+    })
+
+    it('getSessionCredentials invokes "get-session-credentials"', () => {
+      exposedApi.getSessionCredentials()
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-session-credentials')
+    })
+
+    it('exportDiagnosticsBundle invokes "export-diagnostics-bundle"', () => {
+      const payload = { foo: 'bar' }
+      exposedApi.exportDiagnosticsBundle(payload)
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('export-diagnostics-bundle', payload)
+    })
+
+    it('getHealthSnapshot invokes "get-health-snapshot"', () => {
+      exposedApi.getHealthSnapshot()
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-health-snapshot')
     })
 
     it('openRemoteMicSetupDoc invokes "open-remote-mic-setup-doc"', () => {

@@ -46,9 +46,6 @@ describe('Barrel exports - hooks/index.ts', () => {
     expect(hooks.useMediaStream).toBeDefined()
     expect(typeof hooks.useMediaStream).toBe('function')
 
-    expect(hooks.usePeerConnections).toBeDefined()
-    expect(typeof hooks.usePeerConnections).toBe('function')
-
     expect(hooks.useI18n).toBeDefined()
     expect(typeof hooks.useI18n).toBe('function')
 

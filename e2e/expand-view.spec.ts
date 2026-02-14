@@ -1,88 +1,38 @@
-import { _electron as electron, test, expect, ElectronApplication, Page } from '@playwright/test'
-import path from 'path'
-import os from 'os'
-import fs from 'fs'
+import { test, expect, type Page } from '@playwright/test'
+import {
+  closeClient,
+  joinAsHost,
+  joinAsPeer,
+  launchClient,
+  mockDisplayMedia,
+  setEnglishAndOpenLobby,
+  type LaunchedClient,
+  waitForConnectedPeerCount
+} from './helpers/multiPeerSession'
 
 test.describe('Expand View E2E', () => {
   test.describe.configure({ mode: 'serial' })
   test.setTimeout(180000)
 
-  let appA: ElectronApplication | null = null
-  let appB: ElectronApplication | null = null
+  let appA: LaunchedClient | null = null
+  let appB: LaunchedClient | null = null
   let windowA: Page
   let windowB: Page
   let roomId = ''
-  let userDataDirA = ''
-  let userDataDirB = ''
-
-  async function setEnglishAndOpenLobby(page: Page) {
-    await page.evaluate(() => {
-      localStorage.setItem('p2p-conf-language', 'en')
-    })
-    await page.reload()
-    await page.waitForLoadState('domcontentloaded')
-    await expect(page.locator('data-testid=lobby-title')).toBeVisible()
-  }
-
-  async function joinAsHost(page: Page, userName: string): Promise<string> {
-    await page.locator('data-testid=lobby-name-input').fill(userName)
-    await page.locator('data-testid=lobby-generate-btn').click()
-    const generatedRoomId = await page.locator('data-testid=lobby-room-input').inputValue()
-    await page.locator('data-testid=lobby-join-btn').click()
-    await expect(page.locator('data-testid=room-leave-btn')).toBeVisible({ timeout: 20000 })
-    return generatedRoomId
-  }
-
-  async function joinAsPeer(page: Page, userName: string, joinRoomId: string) {
-    await page.locator('data-testid=lobby-name-input').fill(userName)
-    await page.locator('data-testid=lobby-room-input').fill(joinRoomId)
-    await page.locator('data-testid=lobby-join-btn').click()
-    await expect(page.locator('data-testid=room-leave-btn')).toBeVisible({ timeout: 20000 })
-  }
-
-  async function waitForTwoPeerConnection(page: Page) {
-    await expect(page.locator('text=1 participant(s) connected')).toBeVisible({ timeout: 30000 })
-  }
-
-  async function mockDisplayMedia(page: Page) {
-    await page.evaluate(() => {
-      const canvas = document.createElement('canvas')
-      canvas.width = 640
-      canvas.height = 360
-      const ctx = canvas.getContext('2d')
-      ctx?.fillRect(0, 0, canvas.width, canvas.height)
-
-      const createStream = () => {
-        const track = canvas.captureStream(5).getVideoTracks()[0]
-        return new MediaStream([track])
-      }
-
-      Object.defineProperty(navigator, 'mediaDevices', {
-        value: {
-          ...(navigator.mediaDevices || {}),
-          getDisplayMedia: async () => createStream()
-        },
-        configurable: true
-      })
-    })
-  }
 
   async function ensurePeerBJoined() {
-    if (appB) return
+    if (appB) {
+      return
+    }
 
-    userDataDirB = fs.mkdtempSync(path.join(os.tmpdir(), 'p2p-expand-b-'))
-    appB = await electron.launch({
-      args: ['.', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--user-data-dir=${userDataDirB}`],
-      locale: 'en-US',
-      env: { ...process.env, NODE_ENV: 'test' }
-    })
-    windowB = await appB.firstWindow()
+    appB = await launchClient('p2p-expand-b-')
+    windowB = appB.page
 
     await setEnglishAndOpenLobby(windowB)
     await joinAsPeer(windowB, 'ExpandPeer', roomId)
 
-    await waitForTwoPeerConnection(windowA)
-    await waitForTwoPeerConnection(windowB)
+    await waitForConnectedPeerCount(windowA, 1)
+    await waitForConnectedPeerCount(windowB, 1)
     await mockDisplayMedia(windowA)
   }
 
@@ -120,24 +70,16 @@ test.describe('Expand View E2E', () => {
   }
 
   test.beforeAll(async () => {
-    userDataDirA = fs.mkdtempSync(path.join(os.tmpdir(), 'p2p-expand-a-'))
-    appA = await electron.launch({
-      args: ['.', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--user-data-dir=${userDataDirA}`],
-      locale: 'en-US',
-      env: { ...process.env, NODE_ENV: 'test' }
-    })
-    windowA = await appA.firstWindow()
+    appA = await launchClient('p2p-expand-a-')
+    windowA = appA.page
 
     await setEnglishAndOpenLobby(windowA)
     roomId = await joinAsHost(windowA, 'ExpandHost')
   })
 
   test.afterAll(async () => {
-    if (appA) await appA.close()
-    if (appB) await appB.close()
-
-    if (userDataDirA) fs.rmSync(userDataDirA, { recursive: true, force: true })
-    if (userDataDirB) fs.rmSync(userDataDirB, { recursive: true, force: true })
+    await closeClient(appA)
+    await closeClient(appB)
   })
 
   test('expand button is visible on remote card when peer shares screen', async () => {

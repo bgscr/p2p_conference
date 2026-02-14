@@ -187,6 +187,26 @@ describe('SettingsPanel', () => {
         expect(onSettingsChange).toHaveBeenCalledWith({ autoGainControlEnabled: false })
     })
 
+    it('toggles push-to-talk setting from audio processing section', () => {
+        const onSettingsChange = vi.fn()
+        render(<SettingsPanel {...defaultProps} onSettingsChange={onSettingsChange} />)
+
+        fireEvent.click(screen.getByTestId('settings-ptt-toggle'))
+        expect(onSettingsChange).toHaveBeenCalledWith({ pushToTalkEnabled: true })
+    })
+
+    it('updates push-to-talk hotkey when enabled', () => {
+        const onSettingsChange = vi.fn()
+        render(<SettingsPanel {...defaultProps} onSettingsChange={onSettingsChange} settings={{
+            ...defaultProps.settings,
+            pushToTalkEnabled: true,
+            pushToTalkKey: 'space'
+        }} />)
+
+        fireEvent.change(screen.getByTestId('settings-ptt-key'), { target: { value: 'shift' } })
+        expect(onSettingsChange).toHaveBeenCalledWith({ pushToTalkKey: 'shift' })
+    })
+
     it('renders debug section', () => {
         render(<SettingsPanel {...defaultProps} />)
 
@@ -214,6 +234,14 @@ describe('SettingsPanel', () => {
 
         expect(mockClearLogs).toHaveBeenCalledTimes(1)
         expect(onShowToast).toHaveBeenCalledWith('3 logs cleared', 'success')
+    })
+
+    it('calls diagnostics export callback when diagnostics button is clicked', () => {
+        const onExportDiagnostics = vi.fn()
+        render(<SettingsPanel {...defaultProps} onExportDiagnostics={onExportDiagnostics} />)
+
+        fireEvent.click(screen.getByTestId('settings-export-diagnostics-btn'))
+        expect(onExportDiagnostics).toHaveBeenCalledTimes(1)
     })
 
     it('calls onClose when close button in header is clicked', () => {

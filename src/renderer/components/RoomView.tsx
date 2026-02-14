@@ -6,23 +6,23 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { ParticipantCard } from './ParticipantCard'
 import { ExpandedParticipantView } from './ExpandedParticipantView'
-import { AudioMeter } from './AudioMeter'
-import { DeviceSelector } from './DeviceSelector'
 import { ChatPanel } from './ChatPanel'
+import { RoomFooterControls } from './RoomFooterControls'
+import { RoomModerationPanel } from './RoomModerationPanel'
+import { formatDuration, getStatusText } from './roomViewHelpers'
 import { useI18n } from '../hooks/useI18n'
 import { useExpandedView } from '../hooks/useExpandedView'
-import { logger } from '../utils/Logger'
+import { useRoomConnectionMonitoring } from '../hooks/useRoomConnectionMonitoring'
 import type {
   Peer,
   AudioDevice,
   ConnectionState,
   AppSettings,
-  ConnectionQuality,
   ChatMessage,
   RemoteMicSession,
   VirtualMicDeviceStatus
 } from '@/types'
-import { SimplePeerManager } from '../signaling/SimplePeerManager'
+import type { PeerManager } from '../signaling'
 
 interface RoomViewProps {
   userName: string
@@ -55,7 +55,7 @@ interface RoomViewProps {
   onToggleSound: () => void
   settings: AppSettings
   onSettingsChange: (settings: Partial<AppSettings>) => void
-  p2pManager?: SimplePeerManager
+  p2pManager?: PeerManager
   // Chat props
   chatMessages: ChatMessage[]
   onSendChatMessage: (content: string) => void
@@ -66,6 +66,8 @@ interface RoomViewProps {
   // Screen share props
   isScreenSharing: boolean
   onToggleScreenShare: () => void
+  pushToTalkEnabled?: boolean
+  isPushToTalkActive?: boolean
   // Remote microphone mapping
   remoteMicSession?: RemoteMicSession
   virtualMicDeviceStatus?: VirtualMicDeviceStatus
@@ -80,6 +82,26 @@ interface RoomViewProps {
   onStopRemoteMic?: () => void
   onOpenRemoteMicSetup?: () => void
   onRemoteMicRoutingError?: (peerId: string, error: string) => void
+  // Moderation controls
+  moderationEnabled?: boolean
+  roomLocked?: boolean
+  roomLockOwnerName?: string | null
+  raisedHands?: Array<{
+    peerId: string
+    name: string
+    raisedAt: number
+    isLocal: boolean
+  }>
+  isHandRaised?: boolean
+  pendingMuteAllRequest?: {
+    requestId: string
+    requestedByPeerId: string
+    requestedByName: string
+  } | null
+  onToggleRoomLock?: () => void
+  onRequestMuteAll?: () => void
+  onToggleHandRaise?: () => void
+  onRespondMuteAllRequest?: (requestId: string, accepted: boolean) => void
 }
 
 export const RoomView: React.FC<RoomViewProps> = ({
@@ -122,6 +144,8 @@ export const RoomView: React.FC<RoomViewProps> = ({
   onMarkChatRead,
   isScreenSharing,
   onToggleScreenShare,
+  pushToTalkEnabled = false,
+  isPushToTalkActive = false,
   remoteMicSession = { state: 'idle' },
   virtualMicDeviceStatus,
   virtualAudioInstallerState,
@@ -129,19 +153,22 @@ export const RoomView: React.FC<RoomViewProps> = ({
   onRespondRemoteMicRequest,
   onStopRemoteMic,
   onOpenRemoteMicSetup,
-  onRemoteMicRoutingError
+  onRemoteMicRoutingError,
+  moderationEnabled = false,
+  roomLocked = false,
+  roomLockOwnerName = null,
+  raisedHands = [],
+  isHandRaised = false,
+  pendingMuteAllRequest = null,
+  onToggleRoomLock,
+  onRequestMuteAll,
+  onToggleHandRaise,
+  onRespondMuteAllRequest
 }) => {
   const { t } = useI18n()
-  const [showDevicePanel, setShowDevicePanel] = useState(false)
   const [elapsedTime, setElapsedTime] = useState(0)
   const [copied, setCopied] = useState(false)
   const [peerVolumes, setPeerVolumes] = useState<Map<string, number>>(new Map())
-  const [connectionStats, setConnectionStats] = useState<Map<string, ConnectionQuality>>(new Map())
-  const [networkStatus, setNetworkStatus] = useState<{
-    isOnline: boolean
-    isReconnecting: boolean
-    reconnectAttempts: number
-  }>({ isOnline: true, isReconnecting: false, reconnectAttempts: 0 })
   const [remoteMicCountdownSec, setRemoteMicCountdownSec] = useState(0)
 
   const startTimeRef = useRef(Date.now())
@@ -151,6 +178,11 @@ export const RoomView: React.FC<RoomViewProps> = ({
   const expandedViewRef = useRef<HTMLDivElement>(null)
 
   const { expandedPeerId, isFullscreen, expandPeer, enterFullscreen, collapse } = useExpandedView(peers)
+  const {
+    connectionStats,
+    networkStatus,
+    handleManualReconnect
+  } = useRoomConnectionMonitoring(p2pManager)
 
   const isRemoteMicActive = remoteMicSession.state === 'active'
   const isRemoteMicSource = isRemoteMicActive && remoteMicSession.role === 'source'
@@ -259,105 +291,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
     return () => clearInterval(interval)
   }, [remoteMicSession.expiresAt, remoteMicSession.state])
 
-  // Periodic connection stats update
-  useEffect(() => {
-    if (!p2pManager) return
-
-    const updateStats = async () => {
-      const stats = await p2pManager.getConnectionStats()
-      setConnectionStats(prev => {
-        // Only update if stats actually changed to avoid unnecessary re-renders
-        if (prev.size !== stats.size) return stats
-        for (const [peerId, quality] of stats) {
-          const prevQuality = prev.get(peerId)
-          if (!prevQuality ||
-            prevQuality.quality !== quality.quality ||
-            prevQuality.rtt !== quality.rtt ||
-            prevQuality.packetLoss !== quality.packetLoss ||
-            prevQuality.jitter !== quality.jitter) {
-            return stats
-          }
-        }
-        return prev
-      })
-    }
-
-    // Initial update
-    updateStats()
-
-    const interval = setInterval(updateStats, 2000)
-    return () => clearInterval(interval)
-  }, [p2pManager])
-
-  // Network status monitoring
-  useEffect(() => {
-    if (!p2pManager) return
-
-    // Set up network status change callback
-    p2pManager.setOnNetworkStatusChange((isOnline) => {
-      const status = p2pManager.getNetworkStatus()
-      setNetworkStatus({
-        isOnline,
-        isReconnecting: status.wasInRoomWhenOffline && !isOnline,
-        reconnectAttempts: status.reconnectAttempts
-      })
-    })
-
-    // Also poll network status periodically (for reconnect attempts counter)
-    const statusInterval = setInterval(() => {
-      const status = p2pManager.getNetworkStatus()
-      setNetworkStatus(prev => {
-        // Only update if changed
-        if (prev.isOnline !== status.isOnline ||
-          prev.reconnectAttempts !== status.reconnectAttempts ||
-          prev.isReconnecting !== status.wasInRoomWhenOffline) {
-          return {
-            isOnline: status.isOnline,
-            isReconnecting: status.wasInRoomWhenOffline && status.reconnectAttempts > 0,
-            reconnectAttempts: status.reconnectAttempts
-          }
-        }
-        return prev
-      })
-    }, 1000)
-
-    return () => {
-      clearInterval(statusInterval)
-      p2pManager.setOnNetworkStatusChange(() => { })  // Clear callback
-    }
-  }, [p2pManager])
-
-  // Manual reconnect handler
-  const handleManualReconnect = async () => {
-    if (p2pManager) {
-      await p2pManager.manualReconnect()
-    }
-  }
-
-  // Format duration
-  const formatDuration = (seconds: number): string => {
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = seconds % 60
-
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-    }
-    return `${m}:${s.toString().padStart(2, '0')}`
-  }
-
-  // Connection status text
-  const getStatusText = (): string => {
-    switch (connectionState) {
-      case 'idle': return t('room.notConnected')
-      case 'signaling': return t('room.searchingParticipants')
-      case 'connecting': return t('room.connecting')
-      case 'connected': return t('room.participantsConnected', { count: peers.size })
-      case 'failed': return t('room.connectionFailed')
-      default: return ''
-    }
-  }
-
   // Handle copy with visual feedback
   const handleCopy = () => {
     onCopyRoomId()
@@ -376,11 +309,6 @@ export const RoomView: React.FC<RoomViewProps> = ({
       }
     }
   }, [])
-
-  // Handle download logs
-  const handleDownloadLogs = () => {
-    logger.downloadLogs()
-  }
 
   const peersArray = Array.from(peers.values())
   const participantCount = peersArray.length + 1
@@ -436,7 +364,7 @@ export const RoomView: React.FC<RoomViewProps> = ({
                 connectionState === 'connecting' || connectionState === 'signaling' ? 'status-connecting' :
                   connectionState === 'failed' ? 'status-failed' : ''
                 }`} />
-              <span className="text-sm text-gray-600">{getStatusText()}</span>
+              <span className="text-sm text-gray-600">{getStatusText(connectionState, peers.size, t)}</span>
             </div>
           </div>
 
@@ -480,6 +408,30 @@ export const RoomView: React.FC<RoomViewProps> = ({
           </div>
         )}
       </header>
+
+      {pushToTalkEnabled && (
+        <div className={`mx-4 mt-3 rounded-lg border px-3 py-2 text-sm ${
+          isPushToTalkActive
+            ? 'border-green-200 bg-green-50 text-green-900'
+            : 'border-gray-200 bg-gray-50 text-gray-700'
+        }`}>
+          {isPushToTalkActive
+            ? t('room.pushToTalkSpeaking')
+            : t('room.pushToTalkHold')}
+        </div>
+      )}
+
+      <RoomModerationPanel
+        enabled={moderationEnabled}
+        roomLocked={roomLocked}
+        roomLockOwnerName={roomLockOwnerName}
+        raisedHands={raisedHands}
+        pendingMuteAllRequest={pendingMuteAllRequest}
+        onToggleRoomLock={onToggleRoomLock}
+        onToggleHandRaise={onToggleHandRaise}
+        onRespondMuteAllRequest={onRespondMuteAllRequest}
+        t={t}
+      />
 
       {/* Remote Mic Status Banner */}
       {(remoteMicSession.state === 'pendingOutgoing' || remoteMicSession.state === 'active') && (
@@ -757,269 +709,45 @@ export const RoomView: React.FC<RoomViewProps> = ({
         </div>
       )}
 
-      {/* Control Bar */}
-      <footer className="bg-white border-t border-gray-200 px-4 py-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          {/* Left: Audio Level */}
-          <div className="flex items-center gap-3 w-48">
-            <AudioMeter level={isMuted ? 0 : audioLevel} size="sm" />
-            <span className="text-xs text-gray-400">{isMuted ? t('room.muted') : t('room.live')}</span>
-          </div>
-
-          {/* Center: Main Controls */}
-          <div className="flex items-center gap-3">
-            {/* Camera Toggle Button */}
-            <button
-              onClick={onToggleVideo}
-              className={`
-                 w-14 h-14 rounded-full flex items-center justify-center transition-all
-                 ${!isVideoEnabled
-                  ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }
-               `}
-              title={!isVideoEnabled ? t('room.startVideo') : t('room.stopVideo')}
-              data-testid="room-video-btn"
-            >
-              {!isVideoEnabled ? (
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
-                </svg>
-              ) : (
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              )}
-            </button>
-
-            {/* Screen Share Button */}
-            <button
-              onClick={onToggleScreenShare}
-              disabled={!canToggleScreenShare}
-              className={`
-                w-12 h-12 rounded-full flex items-center justify-center transition-all
-                ${!canToggleScreenShare
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : isScreenSharing
-                  ? 'bg-green-100 text-green-600 hover:bg-green-200'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }
-              `}
-              title={isScreenSharing ? t('room.stopScreenShare') : t('room.screenShareHint')}
-              data-testid="room-screenshare-btn"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-            </button>
-
-            {/* Mute Microphone Button */}
-            <button
-              onClick={onToggleMute}
-              className={`
-                w-14 h-14 rounded-full flex items-center justify-center transition-all
-                ${isMuted
-                  ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }
-              `}
-              title={isMuted ? t('room.unmuteHint') : t('room.muteHint')}
-              data-testid="room-mute-btn"
-            >
-              {isMuted ? (
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M3 3l18 18" />
-                </svg>
-              ) : (
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                </svg>
-              )}
-            </button>
-
-            {/* Mute Speaker Button */}
-            <button
-              onClick={onToggleSpeakerMute}
-              className={`
-                w-12 h-12 rounded-full flex items-center justify-center transition-all
-                ${isSpeakerMuted
-                  ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }
-              `}
-              title={isSpeakerMuted ? t('room.speakerMuted') : t('common.speaker')}
-              data-testid="room-speaker-btn"
-            >
-              {isSpeakerMuted ? (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                </svg>
-              ) : (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                </svg>
-              )}
-            </button>
-
-            {/* Sound Notifications Toggle */}
-            <button
-              onClick={onToggleSound}
-              className={`
-                w-12 h-12 rounded-full flex items-center justify-center transition-all
-                ${soundEnabled
-                  ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                }
-              `}
-              title={soundEnabled ? t('room.muteNotifications') : t('room.enableNotifications')}
-              data-testid="room-sound-btn"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                {!soundEnabled && (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
-                )}
-              </svg>
-            </button>
-
-            {/* Chat Toggle */}
-            <button
-              onClick={() => {
-                onToggleChat()
-                if (!isChatOpen) onMarkChatRead()
-              }}
-              className={`
-                w-12 h-12 rounded-full flex items-center justify-center transition-all relative
-                ${isChatOpen
-                  ? 'bg-blue-100 text-blue-600'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }
-              `}
-              title={t('room.toggleChat')}
-              data-testid="room-chat-btn"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              {chatUnreadCount > 0 && !isChatOpen && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center" data-testid="chat-unread-badge">
-                  {chatUnreadCount > 9 ? '9+' : chatUnreadCount}
-                </span>
-              )}
-            </button>
-
-            {/* Device Settings */}
-            <button
-              onClick={() => setShowDevicePanel(!showDevicePanel)}
-              className={`
-                w-12 h-12 rounded-full flex items-center justify-center transition-all
-                ${showDevicePanel
-                  ? 'bg-blue-100 text-blue-600'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }
-              `}
-              title={t('room.audioSettings')}
-              data-testid="room-settings-btn"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-
-            {/* Leave Button */}
-            <button
-              onClick={onLeaveRoom}
-              className="w-14 h-14 rounded-full bg-red-600 text-white hover:bg-red-700 flex items-center justify-center transition-colors"
-              title={t('room.leaveCallHint')}
-              data-testid="room-leave-btn"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Right: Participant Count */}
-          <div className="w-48 text-right">
-            <span className={`text-sm ${showParticipantWarning ? 'text-yellow-600 font-medium' : 'text-gray-500'}`}>
-              {participantCount} {t('room.inCall')}
-            </span>
-          </div>
-        </div>
-
-        {/* Device Panel */}
-        {showDevicePanel && (
-          <div className="max-w-4xl mx-auto mt-4 pt-4 border-t border-gray-100 grid grid-cols-2 gap-4 animate-fade-in">
-            <DeviceSelector
-              label={t('common.microphone')}
-              devices={inputDevices}
-              selectedDeviceId={selectedInputDevice}
-              onSelect={onInputDeviceChange}
-              icon="mic"
-            />
-            <DeviceSelector
-              label={t('common.camera')}
-              devices={videoInputDevices}
-              selectedDeviceId={selectedVideoDevice}
-              onSelect={onVideoDeviceChange}
-              icon="video"
-            />
-            <DeviceSelector
-              label={t('common.speaker')}
-              devices={outputDevices}
-              selectedDeviceId={selectedOutputDevice}
-              onSelect={onOutputDeviceChange}
-              icon="speaker"
-            />
-
-            {/* Noise Suppression Toggle */}
-            <div className="col-span-2 flex items-center justify-between py-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.noiseSuppressionEnabled}
-                  onChange={(e) => onSettingsChange({ noiseSuppressionEnabled: e.target.checked })}
-                  className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">{t('room.noiseSuppressionBrowser')}</span>
-              </label>
-              <span className="text-xs text-gray-500">
-                {settings.noiseSuppressionEnabled ? t('room.on') : t('room.off')}
-              </span>
-            </div>
-
-            {/* Download Logs Button */}
-            <div className="col-span-2 flex items-center justify-between py-2 border-t border-gray-100 mt-2">
-              <span className="text-sm text-gray-600">{t('room.havingIssues')}</span>
-              <button
-                onClick={handleDownloadLogs}
-                className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                {t('room.downloadLogs')}
-              </button>
-            </div>
-          </div>
-        )}
-      </footer>
+      <RoomFooterControls
+        t={t}
+        isMuted={isMuted}
+        audioLevel={audioLevel}
+        isVideoEnabled={isVideoEnabled}
+        isSpeakerMuted={isSpeakerMuted}
+        isScreenSharing={isScreenSharing}
+        canToggleScreenShare={canToggleScreenShare}
+        soundEnabled={soundEnabled}
+        isChatOpen={isChatOpen}
+        chatUnreadCount={chatUnreadCount}
+        showParticipantWarning={showParticipantWarning}
+        participantCount={participantCount}
+        inputDevices={inputDevices}
+        videoInputDevices={videoInputDevices}
+        outputDevices={outputDevices}
+        selectedInputDevice={selectedInputDevice}
+        selectedVideoDevice={selectedVideoDevice}
+        selectedOutputDevice={selectedOutputDevice}
+        settings={settings}
+        onToggleVideo={onToggleVideo}
+        onToggleScreenShare={onToggleScreenShare}
+        onToggleMute={onToggleMute}
+        onToggleSpeakerMute={onToggleSpeakerMute}
+        onToggleSound={onToggleSound}
+        onToggleChat={onToggleChat}
+        onMarkChatRead={onMarkChatRead}
+        onLeaveRoom={onLeaveRoom}
+        onInputDeviceChange={onInputDeviceChange}
+        onVideoDeviceChange={onVideoDeviceChange}
+        onOutputDeviceChange={onOutputDeviceChange}
+        onSettingsChange={onSettingsChange}
+        moderationEnabled={moderationEnabled}
+        isRoomLocked={roomLocked}
+        isHandRaised={isHandRaised}
+        onToggleRoomLock={onToggleRoomLock}
+        onRequestMuteAll={onRequestMuteAll}
+        onToggleHandRaise={onToggleHandRaise}
+      />
     </div>
 
     {/* Chat Panel */}

@@ -4,48 +4,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SimplePeerManager, selfId } from '../renderer/signaling/SimplePeerManager'
+import { createControlChannel, createTestPeer } from './helpers/simplePeerManagerTestUtils'
 
 vi.mock('../renderer/utils/Logger', () => ({
   SignalingLog: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   PeerLog: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
-
-type ChannelState = 'open' | 'closing' | 'closed'
-
-function createControlChannel(state: ChannelState = 'open') {
-  return {
-    readyState: state,
-    send: vi.fn(),
-    close: vi.fn(),
-  } as any
-}
-
-function createPeer(overrides: Record<string, any> = {}) {
-  const pc = overrides.pc || {
-    getSenders: vi.fn(() => []),
-    addTrack: vi.fn(),
-    close: vi.fn(),
-    connectionState: 'connected',
-    iceConnectionState: 'connected',
-  }
-
-  return {
-    pc,
-    stream: null,
-    userName: 'Peer',
-    platform: 'win',
-    connectionStartTime: Date.now(),
-    isConnected: true,
-    muteStatus: { micMuted: false, speakerMuted: false, videoMuted: false, isScreenSharing: false },
-    iceRestartAttempts: 0,
-    iceRestartInProgress: false,
-    disconnectTimer: null,
-    reconnectTimer: null,
-    chatDataChannel: null,
-    controlDataChannel: null,
-    ...overrides,
-  }
-}
 
 describe('SimplePeerManager branch path coverage', () => {
   let manager: SimplePeerManager
@@ -64,7 +28,7 @@ describe('SimplePeerManager branch path coverage', () => {
 
   it('validates control channel payload shapes and parse failures', () => {
     const dc: any = { label: 'control', readyState: 'open' }
-    const peerConn = createPeer({ controlDataChannel: dc })
+    const peerConn = createTestPeer({ controlDataChannel: dc })
     const handleRemoteMicControlMessageSpy = vi.spyOn(managerAny, 'handleRemoteMicControlMessage')
 
     managerAny.setupDataChannel(dc, 'peer-1', peerConn, 'control')
@@ -92,7 +56,7 @@ describe('SimplePeerManager branch path coverage', () => {
   it('clears chat/control data channel references on close', () => {
     const chatDc: any = { label: 'chat', readyState: 'open' }
     const controlDc: any = { label: 'control', readyState: 'open' }
-    const peerConn = createPeer({ chatDataChannel: chatDc, controlDataChannel: controlDc })
+    const peerConn = createTestPeer({ chatDataChannel: chatDc, controlDataChannel: controlDc })
 
     managerAny.setupDataChannel(chatDc, 'peer-1', peerConn, 'chat')
     managerAny.setupDataChannel(controlDc, 'peer-1', peerConn, 'control')
@@ -175,7 +139,7 @@ describe('SimplePeerManager branch path coverage', () => {
   })
 
   it('covers send/response/start guards when control channels are not open', () => {
-    managerAny.peers.set('peer-1', createPeer({ controlDataChannel: createControlChannel('closing') }))
+    managerAny.peers.set('peer-1', createTestPeer({ controlDataChannel: createControlChannel('closing') }))
 
     expect(manager.sendRemoteMicRequest('peer-1')).toBeNull()
     expect(manager.respondRemoteMicRequest('missing-req', true, 'accepted')).toBe(false)
@@ -187,7 +151,7 @@ describe('SimplePeerManager branch path coverage', () => {
 
   it('sendRemoteMicStop handles matching and non-matching active request ids', () => {
     const channel = createControlChannel('open')
-    managerAny.peers.set('peer-target', createPeer({ controlDataChannel: channel }))
+    managerAny.peers.set('peer-target', createTestPeer({ controlDataChannel: channel }))
 
     managerAny.activeRemoteMicRequestId = 'req-a'
     managerAny.activeRemoteMicTargetPeerId = 'peer-target'
@@ -205,8 +169,8 @@ describe('SimplePeerManager branch path coverage', () => {
   })
 
   it('stopRemoteMicSession sends stop to active target/source and clears state', () => {
-    managerAny.peers.set('peer-target', createPeer({ controlDataChannel: createControlChannel('open') }))
-    managerAny.peers.set('peer-source', createPeer({ controlDataChannel: createControlChannel('open') }))
+    managerAny.peers.set('peer-target', createTestPeer({ controlDataChannel: createControlChannel('open') }))
+    managerAny.peers.set('peer-source', createTestPeer({ controlDataChannel: createControlChannel('open') }))
     managerAny.pendingOutgoingRemoteMicRequestId = 'req-stop-all'
     managerAny.pendingRemoteMicRequests.set('req-pending', 'peer-source')
     managerAny.activeRemoteMicRequestId = 'req-stop-all'
@@ -309,7 +273,7 @@ describe('SimplePeerManager branch path coverage', () => {
   })
 
   it('updates peer mute status with nullish fallbacks and handles missing peers', () => {
-    const peer = createPeer({
+    const peer = createTestPeer({
       muteStatus: { micMuted: true, speakerMuted: true, videoMuted: true, isScreenSharing: true }
     })
     managerAny.peers.set('peer-1', peer)
@@ -344,7 +308,7 @@ describe('SimplePeerManager branch path coverage', () => {
       connectionState: 'connected',
       iceConnectionState: 'connected'
     }
-    managerAny.peers.set('peer-add', createPeer({ pc: addTrackPeerPc }))
+    managerAny.peers.set('peer-add', createTestPeer({ pc: addTrackPeerPc }))
     managerAny.applyAudioRoutingToPeer('peer-add')
     expect(addTrackPeerPc.addTrack).toHaveBeenCalledWith(audioTrack, managerAny.localStream)
 
@@ -360,11 +324,11 @@ describe('SimplePeerManager branch path coverage', () => {
       connectionState: 'connected',
       iceConnectionState: 'connected'
     }
-    managerAny.peers.set('peer-replace', createPeer({ pc: senderPeerPc }))
+    managerAny.peers.set('peer-replace', createTestPeer({ pc: senderPeerPc }))
     managerAny.applyAudioRoutingToPeer('peer-replace')
     expect(replaceTrack).toHaveBeenCalledWith(audioTrack)
 
-    managerAny.peers.set('peer-target', createPeer({ pc: addTrackPeerPc }))
+    managerAny.peers.set('peer-target', createTestPeer({ pc: addTrackPeerPc }))
     manager.setAudioRoutingMode('exclusive', 'peer-target')
     addTrackPeerPc.addTrack.mockClear()
     managerAny.applyAudioRoutingToPeer('peer-add')
@@ -385,13 +349,13 @@ describe('SimplePeerManager branch path coverage', () => {
       disconnect: vi.fn(),
     }
 
-    const disconnectedPeer = createPeer({
+    const disconnectedPeer = createTestPeer({
       pc: { getSenders: vi.fn(() => []), addTrack: vi.fn(), close: vi.fn(), connectionState: 'connected', iceConnectionState: 'disconnected' }
     })
-    const failedPeer = createPeer({
+    const failedPeer = createTestPeer({
       pc: { getSenders: vi.fn(() => []), addTrack: vi.fn(), close: vi.fn(), connectionState: 'connected', iceConnectionState: 'failed' }
     })
-    const connectedPeer = createPeer({
+    const connectedPeer = createTestPeer({
       pc: { getSenders: vi.fn(() => []), addTrack: vi.fn(), close: vi.fn(), connectionState: 'connected', iceConnectionState: 'connected' }
     })
     managerAny.peers.set('peer-disc', disconnectedPeer)

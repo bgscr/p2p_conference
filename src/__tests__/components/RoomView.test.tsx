@@ -6,6 +6,16 @@ import '@testing-library/jest-dom'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import { RoomView } from '../../renderer/components/RoomView'
+import {
+    clickRemoteMicIncomingAction,
+    expectRemoteMicIncomingControlsDisabled,
+    createPeer,
+    createRemoteMicSession,
+    createRoomViewProps,
+    createVirtualAudioInstallerState,
+    createVirtualMicDeviceStatus,
+    expectRemoteMicIncomingModal
+} from '../helpers/roomViewTestUtils'
 
 // Mocks
 vi.mock('../../renderer/components/ParticipantCard', () => ({
@@ -26,51 +36,18 @@ vi.mock('../../renderer/hooks/useI18n', () => ({
 
 describe('RoomView', () => {
     const defaultProps = {
-        userName: 'Alice',
-        roomId: '123',
-        localPeerId: 'local',
-        peers: new Map(),
-        remoteStreams: new Map(),
-        remoteMuteStatuses: new Map(),
-        localStream: null as MediaStream | null,
-        connectionState: 'connected' as const,
-        isMuted: false,
-        isVideoEnabled: true,
-        isSpeakerMuted: false,
-        audioLevel: 0,
-        selectedOutputDevice: 'default',
-        inputDevices: [],
-        videoInputDevices: [],
-        outputDevices: [],
-        selectedInputDevice: 'default',
-        selectedVideoDevice: 'default',
-        soundEnabled: true,
-        onToggleMute: vi.fn(),
-        onToggleVideo: vi.fn(),
-        onToggleSpeakerMute: vi.fn(),
-        onLeaveRoom: vi.fn(),
-        onInputDeviceChange: vi.fn(),
-        onVideoDeviceChange: vi.fn(),
-        onOutputDeviceChange: vi.fn(),
-        onCopyRoomId: vi.fn(),
-        onToggleSound: vi.fn(),
-        chatMessages: [],
-        onSendChatMessage: vi.fn(),
-        chatUnreadCount: 0,
-        isChatOpen: false,
-        onToggleChat: vi.fn(),
-        onMarkChatRead: vi.fn(),
-        isScreenSharing: false,
-        onToggleScreenShare: vi.fn(),
-        settings: {
-            noiseSuppressionEnabled: true,
-            echoCancellationEnabled: true,
-            autoGainControlEnabled: true,
+        ...createRoomViewProps({
+            roomId: '123',
+            localPeerId: 'local',
             selectedInputDevice: 'default',
             selectedVideoDevice: 'default',
-            selectedOutputDevice: 'default'
-        },
-        onSettingsChange: vi.fn()
+            settings: {
+                selectedInputDevice: 'default',
+                selectedVideoDevice: 'default',
+                selectedOutputDevice: 'default'
+            }
+        }),
+        remoteMuteStatuses: new Map()
     }
 
     it('renders room header with room ID', () => {
@@ -93,7 +70,7 @@ describe('RoomView', () => {
     it('shows participant warning when limit reached', () => {
         const peers = new Map()
         // Add 8 peers to trigger warning
-        for (let i = 0; i < 8; i++) peers.set(`p${i}`, { id: `p${i}`, name: `P${i}`, connectionState: 'connected' })
+        for (let i = 0; i < 8; i++) peers.set(`p${i}`, createPeer({ id: `p${i}`, name: `P${i}` }))
 
         render(<RoomView {...defaultProps} peers={peers} />)
         // Warning text contains "count" parameter which mock translation returns as "room.performanceWarning" if not handled perfectly,
@@ -114,7 +91,7 @@ describe('RoomView', () => {
     })
 
     it('renders screen share button and triggers toggle', () => {
-        const peers = new Map([['p1', { id: 'p1', name: 'Peer 1', isMuted: false, isSpeakerMuted: false, audioLevel: 0, connectionState: 'connected' as const }]])
+        const peers = new Map([['p1', createPeer({ id: 'p1', name: 'Peer 1' })]])
         render(<RoomView {...defaultProps} peers={peers} />)
         const button = screen.getByTestId('room-screenshare-btn')
         fireEvent.click(button)
@@ -127,103 +104,71 @@ describe('RoomView', () => {
         render(
             <RoomView
                 {...defaultProps}
-                remoteMicSession={{
+                remoteMicSession={createRemoteMicSession({
                     state: 'pendingIncoming',
                     requestId: 'req-1',
                     sourcePeerId: 'peer-1',
                     sourceName: 'Bob',
                     role: 'target',
                     expiresAt: Date.now() + 10000
-                }}
+                })}
                 onRespondRemoteMicRequest={onRespondRemoteMicRequest}
-                virtualMicDeviceStatus={{
-                    platform: 'win',
-                    supported: true,
-                    detected: true,
-                    ready: true,
-                    outputDeviceId: 'virtual',
-                    outputDeviceLabel: 'CABLE Input',
-                    expectedDeviceHint: 'CABLE Input (VB-CABLE)'
-                }}
+                virtualMicDeviceStatus={createVirtualMicDeviceStatus()}
             />
         )
 
-        expect(screen.getByText('remoteMic.incomingTitle')).toBeInTheDocument()
-        fireEvent.click(screen.getByText('remoteMic.accept'))
-        expect(onRespondRemoteMicRequest).toHaveBeenCalledWith(true)
-
-        fireEvent.click(screen.getByText('remoteMic.reject'))
-        expect(onRespondRemoteMicRequest).toHaveBeenCalledWith(false)
+        expectRemoteMicIncomingModal({ title: 'remoteMic.incomingTitle' })
+        clickRemoteMicIncomingAction({
+            actionLabel: 'remoteMic.accept',
+            onRespondRemoteMicRequest,
+            expectedAccepted: true
+        })
+        clickRemoteMicIncomingAction({
+            actionLabel: 'remoteMic.reject',
+            onRespondRemoteMicRequest,
+            expectedAccepted: false
+        })
     })
 
-    it('shows install-and-accept action when virtual mic device is not ready', () => {
+    it.each([
+        {
+            name: 'shows install-and-accept action when virtual mic device is not ready',
+            platform: 'win' as const,
+            requestId: 'req-2',
+            expectedDeviceHint: 'CABLE Input (VB-CABLE)'
+        },
+        {
+            name: 'shows install-and-accept action on macOS targets when BlackHole is not ready',
+            platform: 'mac' as const,
+            requestId: 'req-mac-1',
+            expectedDeviceHint: 'BlackHole 2ch'
+        }
+    ])('$name', ({ platform, requestId, expectedDeviceHint }) => {
         const onRespondRemoteMicRequest = vi.fn()
 
         render(
             <RoomView
                 {...defaultProps}
-                localPlatform="win"
-                remoteMicSession={{
+                localPlatform={platform}
+                remoteMicSession={createRemoteMicSession({
                     state: 'pendingIncoming',
-                    requestId: 'req-2',
+                    requestId,
                     sourcePeerId: 'peer-1',
                     sourceName: 'Bob',
                     role: 'target',
                     needsVirtualDeviceSetup: true,
                     expiresAt: Date.now() + 10000
-                }}
+                })}
                 onRespondRemoteMicRequest={onRespondRemoteMicRequest}
-                virtualMicDeviceStatus={{
-                    platform: 'win',
-                    supported: true,
+                virtualMicDeviceStatus={createVirtualMicDeviceStatus({
+                    platform,
                     detected: false,
                     ready: false,
                     outputDeviceId: null,
                     outputDeviceLabel: null,
-                    expectedDeviceHint: 'CABLE Input (VB-CABLE)'
-                }}
-                virtualAudioInstallerState={{
-                    inProgress: false,
-                    platformSupported: true
-                }}
-            />
-        )
-
-        expect(screen.getByText('remoteMic.installAndAccept')).toBeInTheDocument()
-        fireEvent.click(screen.getByText('remoteMic.installAndAccept'))
-        expect(onRespondRemoteMicRequest).toHaveBeenCalledWith(true)
-    })
-
-    it('shows install-and-accept action on macOS targets when BlackHole is not ready', () => {
-        const onRespondRemoteMicRequest = vi.fn()
-
-        render(
-            <RoomView
-                {...defaultProps}
-                localPlatform="mac"
-                remoteMicSession={{
-                    state: 'pendingIncoming',
-                    requestId: 'req-mac-1',
-                    sourcePeerId: 'peer-1',
-                    sourceName: 'Bob',
-                    role: 'target',
-                    needsVirtualDeviceSetup: true,
-                    expiresAt: Date.now() + 10000
-                }}
-                onRespondRemoteMicRequest={onRespondRemoteMicRequest}
-                virtualMicDeviceStatus={{
-                    platform: 'mac',
-                    supported: true,
-                    detected: false,
-                    ready: false,
-                    outputDeviceId: null,
-                    outputDeviceLabel: null,
-                    expectedDeviceHint: 'BlackHole 2ch'
-                }}
-                virtualAudioInstallerState={{
-                    inProgress: false,
-                    platformSupported: true
-                }}
+                    expectedDeviceHint
+                })}
+                virtualAudioInstallerState={createVirtualAudioInstallerState()}
             />
         )
 
@@ -240,7 +185,7 @@ describe('RoomView', () => {
             <RoomView
                 {...defaultProps}
                 localPlatform="win"
-                remoteMicSession={{
+                remoteMicSession={createRemoteMicSession({
                     state: 'pendingIncoming',
                     requestId: 'req-2b',
                     sourcePeerId: 'peer-1',
@@ -248,23 +193,20 @@ describe('RoomView', () => {
                     role: 'target',
                     needsVirtualDeviceSetup: true,
                     expiresAt: Date.now() + 10000
-                }}
+                })}
                 onRespondRemoteMicRequest={onRespondRemoteMicRequest}
-                virtualMicDeviceStatus={{
+                virtualMicDeviceStatus={createVirtualMicDeviceStatus({
                     platform: 'win',
-                    supported: true,
                     detected: false,
                     ready: false,
                     outputDeviceId: null,
                     outputDeviceLabel: null,
                     expectedDeviceHint: 'CABLE Input (VB-CABLE)'
-                }}
-                virtualAudioInstallerState={{
-                    inProgress: false,
-                    platformSupported: true,
+                })}
+                virtualAudioInstallerState={createVirtualAudioInstallerState({
                     bundleReady: false,
                     bundleMessage: 'VB-CABLE installer binary missing.'
-                }}
+                })}
             />
         )
 
@@ -281,7 +223,7 @@ describe('RoomView', () => {
             <RoomView
                 {...defaultProps}
                 localPlatform="win"
-                remoteMicSession={{
+                remoteMicSession={createRemoteMicSession({
                     state: 'pendingIncoming',
                     requestId: 'req-3',
                     sourcePeerId: 'peer-1',
@@ -290,39 +232,30 @@ describe('RoomView', () => {
                     needsVirtualDeviceSetup: true,
                     isInstallingVirtualDevice: true,
                     expiresAt: Date.now() + 10000
-                }}
+                })}
                 onRespondRemoteMicRequest={onRespondRemoteMicRequest}
-                virtualMicDeviceStatus={{
+                virtualMicDeviceStatus={createVirtualMicDeviceStatus({
                     platform: 'win',
-                    supported: true,
                     detected: false,
                     ready: false,
                     outputDeviceId: null,
                     outputDeviceLabel: null,
                     expectedDeviceHint: 'CABLE Input (VB-CABLE)'
-                }}
-                virtualAudioInstallerState={{
-                    inProgress: true,
-                    platformSupported: true
-                }}
+                })}
+                virtualAudioInstallerState={createVirtualAudioInstallerState({ inProgress: true })}
             />
         )
 
-        const rejectButton = screen.getByText('remoteMic.reject') as HTMLButtonElement
-        const installButton = screen.getByRole('button', { name: 'remoteMic.installing' }) as HTMLButtonElement
-        expect(rejectButton.disabled).toBe(true)
-        expect(installButton.disabled).toBe(true)
+        expectRemoteMicIncomingControlsDisabled({
+            rejectLabel: 'remoteMic.reject',
+            actionLabel: 'remoteMic.installing'
+        })
     })
 
     it('triggers remote mic mapping request from peer card action', () => {
         const peers = new Map([
             ['p1', {
-                id: 'p1',
-                name: 'Peer 1',
-                isMuted: false,
-                isSpeakerMuted: false,
-                audioLevel: 0,
-                connectionState: 'connected' as const
+                ...createPeer({ id: 'p1', name: 'Peer 1' }),
             }]
         ])
         const onRequestRemoteMic = vi.fn()
@@ -331,7 +264,7 @@ describe('RoomView', () => {
             <RoomView
                 {...defaultProps}
                 peers={peers}
-                remoteMicSession={{ state: 'idle' }}
+                remoteMicSession={createRemoteMicSession()}
                 onRequestRemoteMic={onRequestRemoteMic}
             />
         )
@@ -346,7 +279,7 @@ describe('RoomView', () => {
         render(
             <RoomView
                 {...defaultProps}
-                remoteMicSession={{
+                remoteMicSession={createRemoteMicSession({
                     state: 'pendingOutgoing',
                     requestId: 'req-stop-1',
                     sourcePeerId: 'local-user',
@@ -354,12 +287,78 @@ describe('RoomView', () => {
                     targetName: 'Bob',
                     role: 'source',
                     expiresAt: Date.now() + 10000
-                }}
+                })}
                 onStopRemoteMic={onStopRemoteMic}
             />
         )
 
         fireEvent.click(screen.getByText('remoteMic.stop'))
         expect(onStopRemoteMic).toHaveBeenCalledWith()
+    })
+
+    it('shows moderation room-locked banner and queue when enabled', () => {
+        render(
+            <RoomView
+                {...defaultProps}
+                moderationEnabled={true}
+                roomLocked={true}
+                roomLockOwnerName="Host"
+                raisedHands={[
+                    { peerId: 'local', name: 'Alice', raisedAt: Date.now(), isLocal: true }
+                ]}
+            />
+        )
+
+        expect(screen.getByTestId('room-locked-banner')).toBeInTheDocument()
+        expect(screen.getByTestId('raised-hands-queue')).toBeInTheDocument()
+    })
+
+    it('triggers moderation footer actions', () => {
+        const onToggleRoomLock = vi.fn()
+        const onRequestMuteAll = vi.fn()
+        const onToggleHandRaise = vi.fn()
+
+        render(
+            <RoomView
+                {...defaultProps}
+                moderationEnabled={true}
+                roomLocked={false}
+                isHandRaised={false}
+                onToggleRoomLock={onToggleRoomLock}
+                onRequestMuteAll={onRequestMuteAll}
+                onToggleHandRaise={onToggleHandRaise}
+            />
+        )
+
+        fireEvent.click(screen.getByTestId('room-lock-btn'))
+        fireEvent.click(screen.getByTestId('room-mute-all-btn'))
+        fireEvent.click(screen.getByTestId('room-hand-raise-btn'))
+
+        expect(onToggleRoomLock).toHaveBeenCalled()
+        expect(onRequestMuteAll).toHaveBeenCalled()
+        expect(onToggleHandRaise).toHaveBeenCalled()
+    })
+
+    it('shows mute-all request modal and accepts/declines', () => {
+        const onRespondMuteAllRequest = vi.fn()
+
+        render(
+            <RoomView
+                {...defaultProps}
+                moderationEnabled={true}
+                pendingMuteAllRequest={{
+                    requestId: 'mute-req-1',
+                    requestedByPeerId: 'peer-1',
+                    requestedByName: 'Host'
+                }}
+                onRespondMuteAllRequest={onRespondMuteAllRequest}
+            />
+        )
+
+        fireEvent.click(screen.getByText('moderation.acceptAndMute'))
+        fireEvent.click(screen.getByText('moderation.decline'))
+
+        expect(onRespondMuteAllRequest).toHaveBeenCalledWith('mute-req-1', true)
+        expect(onRespondMuteAllRequest).toHaveBeenCalledWith('mute-req-1', false)
     })
 })

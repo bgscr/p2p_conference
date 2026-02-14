@@ -27,6 +27,7 @@ export class AudioPipeline {
   // State
   private isInitialized: boolean = false;
   private isWasmReady: boolean = false;
+  private isWorkletModuleLoaded: boolean = false;
   private noiseSuppressionEnabled: boolean = true;
   private isDestroyed: boolean = false;
 
@@ -62,19 +63,7 @@ export class AudioPipeline {
         return;
       }
 
-      // Load AudioWorklet processor
-      try {
-        AudioLog.debug('Loading AudioWorklet module...', { path: PROCESSOR_PATH });
-        await this.audioContext.audioWorklet.addModule(PROCESSOR_PATH);
-        AudioLog.info('AudioWorklet module loaded successfully');
-        // Mark WASM as ready - the worklet will self-initialize with embedded WASM
-        this.isWasmReady = true;
-      } catch (workletError) {
-        AudioLog.warn('Failed to load AudioWorklet - noise suppression will be unavailable', {
-          error: workletError
-        });
-        this.isWasmReady = false;
-      }
+      await this.ensureWorkletModuleLoaded();
 
       // Check if pipeline was destroyed during async worklet loading
       if (this.isDestroyed || !this.audioContext) {
@@ -129,6 +118,10 @@ export class AudioPipeline {
     // Create source from input stream
     this.sourceNode = this.audioContext.createMediaStreamSource(inputStream);
 
+    if (this.noiseSuppressionEnabled && !this.isWasmReady) {
+      await this.ensureWorkletModuleLoaded();
+    }
+
     // Determine if we should use noise suppression
     // The worklet now self-initializes with embedded WASM
     const useNoiseSuppression =
@@ -180,6 +173,27 @@ export class AudioPipeline {
     return this.destinationNode.stream;
   }
 
+  private async ensureWorkletModuleLoaded(): Promise<void> {
+    if (!this.audioContext || this.isWorkletModuleLoaded || !this.noiseSuppressionEnabled) {
+      return;
+    }
+
+    try {
+      AudioLog.debug('Loading AudioWorklet module...', { path: PROCESSOR_PATH });
+      await this.audioContext.audioWorklet.addModule(PROCESSOR_PATH);
+      AudioLog.info('AudioWorklet module loaded successfully');
+      this.isWorkletModuleLoaded = true;
+      // Mark WASM as ready - the worklet will self-initialize with embedded WASM
+      this.isWasmReady = true;
+    } catch (workletError) {
+      AudioLog.warn('Failed to load AudioWorklet - noise suppression will be unavailable', {
+        error: workletError
+      });
+      this.isWorkletModuleLoaded = false;
+      this.isWasmReady = false;
+    }
+  }
+
   /**
    * Connect in bypass mode (no noise suppression)
    */
@@ -208,24 +222,27 @@ export class AudioPipeline {
       throw new Error('Worklet not ready');
     }
 
+    const workletNode = this.workletNode;
+
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        workletNode.port.onmessage = originalHandler;
         reject(new Error('WASM initialization timeout'));
       }, 10000); // 10 second timeout for self-initialization
 
       // Listen for ready/error messages from the self-initializing worklet
-      const originalHandler = this.workletNode!.port.onmessage;
-      this.workletNode!.port.onmessage = (event) => {
+      const originalHandler = workletNode.port.onmessage;
+      workletNode.port.onmessage = (event) => {
         AudioLog.debug('Received worklet message', { type: event.data.type, data: event.data });
 
         if (event.data.type === 'ready') {
           clearTimeout(timeout);
-          this.workletNode!.port.onmessage = originalHandler;
+          workletNode.port.onmessage = originalHandler;
           AudioLog.info('Worklet WASM initialized successfully');
           resolve();
         } else if (event.data.type === 'error') {
           clearTimeout(timeout);
-          this.workletNode!.port.onmessage = originalHandler;
+          workletNode.port.onmessage = originalHandler;
           AudioLog.error('Worklet WASM initialization failed', { error: event.data.error });
           reject(new Error(event.data.error));
         } else if (event.data.type === 'log') {
@@ -234,7 +251,7 @@ export class AudioPipeline {
 
         // Also call original handler
         if (originalHandler) {
-          originalHandler.call(this.workletNode!.port, event);
+          originalHandler.call(workletNode.port, event);
         }
       };
 
@@ -419,6 +436,7 @@ export class AudioPipeline {
     this.analyserNode = null;
     this.isInitialized = false;
     this.isWasmReady = false;
+    this.isWorkletModuleLoaded = false;
 
     AudioLog.info('AudioPipeline destroyed');
   }

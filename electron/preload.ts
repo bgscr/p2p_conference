@@ -34,6 +34,28 @@ export interface VirtualAudioInstallerState {
   bundleMessage?: string
 }
 
+export interface SessionCredentials {
+  iceServers: Array<{
+    urls: string | string[]
+    username?: string
+    credential?: string
+  }>
+  mqttBrokers: Array<{
+    url: string
+    username?: string
+    password?: string
+  }>
+  source: 'endpoint' | 'env' | 'fallback'
+  fetchedAt: number
+  expiresAt?: number
+}
+
+export interface DiagnosticsExportResult {
+  ok: boolean
+  path?: string
+  error?: string
+}
+
 /**
  * Exposed API for renderer process
  */
@@ -199,7 +221,54 @@ const electronAPI = {
     url: string
     username?: string
     password?: string
-  }>> => ipcRenderer.invoke('get-mqtt-brokers')
+  }>> => ipcRenderer.invoke('get-mqtt-brokers'),
+
+  /**
+   * Get full session credentials with TTL-aware refresh in main process.
+   */
+  getSessionCredentials: (): Promise<SessionCredentials> => ipcRenderer.invoke('get-session-credentials'),
+
+  /**
+   * Export a redacted diagnostics bundle from the main process.
+   */
+  exportDiagnosticsBundle: (payload?: unknown): Promise<DiagnosticsExportResult> =>
+    ipcRenderer.invoke('export-diagnostics-bundle', payload),
+
+  /**
+   * Get app and runtime health snapshot from main process.
+   */
+  getHealthSnapshot: (): Promise<{
+    timestamp: string
+    uptimeSeconds: number
+    appVersion: string
+    platform: NodeJS.Platform
+    arch: string
+    nodeVersion: string
+    electronVersion: string
+    memoryUsage: {
+      rss: number
+      heapTotal: number
+      heapUsed: number
+      external: number
+      arrayBuffers: number
+    }
+    windowVisible: boolean
+    inCall: boolean
+    muted: boolean
+    credentialRuntime?: {
+      hasCachedSession: boolean
+      source: 'endpoint' | 'env' | 'fallback' | null
+      fetchedAt: number | null
+      expiresAt: number | null
+      expiresInMs: number | null
+      cacheStatus: 'missing' | 'fresh' | 'stale' | 'expired'
+      inFlight: boolean
+      cacheSkewMs: number
+      lastFetchAttemptAt: number | null
+      lastFetchSuccessAt: number | null
+      lastFetchError: string | null
+    }
+  }> => ipcRenderer.invoke('get-health-snapshot')
 }
 
 // Expose to renderer
